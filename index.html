@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Two Forks</title>
+<meta name="description" content="A cozy co-op restaurant game for two laptops. Cook, serve, set prices and read the P&amp;L together.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23c8643c'/%3E%3Cpath d='M20 12v16a6 6 0 0 0 12 0V12M26 30v24M38 12v16a6 6 0 0 0 12 0V12M44 30v24M23 12v10M29 12v10M41 12v10M47 12v10' stroke='%23fbf3e4' stroke-width='3.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Atkinson+Hyperlegible:wght@400;700&family=Courier+Prime:wght@400;700&display=swap">
+<link rel="stylesheet" href="./src/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="markers" aria-hidden="true"></div>
+  <div id="hud" hidden></div>
+  <div id="office" hidden></div>
+  <div id="lobby"></div>
+  <div id="modal" hidden></div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="boot">Setting the tables…</div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+// The building shell: floors, walls, windows, the name sign, lights and the
+// cuisine's decor. Rebuilt when the layout or decor upgrades change.
+import * as THREE from 'three';
+import { Shape, MAT, meshOf, shade, mix } from './shape.js';
+import { MAP, KITCHEN_MAX_Z } from '../data/layout.js';
+
+const W = MAP[0].length, H = MAP.length;
+const WALL_H = 2.8, DIVIDER_H = 1.05, FRONT_H = 0.45;
+
+function isWall(x, z) { const c = MAP[z] && MAP[z][x]; return c === '#' || c === 'B'; }
+
+function nameSign(name, style, pal) {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 192;
+  const g = c.getContext('2d');
+  g.fillStyle = pal.uiDark;
+  g.fillRect(0, 0, 1024, 192);
+  g.strokeStyle = pal.ui;
+  g.lineWidth = 10;
+  g.strokeRect(14, 14, 996, 164);
+  g.fillStyle = '#fbf3e4';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  let size = 92;
+  g.font = `${size}px Gloock, Georgia, serif`;
+  while (g.measureText(name).width > 900 && size > 40) { size -= 4; g.font = `${size}px Gloock, Georgia, serif`; }
+  g.fillText(name, 512, 88);
+  g.font = '28px "Courier Prime", monospace';
+  g.fillStyle = pal.ui;
+  g.fillText(style.toUpperCase() + '  ·  EST. TODAY', 512, 152);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.98), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  return m;
+}
+
+export function buildRoom(cuisine, name, upgrades) {
+  const pal = cuisine.palette;
+  const root = new THREE.Group();
+  const s = new Shape();
+  const glow = new Shape();
+
+  // Floors.
+  for (let z = 0; z < H; z++) {
+    for (let x = 0; x < W; x++) {
+      if (isWall(x, z)) continue;
+      const kitchen = z <= KITCHEN_MAX_Z || (z === 5);
+      let c;
+      if (kitchen) c = (x + z) % 2 ? pal.kitchenA : pal.kitchenB;
+      else if (cuisine.id === 'diner') c = (x + z) % 2 ? pal.floorA : pal.floorB;
+      else {
+        // Plank rows with slight variation.
+        const v = ((x * 7 + z * 13) % 5) / 40;
+        c = shade(z % 2 ? pal.floorA : pal.floorB, 0.96 + v);
+      }
+      s.box(1, 0.06, 1, c, x + 0.5, -0.03, z + 0.5);
+      if (!kitchen && cuisine.id !== 'diner') s.box(1, 0.005, 0.02, shade(pal.floorB, 0.8), x + 0.5, 0.001, z + 0.02);
+    }
+  }
+  if (upgrades.decor3) {
+    // Renovation: a big rug under the tables.
+    s.box(13, 0.012, 6.2, mix(pal.accent, 0x2a2a2a, 0.35), 10.5, 0.006, 9.6);
+    s.box(12.4, 0.014, 5.6, mix(pal.accent2, 0xf0e6d0, 0.4), 10.5, 0.008, 9.6);
+  }
+
+  // Walls.
+  const wallC = pal.wall, trimC = pal.trim;
+  for (let z = 0; z < H; z++) {
+    for (let x = 0; x < W; x++) {
+      if (!isWall(x, z)) continue;
+      const cx = x + 0.5, cz = z + 0.5;
+      if (MAP[z][x] === 'B') {
+        // Back door: frame and a door slab.
+        s.box(1, WALL_H, 1, wallC, cx, WALL_H / 2, cz);
+        s.box(0.06, 2.1, 0.9, 0x7a5a3a, cx + 0.5, 1.05, cz);
+        s.box(0.08, 0.12, 1.0, trimC, cx + 0.5, 2.15, cz);
+        s.box(0.08, 0.06, 0.2, 0xd8c070, cx + 0.53, 1.0, cz + 0.3);
+        continue;
+      }
+      if (z === H - 1) {
+        // Front: cut away low so the camera can see in.
+        s.box(1, FRONT_H, 1, wallC, cx, FRONT_H / 2, cz);
+        s.box(1.02, 0.06, 1.04, trimC, cx, FRONT_H + 0.03, cz);
+        continue;
+      }
+      if (z === 5) {
+        s.box(1, DIVIDER_H, 1, wallC, cx, DIVIDER_H / 2, cz);
+        s.box(1.02, 0.06, 1.04, trimC, cx, DIVIDER_H + 0.03, cz);
+        s.box(1.0, 0.3, 0.02, shade(wallC, 0.85), cx, 0.15, cz + 0.51);
+        continue;
+      }
+      const kitchen = z <= KITCHEN_MAX_Z;
+      const h = WALL_H;
+      s.box(1, h, 1, kitchen ? shade(pal.kitchenA, 0.97) : wallC, cx, h / 2, cz);
+      if (!kitchen) {
+        // Wainscot on the inside face of dining walls.
+        const inner = x === 0 ? 0.51 : x === W - 1 ? -0.51 : 0;
+        if (inner) {
+          s.box(0.02, 0.9, 1.0, shade(trimC, 1.05), cx + inner, 0.45, cz);
+          s.box(0.04, 0.06, 1.0, trimC, cx + inner, 0.92, cz);
+        }
+      }
+    }
+  }
+  // Subway tile bands on the kitchen back wall.
+  for (let i = 0; i < 8; i++) {
+    const y = 0.95 + i * 0.16;
+    s.box(18, 0.012, 0.01, shade(pal.kitchenA, 0.86), 10, y, 1.005);
+  }
+  // Shelf with pans above the back stations.
+  s.box(10, 0.05, 0.3, 0x8a8f94, 10, 2.35, 1.15);
+  for (let i = 0; i < 7; i++) {
+    const x = 5.5 + i * 1.4;
+    if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
+    else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+  }
+  // Fluorescent strips (glow).
+  glow.box(4, 0.05, 0.08, 0xfffbf0, 5, 2.7, 1.1);
+  glow.box(4, 0.05, 0.08, 0xfffbf0, 14, 2.7, 1.1);
+
+  // Windows on the dining side walls.
+  const winGeo = new Shape();
+  for (const z of [7.5, 10.5]) {
+    for (const x of [0.5 + 0.52, W - 0.5 - 0.52]) {
+      winGeo.box(0.02, 1.0, 1.5, 0xbfe0f0, x, 1.55, z);
+      s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z - 0.79);
+      s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z + 0.79);
+      s.box(0.06, 0.08, 1.66, trimC, x, 2.07, z);
+      s.box(0.12, 0.06, 1.7, trimC, x, 1.02, z);
+    }
+  }
+  const winMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  const windows = new THREE.Mesh(winGeo.build(), winMat);
+  root.add(windows);
+
+  // Front door gap: mat and an OPEN sign.
+  s.box(1.0, 0.012, 0.7, 0x5a3a2a, 2.5, 0.006, 13.6);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 1.95, 0.75, 14.5);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 3.05, 0.75, 14.5);
+
+  // Cuisine decor and upgrades.
+  decor(s, glow, cuisine, pal, upgrades);
+
+  root.add(meshOf(s, MAT.solid, false, true));
+  if (glow.parts.length) root.add(new THREE.Mesh(glow.build(), MAT.glow));
+
+  const sign = nameSign(name, cuisine.style, pal);
+  sign.position.set(10, 2.25, 1.02);
+  root.add(sign);
+
+  return { root, winMat, pal };
+}
+
+function frame(s, x, y, z, w, h, c, face) {
+  // face: +1 on the left wall (facing +x), -1 on the right wall.
+  s.box(0.04, h + 0.08, w + 0.08, 0x3a2a20, x, y, z);
+  s.box(0.05, h, w, c, x + face * 0.01, y, z);
+  s.box(0.055, h * 0.4, w * 0.5, shade(c, 0.7), x + face * 0.012, y - h * 0.1, z + w * 0.1);
+}
+
+function plant(s, x, z, big = 1) {
+  s.cyl(0.18 * big, 0.14 * big, 0.32 * big, 8, 0xb8643a, x, 0.16 * big, z);
+  for (let i = 0; i < 6; i++) {
+    const a = i * 1.05;
+    s.sphere(0.16 * big, i % 2 ? 0x4a8a3a : 0x3a7a32, x + Math.cos(a) * 0.12 * big, 0.48 * big + (i % 3) * 0.1 * big, z + Math.sin(a) * 0.12 * big, 1, 1.2, 1, 6);
+  }
+}
+
+function decor(s, glow, cuisine, pal, up) {
+  const id = cuisine.id;
+  const L = 1.02, R = W - 1.02;
+  // Art on dining walls between windows.
+  frame(s, L, 1.7, 9.0, 0.9, 0.7, pal.accent, 1);
+  frame(s, R, 1.7, 9.0, 0.9, 0.7, pal.accent2, -1);
+  if (id === 'southern') {
+    for (const z of [6.4, 12.6]) { plant(s, 1.4, z, 0.9); }
+    for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, x, 2.55, 9.6); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, x, 2.25, 9.6); }
+    s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, 12.4);
+  } else if (id === 'italian') {
+    for (let i = 0; i < 18; i++) { const t = i / 17; glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * 17, 2.6 - Math.sin(t * Math.PI) * 0.35, 6.4); }
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, 12.0 + j * 0.15, 0, 0, Math.PI / 2);
+    s.box(0.04, 1.3, 0.6, 0x6a4a2a, R + 0.0, 1.35, 12.15);
+  } else if (id === 'mexican') {
+    const colors = [0xe0407a, 0xf2c030, 0x2a9a8e, 0xf07830, 0x8a4ac8];
+    for (const zz of [7.0, 10.0, 12.6]) for (let i = 0; i < 16; i++) s.box(0.5, 0.36, 0.01, colors[i % 5], 2 + i * 1.05, 2.45, zz, 0, 0, 0);
+    plant(s, 1.4, 6.4, 0.8);
+    s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, 12.8);
+  } else if (id === 'diner') {
+    glow.box(0.04, 0.5, 2.0, 0xff3a4a, R - 0.03, 2.2, 12.0);
+    glow.box(0.04, 0.06, 2.2, 0x3ad0f0, R - 0.035, 1.9, 12.0);
+    s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, 6.4);
+    glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1.0, 6.66);
+  } else if (id === 'noodle') {
+    for (const [x, z] of [[4, 8.5], [10, 8.5], [16, 8.5], [7, 11.5], [13, 11.5]]) {
+      s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, x, 2.6, z);
+      glow.sphere(0.2, 0xff5a3a, x, 2.25, z, 1, 1.25, 1, 8);
+      s.cyl(0.12, 0.12, 0.04, 8, 0x2a1e18, x, 2.5, z);
+    }
+    // Noren curtain over the kitchen opening.
+    for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, 10.25 + i * 0.5, 2.0, 5.5);
+  }
+  if (up.decor1) {
+    plant(s, 18.3, 6.5, 1.1);
+    plant(s, 18.3, 12.8, 1.0);
+    frame(s, L, 1.6, 12.2, 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
+  }
+  if (up.decor2) {
+    for (const x of [5, 9, 13, 17]) {
+      s.cyl(0.004, 0.004, 0.45, 3, 0x2a2a2a, x, 2.6, 11.2);
+      glow.cone(0.16, 0.14, 8, 0xffd890, x, 2.32, 11.2);
+    }
+    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.25, 2.3, 6.3);
+  }
+  if (up.decor3) {
+    glow.sphere(0.25, 0xfff0c0, 10, 2.3, 9.2, 1, 0.6, 1, 8);
+    s.cyl(0.4, 0.3, 0.1, 10, 0xc8a050, 10, 2.45, 9.2);
+  }
+}
+
+/** Window color for a time of day (minutes). */
+export function skyColor(clock, phase) {
+  const day = 0xbfe6f6, dusk = 0xf0a070, night = 0x2a3050;
+  if (phase === 'morning') return 0xd8eef8;
+  if (phase === 'office') return night;
+  if (clock < 17 * 60) return day;
+  if (clock < 19 * 60) return mix(day, dusk, (clock - 17 * 60) / 120);
+  if (clock < 20.5 * 60) return mix(dusk, night, (clock - 19 * 60) / 90);
+  return night;
+}
