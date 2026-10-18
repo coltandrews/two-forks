@@ -423,7 +423,7 @@ export class Hud {
       sub = p && p.hand && p.hand.k === 'plate' ? 'Goes straight onto your plate.' : 'Take one. Press Q at the same spot to grab another.';
     }
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2><div class="sub">${sub}</div>
-      <div class="grid">${list.length ? list.map((x, i) => `<button class="pick ${x.need ? 'need' : ''}" data-key="${x.key}"><span class="sw" style="background:${x.sw}"></span><span><span class="nm">${esc(x.name)}</span><br><span class="ct ${x.low ? 'low' : ''}">${x.ct}</span></span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}</button>`).join('') : '<div class="empty">Nothing in here. Unpack deliveries or order more.</div>'}</div>`;
+      <div class="grid">${list.length ? list.map((x, i) => `<button class="pick ${x.need ? 'wanted' : ''}" data-key="${x.key}"><span class="sw" style="background:${x.sw}"></span><span><span class="nm">${esc(x.name)}</span><br><span class="ct ${x.low ? 'low' : ''}">${x.ct}</span></span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}</button>`).join('') : '<div class="empty">Nothing in here. Unpack deliveries or order more.</div>'}</div>`;
     const sheet = this.modal.querySelector('.sheet');
     if (!sheet || sheet._html === html) return;
     sheet._html = html;
@@ -476,7 +476,7 @@ export class Hud {
     const ings = menuIngredients(state).sort((a, b) => stockCount(state, a) - stockCount(state, b));
     const rows = ings.map((i) => {
       const n = stockCount(state, i);
-      return `<button class="pick ${n === 0 ? 'need' : ''}" data-ing="${i}"><span class="sw" style="background:${hex(ING[i].look.color)}"></span><span><span class="nm">${esc(ING[i].name)}</span><br><span class="ct ${n <= 3 ? 'low' : ''}">${n} in stock · case of ${ING[i].case} ${money(casePrice(i, true))}</span></span></button>`;
+      return `<button class="pick ${n === 0 ? 'wanted' : ''}" data-ing="${i}"><span class="sw" style="background:${hex(ING[i].look.color)}"></span><span><span class="nm">${esc(ING[i].name)}</span><br><span class="ct ${n <= 3 ? 'low' : ''}">${n} in stock · case of ${ING[i].case} ${money(casePrice(i, true))}</span></span></button>`;
     }).join('');
     const pending = (state.rush || []).map((r) => `${ING[r.ing].name} in ${Math.max(0, Math.ceil(r.at - state.t))}s`).join(' · ');
     this.openSheet('picker', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Call the supplier</h2>
