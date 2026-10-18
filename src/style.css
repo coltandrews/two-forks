@@ -145,6 +145,7 @@ kbd {
 .ticket .drk { color: var(--blue); }
 .ticket .crit { position: absolute; right: 6px; bottom: 4px; font-size: 10px; background: var(--ink); color: #fff; padding: 0 4px; border-radius: 3px; }
 .ticket .comps { font-size: 11px; color: var(--ink-3); margin: 0 0 2px 12px; white-space: normal; }
+.ticket { max-height: 200px; overflow: hidden; }
 .rail .more { pointer-events: auto; align-self: center; color: var(--paper); font-weight: 700; text-shadow: 0 1px 3px #000; }
 
 .prompt { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; pointer-events: none !important; }

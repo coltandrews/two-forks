@@ -187,6 +187,7 @@ class App {
       return true;
     });
     this.input.on('digit', (d) => { if (inGame()) this.hud.pickerKey(d); });
+    this.input.on('h', () => { if (inGame()) this.hud.toggleKeys(); });
     this.input.on('esc', () => {
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;

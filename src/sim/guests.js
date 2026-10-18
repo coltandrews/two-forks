@@ -244,7 +244,7 @@ export function takeOrder(sim, party, pid) {
   party.server = pid;
   S.ticketSeq = (S.ticketSeq || 0) + 1;
   party.ticket = S.ticketSeq;
-  party.grace = CFG.party.foodGrace + 12 * party.size;
+  party.grace = CFG.party.foodGrace + CFG.party.gracePerDish * items.length;
   sim.emit({ type: 'sfx', name: 'ticket' });
   sim.emit({ type: 'ticket', party: party.id });
 }
@@ -265,7 +265,7 @@ function takeDessertOrder(sim, party) {
   party.t = 0;
   party.workP = 0;
   party.dessertAt = sim.time;
-  party.grace = 60 + 10 * items.length;
+  party.grace = 60 + CFG.party.gracePerDish * items.length;
   S.ticketSeq = (S.ticketSeq || 0) + 1;
   party.ticket = S.ticketSeq;
   sim.emit({ type: 'sfx', name: 'ticket' });
@@ -522,7 +522,7 @@ export function updateParties(sim, dt) {
         break;
       case 'waiting': {
         const waited = sim.time - p.arrivedAt;
-        if (waited > P.queuePatience) drain(1);
+        if (waited > P.queuePatience) p.mood -= P.queueDrain * dt;
         if (p.mood <= 0) { p.queued = waited; S.today.walkouts++; review(sim, p, false); sendHome(sim, p); sim.emit({ type: 'toast', text: 'A party gave up waiting for a table.', kind: 'bad' }); }
         break;
       }
@@ -619,14 +619,26 @@ export function sendHome(sim, p) {
   assignQueue(sim);
 }
 
-export function spawnRate(sim) {
-  const S = sim.state;
-  if (S.phase !== 'service' || S.clock >= CFG.doorsLock) return 0;
-  const hour = Math.floor((S.clock - CFG.serviceStart) / 60);
-  const H = CFG.traffic.hourly;
-  const w = H[Math.max(0, Math.min(H.length - 1, hour))];
-  const sumW = H.reduce((s, x) => s + x, 0);
-  const realPerHour = CFG.serviceRealSeconds / ((CFG.serviceEnd - CFG.serviceStart) / 60);
-  // Expected parties this hour, spread over the real seconds of the hour.
-  return (S.today.expected * (w / sumW)) / realPerHour;
+/** Arrival times (game minutes) for today, spread by the hourly curve with a minimum gap. */
+export function buildSchedule(expected, players) {
+  const T = CFG.traffic;
+  const n = Math.max(3, Math.round(expected + (Math.random() - 0.5) * 2));
+  const H = T.hourly;
+  const hours = (CFG.doorsLock - CFG.serviceStart) / 60;
+  const w = H.map((x, i) => x * Math.max(0, Math.min(1, hours - i)));
+  const sum = w.reduce((s, x) => s + x, 0);
+  const at = (u) => {
+    let acc = 0;
+    for (let i = 0; i < w.length; i++) {
+      if (acc + w[i] >= u * sum) return CFG.serviceStart + (i + (u * sum - acc) / w[i]) * 60;
+      acc += w[i];
+    }
+    return CFG.doorsLock - 1;
+  };
+  const gap = players <= 1 ? T.minGap.solo : T.minGap.duo;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(at((i + 0.15 + Math.random() * 0.7) / n));
+  out.sort((a, b) => a - b);
+  for (let i = 1; i < out.length; i++) if (out[i] - out[i - 1] < gap) out[i] = out[i - 1] + gap * (0.85 + Math.random() * 0.3);
+  return out.filter((t) => t < CFG.doorsLock).map((t) => Math.round(t * 10) / 10);
 }

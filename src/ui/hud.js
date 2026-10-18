@@ -50,10 +50,10 @@ export class Hud {
       <div class="rail"></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
-      <div class="hud-bl"><div class="panel keys">
+      <div class="hud-bl"><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
         <span><kbd>WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
         <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-        <span><kbd>C</kbd> camera</span><span><kbd>Esc</kbd> menu</span>
+        <span><kbd>C</kbd> camera</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span>
       </div></div>
       <div class="panel hud-br"></div>
       <div class="panel morning" hidden></div>
@@ -66,6 +66,9 @@ export class Hud {
     };
     this.slowAcc = 0;
     this.modalKind = null;
+    let keys = null;
+    try { keys = localStorage.getItem('tf-keys'); } catch { /* ignore */ }
+    if (keys === '0') this.toggleKeys(true);
     this.el.rail.addEventListener('click', (e) => {
       const b = e.target.closest('button.x');
       if (!b) return;
@@ -79,6 +82,7 @@ export class Hud {
       if (b.dataset.act === 'office') this.app.openOffice();
       sfx('ui');
     });
+    this.root.querySelector('.keys-toggle').addEventListener('click', () => this.toggleKeys());
     this.el.br.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (b && b.dataset.act === 'copy' && this.app.code) { navigator.clipboard && navigator.clipboard.writeText(this.app.code); this.toast('Room code copied', 'good'); }
@@ -86,6 +90,13 @@ export class Hud {
   }
 
   show(on) { this.root.hidden = !on; }
+
+  toggleKeys(force) {
+    this.keysHidden = force != null ? force : !this.keysHidden;
+    this.el.keys.hidden = this.keysHidden;
+    this.root.querySelector('.keys-toggle').hidden = !this.keysHidden;
+    try { localStorage.setItem('tf-keys', this.keysHidden ? '0' : '1'); } catch { /* ignore */ }
+  }
 
   // ------------------------------------------------------------ per frame
 
@@ -208,7 +219,8 @@ export class Hud {
     parties.sort((a, b) => a.ticket - b.ticket);
     const max = Math.max(1, Math.floor((this.el.rail.clientWidth + 8) / 166));
     let h = '';
-    for (const p of parties.slice(0, max)) {
+    const firstFood = parties.find((p) => p.items.some((x) => !x.served));
+    parties.slice(0, max).forEach((p) => {
       const t = state.objects.find((o) => o.id === p.table);
       const since = p.state === 'dessertWait' ? p.dessertAt : p.orderedAt;
       const el = Math.max(0, (state.t || 0) - since);
@@ -231,14 +243,14 @@ export class Hud {
         const comps = d.comps.map(([i, s]) => lc(stateInfo(i, s).label)).join(' · ');
         const idx = openIdx.indexOf(g.first);
         h += `<div class="ln ${g.served ? 'done' : ''}" title="${esc(comps)}">${g.n > 1 ? g.n + '× ' : ''}${esc(d.name)}${!g.served ? `<button class="x" data-party="${p.id}" data-index="${idx}" title="Can't make it: take it off the order">✕</button>` : ''}</div>`;
-        if (!g.served) h += `<div class="comps">${esc(comps)}</div>`;
+        if (!g.served && p === firstFood) h += `<div class="comps">${esc(comps)}</div>`;
       }
       const dr = new Map();
       for (const x of p.drinks) if (!x.served) dr.set(x.id, (dr.get(x.id) || 0) + 1);
       for (const [id, n] of dr) h += `<div class="ln drk">${n > 1 ? n + '× ' : ''}${esc(drinkById(state, id).name)}</div>`;
       if (p.kind === 'critic') h += '<span class="crit">CRITIC</span>';
       h += '</div>';
-    }
+    });
     if (parties.length > max) h += `<div class="more">+${parties.length - max} more</div>`;
     if (h !== this.lastRail) { this.el.rail.innerHTML = h; this.lastRail = h; }
   }

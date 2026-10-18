@@ -8,7 +8,7 @@ import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS } from './state.js
 import {
   actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
 } from './kitchen.js';
-import { updateParties, spawnParty, spawnRate, compItem, sendHome } from './guests.js';
+import { updateParties, spawnParty, buildSchedule, compItem, sendHome } from './guests.js';
 import {
   spoil, deliverOrders, expectedParties, closeBooks, placeOrder, cancelOrder, applyAutofill, buyUpgrade,
   buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot,
@@ -199,9 +199,8 @@ export class Sim {
     S.clock = CFG.serviceStart;
     S.today.expected = expectedParties(S, S.day, this.playerCount());
     S.today.repStart = S.rep.points;
-    this.spawnAcc = 0;
     // A first party arrives right away so there is something to do.
-    this.firstSpawnIn = 4;
+    S.today.schedule = [CFG.serviceStart + 3, ...buildSchedule(S.today.expected - 1, this.playerCount()).filter((t) => t > CFG.serviceStart + 12)];
     this.emit({ type: 'toast', text: `Doors open! ${WEEKDAYS[(S.day - 1) % 7]}, day ${S.day}.`, kind: 'good' });
     this.emit({ type: 'sfx', name: 'bell' });
   }
@@ -299,12 +298,12 @@ export class Sim {
     if (S.phase === 'service' || S.phase === 'closing') {
       if (S.phase === 'service') {
         S.clock = Math.min(CFG.serviceEnd, S.clock + dt * ((CFG.serviceEnd - CFG.serviceStart) / CFG.serviceRealSeconds));
-        if (this.firstSpawnIn != null) {
-          this.firstSpawnIn -= dt;
-          if (this.firstSpawnIn <= 0) { this.firstSpawnIn = null; spawnParty(this, { size: 2 }); }
+        const sched = S.today.schedule || [];
+        if (sched.length && S.clock >= sched[0]) {
+          const first = S.today.parties === 0;
+          sched.shift();
+          spawnParty(this, first ? { size: 2 } : {});
         }
-        const rate = spawnRate(this);
-        if (rate > 0 && Math.random() < rate * dt) spawnParty(this);
         if (S.clock >= CFG.doorsLock && !this.lockAnnounced) {
           this.lockAnnounced = true;
           this.emit({ type: 'toast', text: 'Last seating. The doors are locked.', kind: 'warn' });

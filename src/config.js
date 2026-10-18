@@ -19,23 +19,25 @@ export const CFG = {
   burn: { grill: 30, pan: 20, fryer: 15, oven: 40, pot: 0 },
   potOvercook: 60,
   overdoneQuality: 0.75,
-  coldAfter: 40,
-  coldAfterLamp: 90,
+  coldAfter: 75,
+  coldAfterLamp: 150,
   chopSpeedKnife: 1.6,
 
   work: { order: 2.0, pay: 1.5, wash: 1.8, unpack: 0.9 },
 
   party: {
     startMood: 80,
-    drain: 0.9,              // mood per second once patience runs out
-    queuePatience: 60,
-    browse: [18, 30],
-    orderPatience: 45,
-    drinkPatience: 60,
-    foodGrace: 75,           // plus 12 s per guest before waiting for food hurts
-    eat: [55, 80],
-    dessertEat: [30, 40],
-    payPatience: 40,
+    drain: 0.55,             // mood per second once patience runs out
+    queueDrain: 0.45,
+    queuePatience: 90,
+    browse: [14, 24],
+    orderPatience: 60,
+    drinkPatience: 75,
+    foodGrace: 80,           // plus 25 s per dish before waiting for food hurts
+    gracePerDish: 25,
+    eat: [50, 70],
+    dessertEat: [28, 38],
+    payPatience: 50,
     walkSpeed: 2.6,
   },
 
@@ -43,6 +45,7 @@ export const CFG = {
     perTable: 2.8,
     capPerTable: 2.7,
     solo: 0.6,
+    minGap: { solo: 34, duo: 16 },   // game minutes between arrivals at least
     weekday: [0.8, 0.85, 0.95, 1.0, 1.25, 1.3, 1.1], // Mon..Sun
     // Relative arrivals per game hour from 11:00 to 21:00.
     hourly: [1, 3, 2, 1, 0.4, 0.7, 1, 2, 2.2, 1.2, 0.3],
