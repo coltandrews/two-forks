@@ -134,7 +134,7 @@ export class Office {
     }).join('');
     const spoiled = (r.spoiled || []).length ? `<div class="tip">Spoiled this morning: ${r.spoiled.map((s) => `${s.n} ${ING[s.ing].name.toLowerCase()}${s.well ? ' (prep well)' : ''}`).join(', ')}</div>` : '';
     return `${kpis}<div class="cols2">
-      <div class="card"><h3>Day ${r.day} profit & loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
+      <div class="card receipt"><h3>Day ${r.day} · Profit &amp; Loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="card"><h3>Net profit, last ${hist.length} day${hist.length > 1 ? 's' : ''}</h3>${spark}</div>
         <div class="card"><h3>Reviews</h3><div class="reviews">${reviews.length ? reviews.map((v) => `<div class="review ${v.critic ? 'critic' : ''}"><span class="st">${'★'.repeat(v.stars)}${'☆'.repeat(5 - v.stars)}</span> ${esc(v.text)} <span class="who">${esc(v.name)}${v.critic ? ', food critic' : ''}</span></div>`).join('') : '<div class="tip">No reviews today.</div>'}</div></div>

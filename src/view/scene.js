@@ -419,18 +419,38 @@ export class View {
     for (const l of this.lamps) l.intensity += ((evening * 14) - l.intensity) * Math.min(1, dt * 2);
   }
 
-  setCameraMode(mode) { this.camMode = mode; }
+  setCameraMode(mode) {
+    this.camMode = mode;
+    this.zoomTarget = mode === 'follow' ? 0.72 : 0;
+  }
+
+  /** Mouse wheel: positive delta zooms out. Zoom 0 = whole room, 1 = closest. */
+  zoomBy(delta) {
+    this.zoomTarget = Math.max(0, Math.min(1, (this.zoomTarget || 0) - delta));
+    this.camMode = this.zoomTarget > 0.02 ? 'follow' : 'overview';
+  }
 
   updateCamera(dt, opts) {
-    let pos, look;
-    if (this.camMode === 'follow' && opts.self && this.chefs.get(opts.self)) {
-      const c = this.chefs.get(opts.self);
-      look = new THREE.Vector3(c.x, 0.6, c.z - 0.6);
-      pos = look.clone().add(new THREE.Vector3(0, 9.5, 7.2));
-    } else if (this.overview) {
-      pos = this.overview.pos; look = this.overview.look;
-    } else return;
-    const k = Math.min(1, dt * 5);
+    if (!this.overview) return;
+    if (this.zoom == null) { this.zoom = 0; this.zoomTarget = 0; }
+    this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, dt * 8);
+    const O = this.overview.pos, OL = this.overview.look;
+    const dir = _v.copy(O).sub(OL);
+    const d0 = dir.length();
+    dir.divideScalar(d0);
+    let fx = OL.x, fz = OL.z;
+    const c = opts.self && this.chefs.get(opts.self);
+    if (c) {
+      fx = THREE.MathUtils.clamp(c.x, 4, RW - 4);
+      fz = THREE.MathUtils.clamp(c.z - 0.3, 2.5, RH - 3);
+    }
+    const z = this.zoom;
+    const look = this._look || (this._look = new THREE.Vector3());
+    look.set(OL.x + (fx - OL.x) * z, OL.y + (0.5 - OL.y) * z, OL.z + (fz - OL.z) * z);
+    const dist = d0 * (1 - 0.62 * z);
+    const pos = this._pos || (this._pos = new THREE.Vector3());
+    pos.copy(look).addScaledVector(dir, dist);
+    const k = Math.min(1, dt * 6);
     this.camPos.lerp(pos, k);
     this.camLook.lerp(look, k);
     this.camera.position.copy(this.camPos);

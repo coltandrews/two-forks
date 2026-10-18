@@ -339,6 +339,7 @@ export function serveTo(sim, pid, table, item, dry) {
   table.served = table.served || [];
   table.served.push({ dish: id, tpl: dish.tpl, seat: guestSeat(p, line.guest) });
   sim.emit({ type: 'sfx', name: 'serve', x: table.x + 1, z: table.z + 1 });
+  sim.emit({ type: 'served', x: table.x + (table.seats === 4 ? 1 : 1.5), z: table.z + (table.seats === 4 ? 1.5 : 0.5), cold, great: q > 0.95 && !cold });
   if (!p.items.some((x) => !x.served)) {
     const waited = sim.time - (p.state === 'dessertWait' ? p.dessertAt : p.orderedAt);
     S.today.ticketTimes.push(waited);
@@ -497,9 +498,11 @@ function review(sim, party, paid) {
   if (S.rep.ratings.length > CFG.rep.window) S.rep.ratings.shift();
   S.today.ratings.push(stars);
   const r = { day: S.day, stars, text, name: party.name, critic: party.kind === 'critic', size: party.size };
+  const rt = S.objects.find((o) => o.id === party.table);
+  const at = rt ? { x: rt.x + (rt.seats === 4 ? 1 : 1.5), z: rt.z + (rt.seats === 4 ? 1.5 : 0.5) } : { x: 2.5, z: 12.5 };
   S.reviews.unshift(r);
   if (S.reviews.length > 30) S.reviews.pop();
-  sim.emit({ type: 'review', review: r });
+  sim.emit({ type: 'review', review: r, x: at.x, z: at.z });
   const lv = repLevel(S.rep.points);
   if (lv > S.rep.level) {
     S.rep.level = lv;

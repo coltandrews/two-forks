@@ -96,7 +96,7 @@ export class Lobby {
         break;
       case 'saves': {
         const saves = listSaves();
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 style="font-size:2.6rem">${this.mode === 'solo' ? 'Practice solo' : 'Host a restaurant'}</h1><p>Pick up where you left off, or open somewhere new.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Practice solo' : 'Host a restaurant'}</h1><p>Pick up where you left off, or open somewhere new.</p></div>
         <div class="saves">${saves.map((s) => {
           const c = CUISINES[s.cuisine];
           return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)}</b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
@@ -106,7 +106,7 @@ export class Lobby {
       }
       case 'new': {
         const c = CUISINES[this.pick];
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 style="font-size:2.6rem">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
         <div class="cuisines">${CUISINE_ORDER.map((id) => {
           const z = CUISINES[id];
           const p = z.palette;
@@ -119,12 +119,12 @@ export class Lobby {
         break;
       }
       case 'join':
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 style="font-size:2.6rem">Join your partner</h1><p>Ask them for the room code in the bottom-right corner of their screen.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">Join your partner</h1><p>Ask them for the room code in the bottom-right corner of their screen.</p></div>
         <div class="field" style="max-width:360px;margin:16px auto"><input class="codein" data-in="code" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" value="${esc(this.code || '')}"></div>
         <div style="text-align:center"><button class="btn primary" data-act="join" ${this.joining ? 'disabled' : ''}>${this.joining ? '<span class="spinner"></span>Knocking on the back door…' : 'Join the kitchen'}</button><p class="err">${esc(this.err || '')}</p></div>`;
         break;
       case 'import':
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 style="font-size:2.6rem">Import a save code</h1><p>Paste a code from the Restaurant tab or the pause menu.</p></div>
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">Import a save code</h1><p>Paste a code from the Restaurant tab or the pause menu.</p></div>
         <textarea class="code" data-in="import" placeholder="TF1.…"></textarea><p class="err">${esc(this.err || '')}</p>
         <div class="lobby-foot"><button class="btn primary" data-act="doimport">Load it</button></div>`;
         break;
@@ -143,7 +143,7 @@ export class Lobby {
     const L = p.look;
     const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}"></button>`).join('')}</div>`;
     const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0">Off</button></span>`;
-    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 style="font-size:2.4rem">${this.firstChef ? 'Before you clock in' : 'Your chef'}</h1><p>Your partner sees this chef in their kitchen too.</p></div>
+    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 class="small">${this.firstChef ? 'Before you clock in' : 'Your chef'}</h1><p>Your partner sees this chef in their kitchen too.</p></div>
       <div class="chef-ed"><div class="chef-prev" id="chef-prev"></div><div class="opts">
         <div class="field" style="margin-top:0"><label>Chef name</label><input data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
         <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>

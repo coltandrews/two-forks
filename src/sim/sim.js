@@ -201,7 +201,7 @@ export class Sim {
     S.today.repStart = S.rep.points;
     // A first party arrives right away so there is something to do.
     S.today.schedule = [CFG.serviceStart + 3, ...buildSchedule(S.today.expected - 1, this.playerCount()).filter((t) => t > CFG.serviceStart + 12)];
-    this.emit({ type: 'toast', text: `Doors open! ${WEEKDAYS[(S.day - 1) % 7]}, day ${S.day}.`, kind: 'good' });
+    this.emit({ type: 'banner', text: 'DOORS OPEN!', sub: `${WEEKDAYS[(S.day - 1) % 7]} · Day ${S.day}`, color: 'green' });
     this.emit({ type: 'sfx', name: 'bell' });
   }
 
@@ -306,14 +306,14 @@ export class Sim {
         }
         if (S.clock >= CFG.doorsLock && !this.lockAnnounced) {
           this.lockAnnounced = true;
-          this.emit({ type: 'toast', text: 'Last seating. The doors are locked.', kind: 'warn' });
+          this.emit({ type: 'banner', text: 'LAST SEATING', sub: 'The doors are locked for new guests', color: 'yellow', ms: 1800 });
         }
         if (S.clock >= CFG.serviceEnd) {
           S.phase = 'closing';
           this.lockAnnounced = false;
           // Unseated parties go home.
           for (const p of S.parties) if (p.state === 'waiting' || p.state === 'entering' || p.state === 'following') sendHome(this, p);
-          this.emit({ type: 'toast', text: 'Closing time. Finish the last tables.', kind: 'warn' });
+          this.emit({ type: 'banner', text: 'CLOSING TIME', sub: 'Finish up the last tables', color: 'red', ms: 1800 });
         }
       }
       updateParties(this, dt);

@@ -8,6 +8,7 @@ import { describe } from './sim/kitchen.js';
 import { View } from './view/scene.js';
 import { Overlay } from './ui/overlay.js';
 import { Hud } from './ui/hud.js';
+import { Fx } from './ui/fx.js';
 import { Office } from './ui/office.js';
 import { Lobby, loadProfile, saveProfile, writeSave } from './ui/lobby.js';
 import { Session } from './net/session.js';
@@ -21,6 +22,7 @@ class App {
     this.view = new View(this.root);
     this.overlay = new Overlay(document.getElementById('markers'), this.view);
     this.hud = new Hud(this);
+    this.fx = new Fx(this.root);
     this.office = new Office(this);
     this.lobby = new Lobby(this);
     this.input = new Input();
@@ -33,8 +35,15 @@ class App {
     this.bindKeys();
     this.hookModalClose();
     this.view.renderer.domElement.addEventListener('pointerdown', (e) => this.canvasClick(e));
+    window.addEventListener('wheel', (e) => {
+      if (!this.session || !this.lobby.root.hidden || this.office.open || this.hud.modalOpen) return;
+      e.preventDefault();
+      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      this.view.zoomBy(Math.max(-0.25, Math.min(0.25, d * (e.ctrlKey ? 0.01 : 0.0018))));
+    }, { passive: false });
     window.addEventListener('beforeunload', () => this.autosave());
     document.getElementById('boot').remove();
+    if (document.fonts && document.fonts.load) document.fonts.load('80px "Lilita One"').then(() => { this.view.roomKey = ''; }).catch(() => {});
     this.lobby.show(this.profile && this.profile.name ? 'title' : 'title');
     requestAnimationFrame(() => this.frame());
   }
@@ -149,12 +158,30 @@ class App {
           const t = p && st.objects.find((o) => o.id === p.table);
           if (t) a = { x: t.x + (t.seats === 4 ? 1 : 1.5), y: 1.8, z: t.z + (t.seats === 4 ? 1.5 : 0.5) };
         } else if (e.x != null) a = { x: e.x, y: 1.6, z: e.z };
-        if (a) this.overlay.float(e.text, a.x, a.y, a.z, e.text.startsWith('+$') ? 'money' : '');
+        if (a) {
+          const money = e.text.startsWith('+$');
+          this.overlay.float(e.text, a.x, a.y, a.z, money ? 'money' : '');
+          if (money) { const sp = this.view.toScreen(a.x, a.y, a.z); this.fx.coins(sp.x, sp.y, 6); }
+        }
         break;
       }
-      case 'review': if (e.review.stars >= 5 || e.review.stars <= 1 || e.review.critic) this.hud.toast(`${'★'.repeat(e.review.stars)}${'☆'.repeat(5 - e.review.stars)}  "${e.review.text}"`, e.review.stars >= 4 ? 'good' : 'bad', 4200); break;
-      case 'levelUp': this.hud.levelUp(e.level, e.dishes); break;
-      case 'dayEnd': this.hud.closeModal(); this.office.show(st, 'report'); break;
+      case 'served': this.overlay.float(e.cold ? 'cold…' : e.great ? '♥ yum!' : '♥', e.x, 1.7, e.z, e.cold ? '' : 'heart'); break;
+      case 'banner': this.fx.banner(e.text, e.sub, e.color, e.ms); break;
+      case 'review': {
+        const r = e.review;
+        if (e.x != null) this.overlay.float('★'.repeat(r.stars), e.x, 2.1, e.z, 'star');
+        if (r.stars >= 5 || r.stars <= 1 || r.critic) this.hud.toast(`${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}  "${r.text}"`, r.stars >= 4 ? 'good' : 'bad', 4200);
+        break;
+      }
+      case 'levelUp': this.hud.levelUp(e.level, e.dishes); this.fx.confetti(); break;
+      case 'dayEnd': {
+        this.hud.closeModal();
+        const r = e.report;
+        this.fx.banner('CLOSED!', `Day ${r.day} · ${r.net >= 0 ? 'profit' : 'loss'} ${(r.net < 0 ? '−$' : '$') + Math.abs(r.net).toFixed(2)}`, r.net >= 0 ? 'green' : 'red', 2200);
+        this.office.show(st, 'report');
+        if (r.net > 0) setTimeout(() => this.fx.confetti(60), 300);
+        break;
+      }
       case 'morning': this.office.hide(); break;
       case 'save': if (this.session.role !== 'client') setTimeout(() => this.autosave(), 50); break;
     }
@@ -177,8 +204,7 @@ class App {
     });
     this.input.on('c', () => {
       if (!inGame()) return;
-      this.view.setCameraMode(this.view.camMode === 'overview' ? 'follow' : 'overview');
-      this.hud.toast(this.view.camMode === 'follow' ? 'Close-up camera (C to switch back)' : 'Whole-room camera', '', 1500);
+      this.view.setCameraMode((this.view.zoomTarget || 0) > 0.3 ? 'overview' : 'follow');
     });
     this.input.on('tab', () => {
       if (!inGame()) return false;

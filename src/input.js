@@ -1,21 +1,46 @@
-// Keyboard state. Movement keys are polled; action keys fire callbacks once
-// per press (no key repeat).
-const MOVE = {
-  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
-  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
-};
+// Keyboard state. Movement keys are polled and can be rebound (arrow keys
+// always work too); action keys fire callbacks once per press.
+const DEFAULT_BINDS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' };
+const RESERVED = new Set(['KeyE', 'KeyQ', 'KeyB', 'KeyO', 'KeyC', 'KeyH', 'Tab', 'Space', 'Enter']);
+const ARROWS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+
+export function keyName(code) {
+  if (!code) return '?';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  return { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=' }[code] || code;
+}
 
 export class Input {
   constructor() {
     this.held = { up: false, down: false, left: false, right: false, space: false };
     this.handlers = {};
     this.enabled = true;
-    window.addEventListener('keydown', (e) => this.down(e));
-    window.addEventListener('keyup', (e) => this.up(e));
+    this.binds = { ...DEFAULT_BINDS };
+    try { Object.assign(this.binds, JSON.parse(localStorage.getItem('tf-binds') || '{}')); } catch { /* ignore */ }
+    this.capture = null;
+    window.addEventListener('keydown', (e) => this.down(e), true);
+    window.addEventListener('keyup', (e) => this.up(e), true);
     window.addEventListener('blur', () => { for (const k of Object.keys(this.held)) this.held[k] = false; });
   }
 
   on(key, fn) { this.handlers[key] = fn; }
+
+  /** Next key press rebinds a direction. Calls done(code) when set. */
+  rebind(dir, done) { this.capture = { dir, done }; }
+
+  resetBinds() {
+    this.binds = { ...DEFAULT_BINDS };
+    this.saveBinds();
+  }
+
+  saveBinds() { try { localStorage.setItem('tf-binds', JSON.stringify(this.binds)); } catch { /* ignore */ } }
+
+  moveFor(code) {
+    if (ARROWS[code]) return ARROWS[code];
+    for (const [dir, c] of Object.entries(this.binds)) if (c === code) return dir;
+    return null;
+  }
 
   typing(e) {
     const t = e.target;
@@ -23,8 +48,22 @@ export class Input {
   }
 
   down(e) {
+    if (this.capture) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (RESERVED.has(e.code)) { const { done } = this.capture; this.capture = null; done(null, true); return; }
+      if (e.code !== 'Escape') {
+        const { dir, done } = this.capture;
+        for (const [d, c] of Object.entries(this.binds)) if (c === e.code && d !== dir) this.binds[d] = this.binds[dir];
+        this.binds[dir] = e.code;
+        this.saveBinds();
+        this.capture = null;
+        done(e.code);
+      } else { const { done } = this.capture; this.capture = null; done(null); }
+      return;
+    }
     if (this.typing(e)) return;
-    const m = MOVE[e.code];
+    const m = this.moveFor(e.code);
     if (m) {
       if (this.enabled) { this.held[m] = true; e.preventDefault(); }
       if (this.handlers.move) this.handlers.move();
@@ -36,6 +75,7 @@ export class Input {
       return;
     }
     if (e.repeat) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.code === 'Escape' ? 'esc' : e.code === 'Tab' ? 'tab' : /^Digit\d$/.test(e.code) ? 'digit' : e.code.replace('Key', '').toLowerCase();
     const h = this.handlers[k];
     if (h) {
@@ -45,7 +85,7 @@ export class Input {
   }
 
   up(e) {
-    const m = MOVE[e.code];
+    const m = this.moveFor(e.code);
     if (m) this.held[m] = false;
     if (e.code === 'Space') this.held.space = false;
   }

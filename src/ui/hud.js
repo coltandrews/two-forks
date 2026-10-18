@@ -10,6 +10,7 @@ import { plateDiff, itemLabel, matchDish } from '../sim/items.js';
 import { stockCount, casePrice, avgRating } from '../sim/economy.js';
 import { esc } from './overlay.js';
 import { sfx, volumes, setVolume } from '../audio.js';
+import { keyName } from '../input.js';
 
 export const money = (v) => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const money0 = (v) => (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US');
@@ -19,6 +20,7 @@ export function clockText(m) {
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${hh}:${String(mm).padStart(2, '0')} ${ap}`;
 }
+function setText(el, t) { if (el && el._t !== t) { el.textContent = t; el._t = t; } }
 export function stars(n) { const r = Math.round(n); return '★'.repeat(r) + '☆'.repeat(5 - r); }
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -45,22 +47,22 @@ export class Hud {
     this.modal = document.getElementById('modal');
     this.toasts = document.getElementById('toasts');
     this.root.innerHTML = `
-      <div class="panel hud-tl"><div class="rname"></div><div class="day"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i></div></div>
+      <div class="panel hud-tl"><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="rname"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
       <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div></div>
       <div class="rail"></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
       <div class="hud-bl"><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
-        <span><kbd>WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
+        <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
         <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-        <span><kbd>C</kbd> camera</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span>
+        <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span>
       </div></div>
       <div class="panel hud-br"></div>
       <div class="panel morning" hidden></div>
       <div class="panel closing" hidden></div>`;
     const q = (s) => this.root.querySelector(s);
     this.el = {
-      rname: q('.rname'), day: q('.day'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'),
+      rname: q('.rname'), dn: q('.day .dn'), wk: q('.day .wk'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'), sun: q('.hud-tl .bar b'),
       cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'),
       rail: q('.rail'), prompt: q('.prompt'), need: q('.need'), br: q('.hud-br'), morning: q('.morning'), closing: q('.closing'), keys: q('.keys'),
     };
@@ -89,7 +91,16 @@ export class Hud {
     });
   }
 
-  show(on) { this.root.hidden = !on; }
+  show(on) {
+    this.root.hidden = !on;
+    this.refreshKeys();
+  }
+
+  refreshKeys() {
+    const b = this.app.input.binds;
+    const el = this.root.querySelector('.movekeys');
+    if (el) el.textContent = [b.up, b.left, b.down, b.right].map(keyName).join('');
+  }
 
   toggleKeys(force) {
     this.keysHidden = force != null ? force : !this.keysHidden;
@@ -108,19 +119,31 @@ export class Hud {
       document.documentElement.style.setProperty('--accent', cz.palette.ui);
       document.documentElement.style.setProperty('--accent-dark', cz.palette.uiDark);
     }
-    e.rname.textContent = state.name;
-    e.day.textContent = `Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]}`;
+    setText(e.rname, state.name);
+    setText(e.dn, `DAY ${state.day}`);
+    setText(e.wk, WEEKDAYS[(state.day - 1) % 7].toUpperCase());
     const ph = state.phase;
-    e.clock.textContent = ph === 'morning' ? 'Morning prep' : ph === 'office' ? 'After hours' : clockText(state.clock);
-    e.phase.textContent = state.paused ? 'Paused' : ph === 'service' ? (state.clock >= CFG.doorsLock ? 'Last seating passed' : 'Open') : ph === 'closing' ? 'Closing' : ph === 'morning' ? 'Doors closed' : 'Office';
-    const frac = ph === 'service' ? (state.clock - CFG.serviceStart) / (CFG.serviceEnd - CFG.serviceStart) : ph === 'closing' ? 1 : 0;
+    setText(e.clock, ph === 'morning' ? 'Prep time' : ph === 'office' ? 'After hours' : clockText(state.clock));
+    setText(e.phase, state.paused ? 'Paused' : ph === 'service' ? (state.clock >= CFG.doorsLock ? 'Last seating passed' : 'Open for business') : ph === 'closing' ? 'Closing up' : ph === 'morning' ? 'Doors closed' : 'Office');
+    e.phase.className = 'phase ' + (ph === 'service' ? 'open' : ph === 'closing' ? 'closing' : '');
+    const frac = ph === 'service' ? (state.clock - CFG.serviceStart) / (CFG.serviceEnd - CFG.serviceStart) : ph === 'closing' || ph === 'office' ? 1 : 0;
     e.dayBar.style.width = (frac * 100).toFixed(1) + '%';
-    e.cash.textContent = money(state.cash);
+    e.sun.style.left = (frac * 100).toFixed(1) + '%';
+    const night = ph === 'office' || (ph !== 'morning' && state.clock >= 19 * 60);
+    setText(e.sun, night ? '☾' : '☀');
+    e.sun.classList.toggle('moon', night);
+    const cashText = money(state.cash);
+    if (cashText !== e.cash.textContent) {
+      if (this.lastCash != null && state.cash > this.lastCash) { e.cash.classList.remove('bump'); void e.cash.offsetWidth; e.cash.classList.add('bump'); }
+      this.lastCash = state.cash;
+      e.cash.textContent = cashText;
+    }
     e.cash.classList.toggle('neg', state.cash < 0);
     const avg = avgRating(state);
-    e.rating.innerHTML = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : '<span class="stars">☆☆☆☆☆</span> no reviews yet';
+    const rh = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : '<span class="stars">☆☆☆☆☆</span> no reviews yet';
+    if (rh !== e.rating._h) { e.rating.innerHTML = rh; e.rating._h = rh; }
     const lv = state.rep.level, next = nextLevelAt(lv), prev = CFG.rep.levels[lv - 1] || 0;
-    e.lvl.textContent = next != null ? `Reputation level ${lv} · ${Math.floor(state.rep.points)}/${next}` : `Reputation level ${lv} · max`;
+    setText(e.lvl, next != null ? `Reputation Lv ${lv} · ${Math.floor(state.rep.points)}/${next}` : `Reputation Lv ${lv} · max`);
     e.lvlBar.style.width = next != null ? Math.min(100, ((state.rep.points - prev) / (next - prev)) * 100).toFixed(1) + '%' : '100%';
 
     this.updatePrompt(state, info);
@@ -214,45 +237,76 @@ export class Hud {
     return lines.join(' &nbsp;·&nbsp; ');
   }
 
-  updateRail(state, info) {
+  updateRail(state) {
     const parties = state.parties.filter((p) => p.ticket && (p.items.some((x) => !x.served) || p.drinks.some((x) => !x.served)) && ['waitingFood', 'dessertWait', 'eating', 'dessertEat'].includes(p.state));
     parties.sort((a, b) => a.ticket - b.ticket);
-    const max = Math.max(1, Math.floor((this.el.rail.clientWidth + 8) / 166));
-    let h = '';
+    const max = Math.max(1, Math.floor((this.el.rail.clientWidth + 10) / 182));
     const firstFood = parties.find((p) => p.items.some((x) => !x.served));
-    parties.slice(0, max).forEach((p) => {
+    const shown = parties.slice(0, max);
+    this.tickets = this.tickets || new Map();
+    const keep = new Set();
+    let prev = null;
+    for (const p of shown) {
+      const key = p.id + ':' + p.ticket;
+      keep.add(key);
+      let el = this.tickets.get(key);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'ticket';
+        el.innerHTML = '<header><span class="num"></span><span class="tm"></span></header><div class="body"></div>';
+        this.tickets.set(key, el);
+      }
       const t = state.objects.find((o) => o.id === p.table);
       const since = p.state === 'dessertWait' ? p.dessertAt : p.orderedAt;
-      const el = Math.max(0, (state.t || 0) - since);
-      const ratio = el / (p.grace || 90);
-      const cls = p.state === 'eating' || p.state === 'dessertEat' ? 'eating' : ratio > 1 ? 'late' : ratio > 0.6 ? 'mid' : '';
-      const mm = Math.floor(el / 60), ss = Math.floor(el % 60);
-      h += `<div class="ticket ${cls}"><header><span>#${p.ticket} · T${t ? t.num : '?'}</span><span>${mm}:${String(ss).padStart(2, '0')}</span></header>`;
-      const openIdx = [];
-      p.items.forEach((x) => { if (!x.served) openIdx.push(x); });
-      const groups = new Map();
-      for (const x of p.items) {
-        const k = x.id + (x.served ? ':s' : ':o');
-        const g = groups.get(k) || { id: x.id, served: x.served, n: 0, first: x };
-        g.n++;
-        groups.set(k, g);
+      const secs = Math.max(0, (state.t || 0) - since);
+      const ratio = secs / (p.grace || 90);
+      const cls = 'ticket ' + (p.state === 'eating' || p.state === 'dessertEat' ? 'eating' : ratio > 1 ? 'late' : ratio > 0.6 ? 'mid' : '');
+      if (el.className !== cls) el.className = cls;
+      setText(el.querySelector('.num'), `#${p.ticket} · T${t ? t.num : '?'}`);
+      setText(el.querySelector('.tm'), `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`);
+      const body = this.ticketBody(state, p, p === firstFood);
+      const b = el.querySelector('.body');
+      if (b._h !== body) { b.innerHTML = body; b._h = body; }
+      const want = prev ? prev.nextSibling : this.el.rail.firstChild;
+      if (el !== want) this.el.rail.insertBefore(el, want);
+      prev = el;
+    }
+    for (const [k, el] of this.tickets) if (!keep.has(k)) { el.remove(); this.tickets.delete(k); }
+    let more = this.el.rail.querySelector('.more');
+    if (parties.length > max) {
+      if (!more) { more = document.createElement('div'); more.className = 'more'; }
+      setText(more, `+${parties.length - max}`);
+      this.el.rail.appendChild(more);
+    } else if (more) more.remove();
+  }
+
+  ticketBody(state, p, withComps) {
+    let h = '';
+    const openIdx = p.items.filter((x) => !x.served);
+    const groups = new Map();
+    for (const x of p.items) {
+      const k = x.id + (x.served ? ':s' : ':o');
+      const g = groups.get(k) || { id: x.id, served: x.served, n: 0, first: x };
+      g.n++;
+      groups.set(k, g);
+    }
+    for (const g of groups.values()) {
+      const d = dishById(state, g.id);
+      if (!d) continue;
+      const comps = d.comps.map(([i, s]) => lc(stateInfo(i, s).label)).join(' · ');
+      const idx = openIdx.indexOf(g.first);
+      h += `<div class="ln ${g.served ? 'done' : ''}" title="${esc(comps)}">${g.n > 1 ? g.n + '× ' : ''}${esc(d.name)}${!g.served ? `<button class="x" data-party="${p.id}" data-index="${idx}" title="Can't make it: take it off the order">✕</button>` : ''}</div>`;
+      if (!g.served && withComps) {
+        h += `<div class="comps">${d.comps.map(([i, s]) => { const info = stateInfo(i, s); return `<i><s style="background:${hex(info.color)}"></s>${esc(lc(info.label))}</i>`; }).join('')}</div>`;
+      } else if (!g.served) {
+        h += `<div class="comps">${d.comps.map(([i, s]) => `<i title="${esc(stateInfo(i, s).label)}"><s style="background:${hex(stateInfo(i, s).color)}"></s></i>`).join('')}</div>`;
       }
-      for (const g of groups.values()) {
-        const d = dishById(state, g.id);
-        if (!d) continue;
-        const comps = d.comps.map(([i, s]) => lc(stateInfo(i, s).label)).join(' · ');
-        const idx = openIdx.indexOf(g.first);
-        h += `<div class="ln ${g.served ? 'done' : ''}" title="${esc(comps)}">${g.n > 1 ? g.n + '× ' : ''}${esc(d.name)}${!g.served ? `<button class="x" data-party="${p.id}" data-index="${idx}" title="Can't make it: take it off the order">✕</button>` : ''}</div>`;
-        if (!g.served && p === firstFood) h += `<div class="comps">${esc(comps)}</div>`;
-      }
-      const dr = new Map();
-      for (const x of p.drinks) if (!x.served) dr.set(x.id, (dr.get(x.id) || 0) + 1);
-      for (const [id, n] of dr) h += `<div class="ln drk">${n > 1 ? n + '× ' : ''}${esc(drinkById(state, id).name)}</div>`;
-      if (p.kind === 'critic') h += '<span class="crit">CRITIC</span>';
-      h += '</div>';
-    });
-    if (parties.length > max) h += `<div class="more">+${parties.length - max} more</div>`;
-    if (h !== this.lastRail) { this.el.rail.innerHTML = h; this.lastRail = h; }
+    }
+    const dr = new Map();
+    for (const x of p.drinks) if (!x.served) dr.set(x.id, (dr.get(x.id) || 0) + 1);
+    for (const [id, n] of dr) h += `<div class="ln drk">${n > 1 ? n + '× ' : ''}${esc(drinkById(state, id).name)}</div>`;
+    if (p.kind === 'critic') h += '<span class="crit">CRITIC</span>';
+    return h;
   }
 
   updateCorner(state, info) {
@@ -431,6 +485,9 @@ export class Hud {
       <div class="sub">${host ? 'The game pauses for both of you while this is open.' : 'The kitchen keeps running while this is open.'}</div>
       <div class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></div>
       <div class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></div>
+      <div class="section-title">Movement keys</div>
+      <div class="binds">${['up', 'left', 'down', 'right'].map((d) => `<label>${d}<button class="btn small" data-bind="${d}">${keyName(this.app.input.binds[d])}</button></label>`).join('')}<button class="btn small ghost" data-bind="reset">Reset</button></div>
+      <div class="hint-line">Arrow keys always work too. Click a key, then press the new one.</div>
       <div class="stack">
         <button class="btn primary" data-act="resume">Back to the kitchen</button>
         <button class="btn" data-act="chef">Change my chef</button>
@@ -439,6 +496,18 @@ export class Hud {
       </div>`;
     this.openSheet('pause', html);
     this.modal.querySelectorAll('input[data-vol]').forEach((inp) => { inp.oninput = () => setVolume(inp.dataset.vol, +inp.value); });
+    this.modal.querySelectorAll('button[data-bind]').forEach((b) => {
+      b.onclick = () => {
+        const d = b.dataset.bind;
+        if (d === 'reset') { this.app.input.resetBinds(); this.openPause(state, info); this.refreshKeys(); return; }
+        b.textContent = 'Press a key…';
+        this.app.input.rebind(d, (code, reserved) => {
+          if (reserved) this.toast('That key is already used for something else.', 'warn');
+          this.openPause(state, info);
+          this.refreshKeys();
+        });
+      };
+    });
     this.modal.querySelectorAll('button[data-act]').forEach((b) => {
       b.onclick = () => {
         const a = b.dataset.act;

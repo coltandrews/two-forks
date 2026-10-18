@@ -13,25 +13,33 @@ function nameSign(name, style, pal) {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 192;
   const g = c.getContext('2d');
-  g.fillStyle = pal.uiDark;
-  g.fillRect(0, 0, 1024, 192);
-  g.strokeStyle = pal.ui;
-  g.lineWidth = 10;
-  g.strokeRect(14, 14, 996, 164);
-  g.fillStyle = '#fbf3e4';
+  const r = 28;
+  const rr = (x, y, w, h, rad) => { g.beginPath(); g.moveTo(x + rad, y); g.arcTo(x + w, y, x + w, y + h, rad); g.arcTo(x + w, y + h, x, y + h, rad); g.arcTo(x, y + h, x, y, rad); g.arcTo(x, y, x + w, y, rad); g.closePath(); };
+  g.fillStyle = '#2a1b12';
+  rr(0, 0, 1024, 192, r); g.fill();
+  g.fillStyle = '#7a4a2a';
+  rr(10, 10, 1004, 172, r - 8); g.fill();
+  g.fillStyle = '#8f5a33';
+  for (let i = 0; i < 4; i++) g.fillRect(18, 24 + i * 40, 988, 3);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  let size = 92;
-  g.font = `${size}px Gloock, Georgia, serif`;
-  while (g.measureText(name).width > 900 && size > 40) { size -= 4; g.font = `${size}px Gloock, Georgia, serif`; }
-  g.fillText(name, 512, 88);
-  g.font = '28px "Courier Prime", monospace';
-  g.fillStyle = pal.ui;
-  g.fillText(style.toUpperCase() + '  ·  EST. TODAY', 512, 152);
+  let size = 104;
+  const font = (n) => `${n}px "Lilita One", "Arial Rounded MT Bold", sans-serif`;
+  g.font = font(size);
+  while (g.measureText(name).width > 900 && size > 40) { size -= 4; g.font = font(size); }
+  g.lineJoin = 'round';
+  g.lineWidth = 16;
+  g.strokeStyle = '#2a1b12';
+  g.strokeText(name, 512, 84);
+  g.fillStyle = '#ffc83c';
+  g.fillText(name, 512, 80);
+  g.font = font(30);
+  g.fillStyle = '#ffe8c4';
+  g.fillText(style.toUpperCase() + '  ★  EST. TODAY', 512, 154);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.98), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.98), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false, transparent: true }));
   return m;
 }
 
