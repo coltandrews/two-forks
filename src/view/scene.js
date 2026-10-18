@@ -13,6 +13,7 @@ import { Shape, MAT, meshOf } from './shape.js';
 import { mix } from './shape.js';
 
 const RW = MAP[0].length, RH = MAP.length;
+const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
 
 export class View {
@@ -431,7 +432,7 @@ export class View {
 
   setCameraMode(mode) {
     this.camMode = mode;
-    this.zoomTarget = mode === 'follow' ? 0.72 : 0;
+    this.zoomTarget = mode === 'follow' ? DEFAULT_ZOOM : 0;
   }
 
   /** Mouse wheel: positive delta zooms out. Zoom 0 = whole room, 1 = closest. */
@@ -442,7 +443,8 @@ export class View {
 
   updateCamera(dt, opts) {
     if (!this.overview) return;
-    if (this.zoom == null) { this.zoom = 0; this.zoomTarget = 0; }
+    if (this.zoom == null) { this.zoom = 0; }
+    if (this.zoomTarget == null) this.zoomTarget = DEFAULT_ZOOM;
     this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, dt * 8);
     const O = this.overview.pos, OL = this.overview.look;
     const dir = _v.copy(O).sub(OL);

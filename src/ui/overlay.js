@@ -43,11 +43,22 @@ export class Overlay {
 
   html(e, h) { if (e._html !== h) { e.innerHTML = h; e._html = h; } }
 
-  place(e, a, dy = 0) {
+  place(e, a, dy = 0, pin = false) {
     if (!a) { e.style.display = 'none'; return; }
     const p = this.view.toScreen(a.x, a.y, a.z);
-    e.style.display = p.on ? '' : 'none';
-    e.style.transform = `translate(${p.x.toFixed(1)}px, ${(p.y + dy).toFixed(1)}px) translate(-50%, -100%)`;
+    let x = p.x, y = p.y + dy;
+    let off = false;
+    if (pin) {
+      // Keep calls for attention on screen, pinned to the nearest edge.
+      const W = this.root.clientWidth, H = this.root.clientHeight;
+      const L = 250, R = W - 150, T = 150, B = H - 70;
+      const cx = Math.max(L, Math.min(R, x)), cy = Math.max(T, Math.min(B, y));
+      off = cx !== x || cy !== y || !p.on;
+      x = cx; y = cy;
+    }
+    e.classList.toggle('edge', off);
+    e.style.display = p.on || pin ? '' : 'none';
+    e.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
   }
 
   /** extra: seconds since the last snapshot, so client rings move smoothly. */
@@ -118,7 +129,7 @@ export class Overlay {
           const mood = waiting ? waiting.mood : 100;
           const e = this.el(o.id, 'bubble host');
           this.html(e, `<span class="ic">${ICON.bang}</span><span>${q} waiting</span>${moodBar(mood)}`);
-          this.place(e, { ...a, y: 2.0 });
+          this.place(e, { ...a, y: 2.0 }, 0, true);
         }
       } else if (o.type === 'table') {
         this.tableMarker(state, o, a);
@@ -195,7 +206,7 @@ export class Overlay {
     const work = p.workP > 0 && (p.state === 'ordering' || p.state === 'dessertReady' || p.state === 'paying') ? `<i class="wp" style="width:${Math.min(100, p.workP * 100).toFixed(0)}%"></i>` : '';
     const critic = p.kind === 'critic' ? '<em>Critic</em>' : '';
     this.html(e, `<span class="ic">${icon}</span><span>${label}</span>${critic}${moodBar(p.mood)}${work}`);
-    this.place(e, a);
+    this.place(e, a, 0, cls.includes('call') || cls.includes('angry'));
   }
 
   float(text, x, y, z, cls = '') {

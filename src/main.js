@@ -105,6 +105,7 @@ class App {
     this.overlay.clear();
     this.hud.show(true);
     this.view.setInsetLeft(232);
+    this.view.setCameraMode('follow');
     startMusic();
     if (st.phase === 'office') this.office.show(st, 'report');
     this.focusGame();
@@ -117,6 +118,7 @@ class App {
     this.hud.closeModal();
     this.hud.show(false);
     this.view.setInsetLeft(0);
+    this.view.zoomTarget = 0;
     this.office.hide();
     this.overlay.clear();
     this.view.clear();
@@ -206,7 +208,7 @@ class App {
     });
     this.input.on('c', () => {
       if (!inGame()) return;
-      this.view.setCameraMode((this.view.zoomTarget || 0) > 0.3 ? 'overview' : 'follow');
+      this.view.setCameraMode((this.view.zoomTarget || 0) > 0.15 ? 'overview' : 'follow');
     });
     this.input.on('tab', () => {
       if (!inGame()) return false;
