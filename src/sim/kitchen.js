@@ -40,7 +40,8 @@ export function findTarget(state, grid, p) {
       const ccx = x + 0.5 - p.x, ccz = z + 0.5 - p.z;
       const cd = Math.hypot(ccx, ccz) || 1;
       const dot = (ccx * fx + ccz * fz) / cd;
-      if (dot < 0.15) continue;
+      // Prefer what is in front; fall back to anything right next to us.
+      if (dot < 0.15 && d > 0.75) continue;
       const s = d - dot * 0.9;
       if (s < bs) { bs = s; best = id; }
     }

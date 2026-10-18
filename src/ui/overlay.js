@@ -124,6 +124,17 @@ export class Overlay {
         this.tableMarker(state, o, a);
       }
     }
+    // What the local chef would use.
+    if (opts.target && showAll) {
+      const a = this.view.anchorOf(opts.target);
+      if (a) {
+        const e = this.el('aim', 'aim');
+        this.html(e, '<svg viewBox="0 0 24 24"><path d="M5 7h14l-7 11z" fill="currentColor" stroke="#2a1b12" stroke-width="2.5" stroke-linejoin="round"/></svg>');
+        const o = state.objects.find((x) => x.id === opts.target);
+        const busy = o && (o.slot || o.well || o.type === 'table');
+        this.place(e, { ...a, y: a.y + (busy ? 0.7 : 0.25) });
+      }
+    }
     // Chef name tags.
     for (const [pid, p] of Object.entries(state.players)) {
       const e = this.el('chef:' + pid, 'tag');

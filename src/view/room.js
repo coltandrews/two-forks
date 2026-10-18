@@ -116,16 +116,18 @@ export function buildRoom(cuisine, name, upgrades) {
     const y = 0.95 + i * 0.16;
     s.box(18, 0.012, 0.01, shade(pal.kitchenA, 0.86), 10, y, 1.005);
   }
-  // Shelf with pans above the back stations.
-  s.box(10, 0.05, 0.3, 0x8a8f94, 10, 2.35, 1.15);
-  for (let i = 0; i < 7; i++) {
-    const x = 5.5 + i * 1.4;
-    if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
-    else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+  // Shelves with pans either side of the name sign.
+  for (const cx of [4.6, 15.4]) {
+    s.box(4.2, 0.05, 0.3, 0x8a8f94, cx, 2.35, 1.15);
+    for (let i = 0; i < 3; i++) {
+      const x = cx - 1.3 + i * 1.3;
+      if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
+      else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+    }
   }
   // Fluorescent strips (glow).
-  glow.box(4, 0.05, 0.08, 0xfffbf0, 5, 2.7, 1.1);
-  glow.box(4, 0.05, 0.08, 0xfffbf0, 14, 2.7, 1.1);
+  glow.box(3.6, 0.05, 0.08, 0xfffbf0, 4.6, 2.72, 1.1);
+  glow.box(3.6, 0.05, 0.08, 0xfffbf0, 15.4, 2.72, 1.1);
 
   // Windows on the dining side walls.
   const winGeo = new Shape();
@@ -154,7 +156,7 @@ export function buildRoom(cuisine, name, upgrades) {
   if (glow.parts.length) root.add(new THREE.Mesh(glow.build(), MAT.glow));
 
   const sign = nameSign(name, cuisine.style, pal);
-  sign.position.set(10, 2.25, 1.02);
+  sign.position.set(10, 2.3, 1.03);
   root.add(sign);
 
   return { root, winMat, pal };

@@ -194,7 +194,7 @@ class App {
   bindKeys() {
     const inGame = () => this.session && this.lobby.root.hidden;
     const canAct = () => inGame() && !this.office.open && !(this.hud.modalOpen && this.hud.modalKind !== 'picker');
-    this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); });
+    this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); this.turnToTarget = 0.35; });
     this.input.on('q', () => { if (canAct()) this.session.press('q'); });
     this.input.on('b', () => {
       if (!inGame() || this.office.open) return;
@@ -296,6 +296,19 @@ class App {
       L.rot += d * Math.min(1, dt * 18);
     }
     const space = !frozen && this.input.held.space;
+    if (!ax.x && !ax.z && (space || this.turnToTarget > 0) && this.aimTarget) {
+      this.turnToTarget = Math.max(0, (this.turnToTarget || 0) - dt);
+      const o = this.aimTarget;
+      const w = o.type === 'table' ? (o.seats === 4 ? 2 : 3) : 1, h = o.type === 'table' ? (o.seats === 4 ? 3 : 1) : 1;
+      const cx = Math.max(o.x, Math.min(L.x, o.x + w)), cz = Math.max(o.z, Math.min(L.z, o.z + h));
+      if (Math.hypot(cx - L.x, cz - L.z) > 0.05) {
+        const want = Math.atan2(cx - L.x, cz - L.z);
+        let d = (want - L.rot) % (Math.PI * 2);
+        if (d > Math.PI) d -= Math.PI * 2;
+        if (d < -Math.PI) d += Math.PI * 2;
+        L.rot += d * Math.min(1, dt * 14);
+      }
+    }
     this.session.setPose(L.x, L.z, L.rot, space);
   }
 
@@ -333,7 +346,8 @@ class App {
     const allPoses = { ...(poses || {}) };
     allPoses[this.selfPid] = { x: this.local.x, z: this.local.z, rot: this.local.rot };
     this.view.sync(st, dt, { self: this.selfPid, poses: allPoses, guestPoses: guests });
-    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt });
+    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, target: info && (info.e || info.space || info.q) ? info.target : null });
+    this.aimTarget = info && info.target ? st.objects.find((o) => o.id === info.target) : null;
     this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, partner: s.partner && s.role === 'host' ? s.partner.name : null, lost: s.lost }, dt);
     this.office.update(st);
     this.view.render();
