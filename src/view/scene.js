@@ -70,6 +70,12 @@ export class View {
     this.resize();
   }
 
+  setInsetLeft(px) {
+    if (Math.abs((this.insetLeft || 0) - px) < 4) return;
+    this.insetLeft = px;
+    this.fitOverview();
+  }
+
   resize() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     this.renderer.setSize(w, h, false);
@@ -89,28 +95,32 @@ export class View {
     for (const x of [0.2, RW - 0.2]) {
       pts.push(new THREE.Vector3(x, 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, 0.5, RH), new THREE.Vector3(x, 0, RH));
     }
-    const mt = 0.13, mb = 0.1, ms = 0.015;
+    const W = this.container.clientWidth || 1;
+    const mt = 0.1, mb = 0.09, ms = 0.015, ml = Math.min(0.3, (this.insetLeft || 0) / W);
     const target = new THREE.Vector3();
-    const fits = (tz, d) => {
-      target.set(RW / 2, 0, tz);
+    const fits = (tz, d, tx = RW / 2) => {
+      target.set(tx, 0, tz);
       cam.position.copy(target).addScaledVector(dir, d);
       cam.lookAt(target);
       cam.updateMatrixWorld();
       for (const p of pts) {
         _v.copy(p).project(cam);
         const sx = (_v.x + 1) / 2, sy = (1 - _v.y) / 2;
-        if (sx < ms || sx > 1 - ms || sy < mt || sy > 1 - mb) return false;
+        if (sx < ml + ms || sx > 1 - ms || sy < mt || sy > 1 - mb) return false;
       }
       return true;
     };
-    let best = { d: Infinity, tz: RH / 2 };
-    for (let tz = RH / 2 - 3; tz <= RH / 2 + 3; tz += 0.25) {
-      let lo = 6, hi = 90;
-      if (!fits(tz, hi)) continue;
-      for (let i = 0; i < 26; i++) { const d = (lo + hi) / 2; if (fits(tz, d)) hi = d; else lo = d; }
-      if (hi < best.d) best = { d: hi, tz };
+    let best = { d: Infinity, tz: RH / 2, tx: RW / 2 };
+    const txs = ml > 0.01 ? [RW / 2, RW / 2 - 1, RW / 2 - 2, RW / 2 - 3, RW / 2 - 4] : [RW / 2];
+    for (const tx of txs) {
+      for (let tz = RH / 2 - 3; tz <= RH / 2 + 3; tz += 0.25) {
+        let lo = 6, hi = 90;
+        if (!fits(tz, hi, tx)) continue;
+        for (let i = 0; i < 24; i++) { const d = (lo + hi) / 2; if (fits(tz, d, tx)) hi = d; else lo = d; }
+        if (hi < best.d) best = { d: hi, tz, tx };
+      }
     }
-    target.set(RW / 2, 0, best.tz);
+    target.set(best.tx, 0, best.tz);
     this.overview = { pos: target.clone().addScaledVector(dir, best.d), look: target.clone() };
     if (!this.camInit) { this.camPos.copy(this.overview.pos); this.camLook.copy(this.overview.look); this.camInit = true; }
     cam.position.copy(this.camPos);

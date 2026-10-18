@@ -104,6 +104,7 @@ class App {
     this.view.clear();
     this.overlay.clear();
     this.hud.show(true);
+    this.view.setInsetLeft(232);
     startMusic();
     if (st.phase === 'office') this.office.show(st, 'report');
     this.focusGame();
@@ -115,6 +116,7 @@ class App {
     this.session = null;
     this.hud.closeModal();
     this.hud.show(false);
+    this.view.setInsetLeft(0);
     this.office.hide();
     this.overlay.clear();
     this.view.clear();

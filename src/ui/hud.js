@@ -49,10 +49,9 @@ export class Hud {
     this.root.innerHTML = `
       <div class="panel hud-tl"><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="rname"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
       <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div></div>
-      <div class="rail"></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
-      <div class="hud-bl"><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
+      <div class="hud-bl"><div class="rail"></div><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
         <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
         <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
         <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span>
@@ -240,7 +239,7 @@ export class Hud {
   updateRail(state) {
     const parties = state.parties.filter((p) => p.ticket && (p.items.some((x) => !x.served) || p.drinks.some((x) => !x.served)) && ['waitingFood', 'dessertWait', 'eating', 'dessertEat'].includes(p.state));
     parties.sort((a, b) => a.ticket - b.ticket);
-    const max = Math.max(1, Math.floor((this.el.rail.clientWidth + 10) / 182));
+    const max = 12;
     const firstFood = parties.find((p) => p.items.some((x) => !x.served));
     const shown = parties.slice(0, max);
     this.tickets = this.tickets || new Map();
@@ -272,10 +271,19 @@ export class Hud {
       prev = el;
     }
     for (const [k, el] of this.tickets) if (!keep.has(k)) { el.remove(); this.tickets.delete(k); }
+    // Tickets that don't fit the column collapse into a counter.
+    const railH = this.el.rail.clientHeight;
+    let hidden = 0;
+    for (const el of this.tickets.values()) {
+      el.style.display = '';
+    }
+    for (const el of this.tickets.values()) {
+      if (el.offsetTop + el.offsetHeight > railH - 34) { el.style.display = 'none'; hidden++; }
+    }
     let more = this.el.rail.querySelector('.more');
-    if (parties.length > max) {
+    if (hidden) {
       if (!more) { more = document.createElement('div'); more.className = 'more'; }
-      setText(more, `+${parties.length - max}`);
+      setText(more, `+${hidden} more ticket${hidden > 1 ? 's' : ''}`);
       this.el.rail.appendChild(more);
     } else if (more) more.remove();
   }
