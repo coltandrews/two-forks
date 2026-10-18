@@ -47,7 +47,7 @@ export function buildRoom(cuisine, name, upgrades) {
   const pal = cuisine.palette;
   const root = new THREE.Group();
   const s = new Shape();
-  const glow = new Shape();
+  const glow = new Shape(false);
 
   // Floors.
   for (let z = 0; z < H; z++) {
@@ -130,19 +130,29 @@ export function buildRoom(cuisine, name, upgrades) {
   glow.box(3.6, 0.05, 0.08, 0xfffbf0, 15.4, 2.72, 1.1);
 
   // Windows on the dining side walls.
-  const winGeo = new Shape();
+  const winGeo = new Shape(false);
+  const outside = new Shape(false);
   for (const z of [7.5, 10.5]) {
     for (const x of [0.5 + 0.52, W - 0.5 - 0.52]) {
+      const face = x < W / 2 ? 1 : -1;
+      const front = x + face * 0.018;
       winGeo.box(0.02, 1.0, 1.5, 0xbfe0f0, x, 1.55, z);
+      outside.box(0.025, 0.24, 1.46, 0x667875, front, 1.17, z);
+      outside.box(0.03, 0.42, 0.34, 0x536565, front, 1.31, z - 0.48);
+      outside.box(0.03, 0.3, 0.42, 0x5e6f6d, front, 1.25, z - 0.08);
+      outside.box(0.03, 0.5, 0.3, 0x4b5d5d, front, 1.35, z + 0.33);
+      outside.sphere(0.18, 0x476455, front, 1.48, z + 0.56, 0.1, 1.25, 1, 6);
       s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z - 0.79);
       s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z + 0.79);
+      s.box(0.06, 1.04, 0.045, trimC, x + face * 0.012, 1.55, z);
+      s.box(0.065, 0.045, 1.58, trimC, x + face * 0.012, 1.55, z);
       s.box(0.06, 0.08, 1.66, trimC, x, 2.07, z);
       s.box(0.12, 0.06, 1.7, trimC, x, 1.02, z);
     }
   }
   const winMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-  const windows = new THREE.Mesh(winGeo.build(), winMat);
-  root.add(windows);
+  const outsideMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  root.add(new THREE.Mesh(winGeo.build(), winMat), new THREE.Mesh(outside.build(), outsideMat));
 
   // Front door gap: mat and an OPEN sign.
   s.box(1.0, 0.012, 0.7, 0x5a3a2a, 2.5, 0.006, 13.6);
@@ -159,7 +169,7 @@ export function buildRoom(cuisine, name, upgrades) {
   sign.position.set(10, 2.3, 1.03);
   root.add(sign);
 
-  return { root, winMat, pal };
+  return { root, winMat, outsideMat, pal };
 }
 
 function frame(s, x, y, z, w, h, c, face) {
@@ -186,14 +196,23 @@ function decor(s, glow, cuisine, pal, up) {
   if (id === 'southern') {
     for (const z of [6.4, 12.6]) { plant(s, 1.4, z, 0.9); }
     for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, x, 2.55, 9.6); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, x, 2.25, 9.6); }
+    for (const x of [6, 14]) {
+      s.cyl(0.035, 0.035, 0.3, 7, 0x594435, x, 2.62, 10.6);
+      s.cyl(0.11, 0.13, 0.08, 8, 0x6f5038, x, 2.45, 10.6);
+      s.box(1.35, 0.045, 0.14, 0x7b593e, x, 2.43, 10.6, 0, 0.28);
+      s.box(1.35, 0.045, 0.14, 0x7b593e, x, 2.43, 10.6, 0, Math.PI / 2 + 0.28);
+    }
     s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, 12.4);
   } else if (id === 'italian') {
     for (let i = 0; i < 18; i++) { const t = i / 17; glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * 17, 2.6 - Math.sin(t * Math.PI) * 0.35, 6.4); }
     for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, 12.0 + j * 0.15, 0, 0, Math.PI / 2);
     s.box(0.04, 1.3, 0.6, 0x6a4a2a, R + 0.0, 1.35, 12.15);
+    for (const x of [6, 10, 14]) { s.cyl(0.012, 0.012, 0.38, 5, 0x3b3029, x, 2.62, 10.4); glow.cone(0.17, 0.18, 10, 0xffcf82, x, 2.35, 10.4); }
+    for (const z of [6.7, 11.8]) { s.box(0.045, 1.15, 0.66, 0x6d4a31, L, 1.5, z); s.torus(0.32, 0.035, pal.accent, L + 0.025, 2.05, z, 0, Math.PI / 2, 0, Math.PI, 12); }
   } else if (id === 'mexican') {
     const colors = [0xe0407a, 0xf2c030, 0x2a9a8e, 0xf07830, 0x8a4ac8];
-    for (const zz of [7.0, 10.0, 12.6]) for (let i = 0; i < 16; i++) s.box(0.5, 0.36, 0.01, colors[i % 5], 2 + i * 1.05, 2.45, zz, 0, 0, 0);
+    for (const zz of [7.0, 10.0, 12.6]) for (let i = 0; i < 16; i++) s.box(0.3, 0.3, 0.018, colors[i % 5], 2 + i * 1.05, 2.45, zz, 0, 0, Math.PI / 4);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 0.18, 0.42, colors[i % 5], x, 0.72, 6.3 + i * 0.5);
     plant(s, 1.4, 6.4, 0.8);
     s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, 12.8);
   } else if (id === 'diner') {
@@ -201,6 +220,8 @@ function decor(s, glow, cuisine, pal, up) {
     glow.box(0.04, 0.06, 2.2, 0x3ad0f0, R - 0.035, 1.9, 12.0);
     s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, 6.4);
     glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1.0, 6.66);
+    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1, 0xc8d0d3, x, 0.8, 9.7); s.box(0.052, 0.035, 7.1, pal.accent, x, 0.88, 9.7); }
+    for (const x of [5.5, 10, 14.5]) glow.box(1.8, 0.045, 0.1, 0xfff0cf, x, 2.58, 10.4);
   } else if (id === 'noodle') {
     for (const [x, z] of [[4, 8.5], [10, 8.5], [16, 8.5], [7, 11.5], [13, 11.5]]) {
       s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, x, 2.6, z);
@@ -209,6 +230,8 @@ function decor(s, glow, cuisine, pal, up) {
     }
     // Noren curtain over the kitchen opening.
     for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, 10.25 + i * 0.5, 2.0, 5.5);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1.0, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, 6.3 + i * 0.52);
+    for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, z); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, z); }
   }
   if (up.decor1) {
     plant(s, 18.3, 6.5, 1.1);

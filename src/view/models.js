@@ -1,7 +1,7 @@
 // Stations, tables and characters. Each builder returns a THREE.Group whose
 // origin is the tile center at floor level, facing +Z (toward its front).
 import * as THREE from 'three';
-import { Shape, MAT, meshOf, shade } from './shape.js';
+import { Shape, MAT, meshOf, shade, mix } from './shape.js';
 
 export const COUNTER_H = 0.92;
 const STEEL = 0xc8cdd2, STEEL_D = 0x8e959c, DARK = 0x2c2a2a, WOOD = 0x9a6a3e, WOOD_D = 0x6e4a2c;
@@ -67,7 +67,7 @@ export function stationModel(type, pal) {
       s.box(0.86, 0.06, 0.8, DARK, 0, COUNTER_H + 0.03, 0);
       for (let i = 0; i < 7; i++) s.box(0.04, 0.025, 0.74, 0x4a4442, -0.33 + i * 0.11, COUNTER_H + 0.07, 0);
       s.box(0.9, 0.18, 0.08, STEEL, 0, COUNTER_H + 0.09, -0.42);
-      const glow = new Shape();
+      const glow = new Shape(false);
       for (let i = 0; i < 6; i++) glow.box(0.05, 0.01, 0.7, 0xff6a20, -0.275 + i * 0.11, COUNTER_H + 0.062, 0);
       dyn.glow = glowMesh(glow);
       g.add(dyn.glow);
@@ -82,7 +82,7 @@ export function stationModel(type, pal) {
       s.cyl(0.22, 0.22, 0.01, 12, 0x4a4644, 0, COUNTER_H + 0.11, 0);
       s.box(0.05, 0.03, 0.35, 0x2a2828, 0.0, COUNTER_H + 0.1, 0.4, 0.15);
       for (const k of [-1, 1]) s.cyl(0.04, 0.04, 0.05, 6, DARK, k * 0.3, COUNTER_H - 0.2, 0.47, Math.PI / 2);
-      const flame = new Shape();
+      const flame = new Shape(false);
       for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; flame.cone(0.03, 0.06, 4, 0x4ab0ff, Math.cos(a) * 0.17, COUNTER_H + 0.06, Math.sin(a) * 0.17); }
       dyn.glow = glowMesh(flame);
       g.add(dyn.glow);
@@ -97,7 +97,7 @@ export function stationModel(type, pal) {
       s.cyl(0.25, 0.25, 0.02, 12, STEEL_D, 0, COUNTER_H + 0.05, 0);
       s.torus(0.27, 0.015, STEEL, 0, COUNTER_H + 0.4, 0);
       for (const k of [-1, 1]) s.box(0.1, 0.03, 0.04, DARK, k * 0.32, COUNTER_H + 0.34, 0);
-      const flame = new Shape();
+      const flame = new Shape(false);
       for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; flame.cone(0.03, 0.06, 4, 0x4ab0ff, Math.cos(a) * 0.2, COUNTER_H + 0.06, Math.sin(a) * 0.2); }
       dyn.glow = glowMesh(flame);
       g.add(dyn.glow);
@@ -132,7 +132,7 @@ export function stationModel(type, pal) {
       s.box(1.0, 0.06, 1.0, STEEL_D, 0, 1.0, 0);
       s.box(1.0, 0.5, 0.12, DARK, 0, 1.28, -0.44);
       for (let i = 0; i < 3; i++) s.cyl(0.035, 0.035, 0.03, 8, STEEL, -0.25 + i * 0.25, 1.3, -0.37, Math.PI / 2);
-      const win = new Shape();
+      const win = new Shape(false);
       win.box(0.55, 0.3, 0.01, 0xff9a40, 0, 0.44, 0.49);
       dyn.glow = glowMesh(win);
       g.add(dyn.glow);
@@ -206,16 +206,34 @@ export function stationModel(type, pal) {
 
 // ------------------------------------------------------------------ tables
 
-export function tableModel(seats, pal, cloth) {
+export function tableModel(seats, pal, cloth, cuisine = 'southern') {
   const g = new THREE.Group();
   const s = new Shape();
   const tH = 0.76;
   const chair = (x, z, face) => {
     const c = new Shape();
+    const leg = cuisine === 'diner' ? 0xaeb8bd : shade(pal.chair, 0.75);
     c.box(0.42, 0.06, 0.42, pal.chair, 0, 0.46, 0);
-    for (const a of [-1, 1]) for (const b of [-1, 1]) c.box(0.05, 0.46, 0.05, shade(pal.chair, 0.75), a * 0.17, 0.23, b * 0.17);
-    c.box(0.42, 0.5, 0.05, pal.chair, 0, 0.75, -0.19);
-    c.box(0.36, 0.06, 0.06, shade(pal.chair, 1.2), 0, 0.98, -0.19);
+    for (const a of [-1, 1]) for (const b of [-1, 1]) c.box(0.045, 0.46, 0.045, leg, a * 0.17, 0.23, b * 0.17);
+    if (cuisine === 'southern') {
+      for (const px of [-0.12, 0, 0.12]) c.cyl(0.025, 0.025, 0.42, 6, shade(pal.chair, 0.9), px, 0.75, -0.19);
+      c.box(0.4, 0.065, 0.06, shade(pal.chair, 1.16), 0, 0.98, -0.19);
+    } else if (cuisine === 'italian') {
+      c.box(0.055, 0.48, 0.055, pal.chair, -0.1, 0.76, -0.19, 0, 0, -0.43);
+      c.box(0.055, 0.48, 0.055, pal.chair, 0.1, 0.76, -0.19, 0, 0, 0.43);
+      c.box(0.4, 0.055, 0.06, shade(pal.chair, 1.14), 0, 0.99, -0.19);
+    } else if (cuisine === 'mexican') {
+      c.box(0.4, 0.46, 0.05, pal.chair, 0, 0.76, -0.19);
+      c.box(0.32, 0.1, 0.025, pal.accent2, 0, 0.78, -0.225);
+      c.box(0.4, 0.055, 0.06, shade(pal.chair, 1.12), 0, 0.99, -0.19);
+    } else if (cuisine === 'diner') {
+      c.sphere(0.23, pal.chair, 0, 0.78, -0.19, 1, 1.18, 0.24, 8);
+      c.box(0.38, 0.04, 0.04, 0xe8eef0, 0, 0.99, -0.19);
+    } else {
+      for (const px of [-0.12, 0.12]) c.box(0.055, 0.45, 0.055, pal.chair, px, 0.76, -0.19);
+      c.box(0.4, 0.07, 0.06, shade(pal.chair, 1.15), 0, 0.98, -0.19);
+      c.box(0.34, 0.04, 0.055, pal.accent2, 0, 0.73, -0.19);
+    }
     s.merge(c, x, 0, z, face);
   };
   if (seats === 4) {
@@ -232,12 +250,32 @@ export function tableModel(seats, pal, cloth) {
     s.cyl(0.3, 0.3, 0.04, 8, shade(pal.table, 0.7), 1.5, 0.02, 0.5);
     chair(0.42, 0.5, Math.PI / 2); chair(2.58, 0.5, -Math.PI / 2);
   }
-  // Salt, pepper and a small vase.
   const cx = seats === 4 ? 1 : 1.5, cz = seats === 4 ? 1.5 : 0.5;
-  s.cyl(0.025, 0.025, 0.08, 6, 0xf4f0e8, cx - 0.06, tH + 0.08, cz);
-  s.cyl(0.025, 0.025, 0.08, 6, 0x3a3634, cx + 0.0, tH + 0.08, cz);
-  s.cyl(0.035, 0.03, 0.12, 6, pal.accent2, cx + 0.08, tH + 0.1, cz);
-  s.sphere(0.04, pal.accent, cx + 0.08, tH + 0.19, cz);
+  // Small place settings improve table readability without competing with served food.
+  const settings = seats === 4
+    ? [[0.55, 1.14], [1.45, 1.14], [0.55, 1.86], [1.45, 1.86]]
+    : [[1.12, 0.5], [1.88, 0.5]];
+  for (const [px, pz] of settings) s.box(0.14, 0.012, 0.075, shade(pal.accent2, 1.05), px, tH + 0.045, pz);
+  s.cyl(0.025, 0.025, 0.08, 6, 0xf4f0e8, cx - 0.07, tH + 0.08, cz);
+  s.cyl(0.025, 0.025, 0.08, 6, 0x3a3634, cx, tH + 0.08, cz);
+  if (cuisine === 'southern') {
+    s.cyl(0.045, 0.035, 0.13, 7, pal.accent2, cx + 0.09, tH + 0.11, cz);
+    for (const dx of [-0.04, 0, 0.04]) { s.cyl(0.008, 0.008, 0.11, 5, 0x48743a, cx + 0.09 + dx, tH + 0.21, cz); s.sphere(0.035, dx ? pal.accent : 0xf3d66f, cx + 0.09 + dx, tH + 0.28, cz, 1, 0.75, 1, 6); }
+  } else if (cuisine === 'italian') {
+    s.cyl(0.035, 0.055, 0.2, 8, 0x486a3c, cx + 0.1, tH + 0.14, cz);
+    s.cyl(0.018, 0.025, 0.08, 7, 0xd9c49a, cx + 0.1, tH + 0.28, cz);
+  } else if (cuisine === 'mexican') {
+    s.cyl(0.075, 0.06, 0.08, 8, 0xc46a3a, cx + 0.1, tH + 0.08, cz);
+    s.cyl(0.035, 0.045, 0.18, 7, 0x3f8b43, cx + 0.1, tH + 0.2, cz);
+    s.cyl(0.018, 0.025, 0.09, 6, 0x4c9a4a, cx + 0.15, tH + 0.2, cz, 0, 0, 0.65);
+  } else if (cuisine === 'diner') {
+    s.box(0.13, 0.2, 0.09, 0xb9c4c8, cx + 0.1, tH + 0.13, cz);
+    s.box(0.09, 0.045, 0.095, 0xf4f0e8, cx + 0.1, tH + 0.24, cz);
+    s.box(0.08, 0.025, 0.1, pal.accent, cx + 0.1, tH + 0.18, cz);
+  } else {
+    s.cyl(0.055, 0.045, 0.13, 8, pal.accent2, cx + 0.1, tH + 0.1, cz);
+    for (const dx of [-0.025, 0, 0.025]) s.box(0.012, 0.25, 0.012, dx ? 0x8a4e2c : 0xb86a32, cx + 0.1 + dx, tH + 0.28, cz, 0, 0, dx * 5);
+  }
   g.add(meshOf(s));
   g.userData.top = tH + (cloth ? 0.045 : 0.03);
   return g;
@@ -266,7 +304,9 @@ export function makePerson(look, chef) {
     pivot.position.set(side * 0.11, 0.78 * H, 0);
     const s = new Shape();
     s.box(0.16, 0.7 * H, 0.19, pants, 0, -0.35 * H, 0);
-    s.box(0.18, 0.1, 0.27, chef ? 0x1e1e22 : 0x3a2a20, 0, -0.73 * H, 0.03);
+    const shoe = chef ? 0x1e1e22 : 0x3a2a20;
+    s.box(0.18, 0.1, 0.29, shoe, 0, -0.73 * H, 0.045);
+    s.box(0.19, 0.025, 0.31, shade(shoe, 0.72), 0, -0.785 * H, 0.05);
     pivot.add(mk(s));
     body.add(pivot);
     legs.push(pivot);
@@ -275,6 +315,8 @@ export function makePerson(look, chef) {
   const t = new Shape();
   const top = 0.78 * H;
   t.box(0.44, 0.56, 0.26, shirt, 0, top + 0.3, 0);
+  t.sphere(0.12, shirt, -0.235, top + 0.5, 0, 0.8, 0.75, 1, 6);
+  t.sphere(0.12, shirt, 0.235, top + 0.5, 0, 0.8, 0.75, 1, 6);
   if (chef) {
     // Double-breasted buttons.
     for (const y of [0.16, 0.3, 0.44]) for (const x of [-0.07, 0.07]) t.box(0.03, 0.03, 0.02, shade(shirt, 0.7), x, top + y, 0.135);
@@ -286,13 +328,18 @@ export function makePerson(look, chef) {
       t.box(0.46, 0.05, 0.28, shade(ac, 0.85), 0, top + 0.18, 0);
       t.box(0.12, 0.08, 0.01, shade(ac, 0.8), 0.08, top + 0.0, 0.152);
     }
+    t.cone(0.065, 0.1, 3, look.apron ? hex(look.apronColor) : mix(shirt, 0xb83a32, 0.65), 0, top + 0.5, 0.16, Math.PI / 2);
   } else {
+    t.box(0.46, 0.045, 0.28, shade(shirt, 0.72), 0, top + 0.04, 0);
     t.box(0.18, 0.12, 0.02, shade(shirt, 1.2), 0, top + 0.52, 0.13);
     if (look.critic) t.box(0.08, 0.1, 0.02, 0xf4f0e8, 0.12, top + 0.38, 0.135);
   }
   // Head.
   const hy = top + 0.78;
   t.box(0.27, 0.28, 0.26, skin, 0, hy, 0);
+  t.sphere(0.045, skin, -0.15, hy, 0, 0.45, 1, 0.75, 6);
+  t.sphere(0.045, skin, 0.15, hy, 0, 0.45, 1, 0.75, 6);
+  t.box(0.035, 0.045, 0.03, shade(skin, 0.94), 0, hy - 0.015, 0.145);
   t.box(0.035, 0.035, 0.02, 0x2a2020, -0.065, hy + 0.02, 0.135);
   t.box(0.035, 0.035, 0.02, 0x2a2020, 0.065, hy + 0.02, 0.135);
   t.box(0.08, 0.02, 0.02, shade(skin, 0.75), 0, hy - 0.07, 0.132);

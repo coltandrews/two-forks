@@ -15,6 +15,10 @@ import { mix } from './shape.js';
 const RW = MAP[0].length, RH = MAP.length;
 const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
+const _shadowMatrix = new THREE.Matrix4();
+const _shadowPosition = new THREE.Vector3();
+const _shadowScale = new THREE.Vector3();
+const _shadowRotation = new THREE.Quaternion();
 
 export class View {
   constructor(container) {
@@ -30,16 +34,17 @@ export class View {
     this.renderer = r;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1e1a18);
+    scene.background = new THREE.Color(0x29252d);
+    scene.fog = new THREE.Fog(0x29252d, 30, 68);
     this.scene = scene;
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.5, 120);
     this.camMode = 'overview';
     this.camPos = new THREE.Vector3(10, 22, 30);
     this.camLook = new THREE.Vector3(10, 0, 7.5);
 
-    this.hemi = new THREE.HemisphereLight(0xfff4e4, 0x8a6a50, 1.35);
+    this.hemi = new THREE.HemisphereLight(0xfff1df, 0x536174, 1.2);
     scene.add(this.hemi);
-    const sun = new THREE.DirectionalLight(0xfff2dc, 2.1);
+    const sun = new THREE.DirectionalLight(0xffdfbd, 2.0);
     sun.position.set(-6, 22, 16);
     sun.target.position.set(10, 0, 7);
     sun.castShadow = true;
@@ -59,6 +64,7 @@ export class View {
 
     this.world = new THREE.Group();
     scene.add(this.world);
+    this.contacts = new ContactShadows(scene);
     this.objs = new Map();
     this.chefs = new Map();
     this.guests = new Map();
@@ -175,13 +181,14 @@ export class View {
     for (const [id, e] of this.objs) {
       if (!seen.has(id)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(id); }
     }
+    this.contacts.syncStatic(state);
   }
 
   buildObject(o, pal, grid, state) {
     const e = { id: o.id, type: o.type, x: o.x, z: o.z, sig: '', item: null };
     if (o.type === 'table') {
       const cloth = CUISINES[state.cuisine].palette.cloth;
-      e.group = tableModel(o.seats, pal, cloth);
+      e.group = tableModel(o.seats, pal, cloth, state.cuisine);
       e.group.position.set(o.x, 0, o.z);
       e.top = e.group.userData.top;
       e.dyn = {};
@@ -216,6 +223,7 @@ export class View {
       if (e) this.syncObject(e, o, state, dt);
     }
     this.syncPeople(state, dt, opts);
+    this.contacts.syncPeople(this.chefs, this.guests);
     this.syncLighting(state, dt);
     this.particles.update(dt);
     this.updateCamera(dt, opts);
@@ -424,10 +432,11 @@ export class View {
     const sky = skyColor(state.clock, state.phase);
     this.room.winMat.color.setHex(sky);
     const evening = state.phase === 'office' ? 1 : state.phase === 'service' ? THREE.MathUtils.clamp((state.clock - 17.5 * 60) / 180, 0, 1) : 0;
-    const target = 1.35 - evening * 0.45;
+    if (this.room.outsideMat) this.room.outsideMat.color.setHex(mix(0xffffff, 0x68718c, evening * 0.7));
+    const target = 1.2 - evening * 0.35;
     this.hemi.intensity += (target - this.hemi.intensity) * Math.min(1, dt * 2);
-    this.sun.intensity += ((2.1 - evening * 1.5) - this.sun.intensity) * Math.min(1, dt * 2);
-    for (const l of this.lamps) l.intensity += ((evening * 14) - l.intensity) * Math.min(1, dt * 2);
+    this.sun.intensity += ((2.0 - evening * 1.35) - this.sun.intensity) * Math.min(1, dt * 2);
+    for (const l of this.lamps) l.intensity += ((evening * 12) - l.intensity) * Math.min(1, dt * 2);
   }
 
   setCameraMode(mode) {
@@ -502,6 +511,7 @@ export class View {
     for (const [, c] of this.guests) this.world.remove(c.m.root);
     this.guests.clear();
     if (this.room) { this.world.remove(this.room.root); this.room = null; }
+    this.contacts.clear();
     this.layoutKey = ''; this.roomKey = '';
   }
 }
@@ -534,7 +544,75 @@ function disposeTree(obj) {
   });
 }
 
+class ContactShadows {
+  constructor(scene) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 3, 32, 32, 31);
+    gradient.addColorStop(0, 'rgba(0,0,0,0.62)');
+    gradient.addColorStop(0.55, 'rgba(0,0,0,0.24)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    geometry.rotateX(-Math.PI / 2);
+    this.staticLayer = this.makeLayer(geometry, texture, 96, 0.25);
+    this.peopleLayer = this.makeLayer(geometry, texture, 40, 0.32);
+    scene.add(this.staticLayer, this.peopleLayer);
+  }
+
+  makeLayer(geometry, texture, count, opacity) {
+    const material = new THREE.MeshBasicMaterial({ color: 0x2a1b18, map: texture, transparent: true, opacity, depthWrite: false, toneMapped: false });
+    const layer = new THREE.InstancedMesh(geometry, material, count);
+    layer.count = 0;
+    layer.frustumCulled = false;
+    layer.renderOrder = 1;
+    return layer;
+  }
+
+  set(layer, index, x, z, sx, sz) {
+    _shadowMatrix.compose(_shadowPosition.set(x, 0.012, z), _shadowRotation.identity(), _shadowScale.set(sx, 1, sz));
+    layer.setMatrixAt(index, _shadowMatrix);
+  }
+
+  syncStatic(state) {
+    let n = 0;
+    for (const o of state.objects) {
+      if (n >= this.staticLayer.instanceMatrix.count) break;
+      if (o.type === 'table') {
+        if (o.seats === 4) this.set(this.staticLayer, n++, o.x + 1, o.z + 1.5, 2.15, 1.65);
+        else this.set(this.staticLayer, n++, o.x + 1.5, o.z + 0.5, 1.65, 0.92);
+      } else {
+        this.set(this.staticLayer, n++, o.x + 0.5, o.z + 0.5, 0.86, 0.72);
+      }
+    }
+    this.staticLayer.count = n;
+    this.staticLayer.instanceMatrix.needsUpdate = true;
+  }
+
+  syncPeople(chefs, guests) {
+    let n = 0;
+    for (const people of [chefs, guests]) {
+      for (const [, person] of people) {
+        if (n >= this.peopleLayer.instanceMatrix.count) break;
+        this.set(this.peopleLayer, n++, person.x, person.z, 0.62, 0.42);
+      }
+    }
+    this.peopleLayer.count = n;
+    this.peopleLayer.instanceMatrix.needsUpdate = true;
+  }
+
+  clear() {
+    this.staticLayer.count = 0;
+    this.peopleLayer.count = 0;
+  }
+}
+
 /** Cheap steam and smoke puffs. */
+function smallFade(t) { return Math.min(1, t * 8); }
+
 class Particles {
   constructor(scene) {
     this.pool = [];
@@ -556,6 +634,8 @@ class Particles {
     p.userData.size = size * (small ? 0.5 : 1);
     p.userData.vx = (Math.random() - 0.5) * 0.2;
     p.userData.vz = (Math.random() - 0.5) * 0.2;
+    p.userData.wobble = Math.random() * Math.PI * 2;
+    p.userData.spin = (Math.random() - 0.5) * 1.8;
     this.live.push(p);
   }
   update(dt) {
@@ -567,9 +647,12 @@ class Particles {
       if (t >= 1) { p.visible = false; this.live.splice(i, 1); this.pool.push(p); continue; }
       p.position.x += u.vx * dt;
       p.position.z += u.vz * dt;
-      p.position.y += dt * 0.7;
-      p.scale.setScalar(u.size * (0.6 + t * 1.8));
-      p.material.opacity = 0.55 * (1 - t);
+      p.position.y += dt * (0.58 + t * 0.25);
+      p.position.x += Math.sin(u.life * 5 + u.wobble) * dt * 0.035;
+      p.rotation.y += u.spin * dt;
+      const grow = u.size * (0.55 + t * 1.45);
+      p.scale.set(grow * (0.82 + t * 0.18), grow * (1.0 + t * 0.55), grow * (0.82 + t * 0.18));
+      p.material.opacity = 0.48 * (1 - t) * (smallFade(t));
     }
   }
 }

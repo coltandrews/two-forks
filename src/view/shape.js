@@ -22,7 +22,7 @@ function hash3(x, y, z) {
 
 /** Collects colored, transformed parts and merges them into one geometry. */
 export class Shape {
-  constructor() { this.parts = []; }
+  constructor(shaded = true) { this.parts = []; this.shaded = shaded; }
 
   add(geo, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
     const g = geo.index ? geo.toNonIndexed() : geo;
@@ -31,9 +31,24 @@ export class Shape {
     _m.compose(_p.set(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(sx, sy, sz));
     g.applyMatrix4(_m);
     _c.set(color);
-    const n = g.attributes.position.count;
+    const pos = g.attributes.position;
+    const normal = g.attributes.normal;
+    const n = pos.count;
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < n; i++) {
+      minY = Math.min(minY, pos.getY(i));
+      maxY = Math.max(maxY, pos.getY(i));
+    }
+    const height = Math.max(0.001, maxY - minY);
     const col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b; }
+    for (let i = 0; i < n; i++) {
+      const rise = (pos.getY(i) - minY) / height;
+      const face = Math.max(0, normal.getY(i)) * 0.045 + normal.getX(i) * -0.018 + normal.getZ(i) * 0.012;
+      const k = this.shaded ? THREE.MathUtils.clamp(0.92 + rise * 0.075 + face, 0.84, 1.06) : 1;
+      col[i * 3] = Math.min(1, _c.r * k);
+      col[i * 3 + 1] = Math.min(1, _c.g * k);
+      col[i * 3 + 2] = Math.min(1, _c.b * k);
+    }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     if (g.attributes.uv) g.deleteAttribute('uv');
     this.parts.push(g);
