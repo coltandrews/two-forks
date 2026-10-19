@@ -2,9 +2,11 @@
 // { from, at, to, t, label, shape, color }. "at" is the station that performs
 // the step: board (hold Space), grill, pan, pot, fryer or oven (automatic).
 // kind is used by the dish builder: protein, veg, dairy, starch, sauce, sweet.
+import { CFG } from '../config.js';
+import { HEAT_TYPES } from './layout.js';
 
 const L = (label, shape, color) => ({ label, shape, color });
-const step = (from, at, to, t, label, shape, color) => ({ from, at, to, t, label, shape, color });
+const step = (from, at, to, t, label, shape, color) => ({ from, at, to, t: HEAT_TYPES.has(at) ? Math.round(t * CFG.cookTimeMultiplier * 10) / 10 : t, label, shape, color });
 
 export const ING = {
   beef_patty: { name: 'Beef patty', store: 'fridge', cost: 1.9, keep: 3, case: 20, kind: 'protein', look: L('Beef patty', 'patty', 0xc4574e),

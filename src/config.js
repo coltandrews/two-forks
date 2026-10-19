@@ -1,6 +1,6 @@
 // Every tuning number in one place. Times are real seconds unless noted.
 
-export const BUILD = 'tf-1.1.4-solid-props';
+export const BUILD = 'tf-1.1.5-cook-times';
 export const APP_ID = 'two-forks-bistro-game-2026';
 
 export const CFG = {
@@ -16,6 +16,7 @@ export const CFG = {
 
   move: { speed: 4.6, accel: 30, radius: 0.32, reach: 1.25 },
 
+  cookTimeMultiplier: 0.9,
   burn: { grill: 30, pan: 20, fryer: 15, oven: 40, pot: 0 },
   potOvercook: 60,
   overdoneQuality: 0.75,
