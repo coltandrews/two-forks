@@ -4,7 +4,8 @@ import { CFG } from '../config.js';
 import { ING, stateInfo } from '../data/ingredients.js';
 import { CUISINES } from '../data/cuisines.js';
 import { STATION_NAMES } from '../data/layout.js';
-import { dishById, drinkById, WEEKDAYS, nextLevelAt, menuIngredients, courseSlot } from '../sim/state.js';
+import { XP_LEVELS, ingredientAllowed } from '../data/progression.js';
+import { dishById, drinkById, WEEKDAYS, menuIngredients, courseSlot } from '../sim/state.js';
 import { storeList } from '../sim/kitchen.js';
 import { plateDiff, itemLabel, matchDish } from '../sim/items.js';
 import { stockCount, casePrice, avgRating } from '../sim/economy.js';
@@ -48,7 +49,7 @@ export class Hud {
     this.toasts = document.getElementById('toasts');
     this.root.innerHTML = `
       <div class="panel hud-tl"><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="rname"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
-      <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div></div>
+      <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div><div class="story-goal" hidden></div></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
       <div class="hud-bl"><div class="rail"></div><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
@@ -63,7 +64,7 @@ export class Hud {
     const q = (s) => this.root.querySelector(s);
     this.el = {
       rname: q('.rname'), dn: q('.day .dn'), wk: q('.day .wk'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'), sun: q('.hud-tl .bar b'),
-      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'),
+      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'), goal: q('.story-goal'),
       rail: q('.rail'), prompt: q('.prompt'), need: q('.need'), br: q('.hud-br'), morning: q('.morning'), closing: q('.closing'), keys: q('.keys'),
     };
     this.slowAcc = 0;
@@ -97,6 +98,7 @@ export class Hud {
 
   show(on) {
     this.root.hidden = !on;
+    if (!on) { this.pendingStoryCard = null; this.purchaseSig = null; }
     this.refreshKeys();
   }
 
@@ -155,9 +157,20 @@ export class Hud {
     const avg = avgRating(state);
     const rh = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : '<span class="stars">☆☆☆☆☆</span> no reviews yet';
     if (rh !== e.rating._h) { e.rating.innerHTML = rh; e.rating._h = rh; }
-    const lv = state.rep.level, next = nextLevelAt(lv), prev = CFG.rep.levels[lv - 1] || 0;
-    setText(e.lvl, next != null ? `Reputation Lv ${lv} · ${Math.floor(state.rep.points)}/${next}` : `Reputation Lv ${lv} · max`);
-    e.lvlBar.style.width = next != null ? Math.min(100, ((state.rep.points - prev) / (next - prev)) * 100).toFixed(1) + '%' : '100%';
+    const story = state.mode === 'story';
+    e.lvl.hidden = !story;
+    e.lvlBar.parentElement.hidden = !story;
+    e.goal.hidden = !story;
+    if (story) {
+      const lv = state.level, next = XP_LEVELS[lv], prev = XP_LEVELS[lv - 1] || 0;
+      setText(e.lvl, next != null ? `Chef Level ${lv} · ${Math.floor(state.xp)}/${next} XP` : `Chef Level ${lv} · ${state.prestige || 0} prestige stars`);
+      e.lvlBar.style.width = next != null ? Math.max(0, Math.min(100, ((state.xp - prev) / (next - prev)) * 100)).toFixed(1) + '%' : '100%';
+      const goal = state.goal;
+      const progress = goal && goal.target > 1 && Number.isFinite(goal.progress) ? ` · ${Math.min(goal.target, Math.max(0, Math.floor(goal.progress)))}/${goal.target}` : '';
+      const goalHtml = `<b>${state.chapter > 4 ? 'Story complete' : `Chapter ${state.chapter} of 4`}</b>${goal ? `<span class="${goal.done ? 'goal-done' : ''}">${goal.done ? '✓ ' : ''}${esc(goal.label)}${progress} · +${goal.xp} XP</span>` : 'Keep serving to earn XP.'}`;
+      if (goalHtml !== e.goal._h) { e.goal.innerHTML = goalHtml; e.goal._h = goalHtml; }
+    }
+    this.updatePurchase(state);
 
     this.updatePrompt(state, info);
 
@@ -387,11 +400,63 @@ export class Hud {
     setTimeout(() => d.remove(), 4200);
   }
 
+  showLevelUp({ level, unlocks = [] }) {
+    const d = document.createElement('div');
+    d.className = 'panel levelup';
+    d.setAttribute('role', 'status');
+    d.innerHTML = `<h2>Chef Level ${level}</h2><p>${unlocks.length ? 'Now available: <b>' + unlocks.map(esc).join(', ') + '</b>' : 'Your restaurant has earned a new level.'}</p><p>See the Unlocks tab in the office.</p>`;
+    this.app.root.appendChild(d);
+    setTimeout(() => d.remove(), 5000);
+  }
+
+  showStoryCard(card) {
+    if (this.app.session && this.app.session.state.pendingPurchase) { this.pendingStoryCard = card; return; }
+    let { chapter, title, text } = card;
+    if (this.modalKind === 'pause') this.closeModal();
+    chapter = chapter || (this.app.session && this.app.session.state.chapter) || 1;
+    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><div class="chapter-label">${chapter > 4 ? 'Story complete' : `Chapter ${chapter}`}</div><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">Back to the restaurant</button>`);
+    this.modal.querySelector('.story-next').onclick = () => this.closeModal();
+  }
+
+  updatePurchase(state) {
+    const purchase = state.pendingPurchase;
+    if (!purchase || !purchase.required.includes(this.app.selfPid)) {
+      if (this.modalKind === 'purchase-confirm') this.closeModal();
+      this.purchaseSig = null;
+      if (this.pendingStoryCard) {
+        const card = this.pendingStoryCard;
+        this.pendingStoryCard = null;
+        this.showStoryCard(card);
+      }
+      return;
+    }
+    const sig = JSON.stringify([purchase, state.cash]);
+    if (this.modalKind === 'purchase-confirm' && sig === this.purchaseSig) return;
+    this.purchaseSig = sig;
+    this.showPurchaseConfirm(purchase, state);
+  }
+
+  showPurchaseConfirm(purchase, state = this.app.session.state) {
+    if (this.modalKind === 'pause') this.closeModal();
+    const approved = purchase.approved.includes(this.app.selfPid);
+    const names = purchase.required.map((id) => `${state.players[id] ? state.players[id].name : 'Chef'}${purchase.approved.includes(id) ? ' ✓' : ''}`);
+    this.openSheet('purchase-confirm', `<h2>Approve this purchase?</h2><p>${esc(purchase.name)}</p><div class="purchase-price">${money0(purchase.price)}</div><div class="sub">Cash after purchase: ${money(state.cash - purchase.price)}<br>Every chef must approve. ${purchase.approved.length}/${purchase.required.length} approved.</div><p>${names.map(esc).join(' · ')}</p><div class="actions"><button class="btn primary" data-vote="yes" ${approved ? 'disabled' : ''}>${approved ? 'Approved · waiting' : 'Approve'}</button><button class="btn ghost" data-vote="no">Cancel purchase</button></div>`);
+    this.modal.onclick = null;
+    this.modal.querySelectorAll('[data-vote]').forEach((b) => {
+      b.onclick = () => this.app.command({ c: 'approvePurchase', id: purchase.id, approve: b.dataset.vote === 'yes' });
+    });
+  }
+
   // ------------------------------------------------------------ modals
 
   get modalOpen() { return !this.modal.hidden; }
 
   closeModal() {
+    if (this.modalKind === 'purchase-confirm') {
+      this.purchaseSig = null;
+      const purchase = this.app.session && this.app.session.state.pendingPurchase;
+      if (purchase) this.app.command({ c: 'approvePurchase', id: purchase.id, approve: false });
+    }
     this.modal.hidden = true;
     this.modal.innerHTML = '';
     this.modal.className = '';
@@ -487,7 +552,7 @@ export class Hud {
 
   openRush(state) {
     if (state.phase === 'office') { this.toast('Rush deliveries are for open hours. Use the supplier tab instead.', 'warn'); return; }
-    const ings = menuIngredients(state).sort((a, b) => stockCount(state, a) - stockCount(state, b));
+    const ings = menuIngredients(state).filter((id) => ingredientAllowed(state, id)).sort((a, b) => stockCount(state, a) - stockCount(state, b));
     const rows = ings.map((i) => {
       const n = stockCount(state, i);
       return `<button class="pick ${n === 0 ? 'wanted' : ''}" data-ing="${i}"><span class="sw" style="background:${hex(ING[i].look.color)}"></span><span><span class="nm">${esc(ING[i].name)}</span><br><span class="ct ${n <= 3 ? 'low' : ''}">${n} in stock · case of ${ING[i].case} ${money(casePrice(i, true))}</span></span></button>`;

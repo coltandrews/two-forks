@@ -3,11 +3,12 @@
 import * as THREE from 'three';
 import { CUISINES } from '../data/cuisines.js';
 import { MAP } from '../data/layout.js';
-import { footprint, seatsOf, buildGrid, walkable } from '../sim/world.js';
+import { isStory, lockedAreas } from '../data/progression.js';
+import { footprint, seatsOf, buildGrid, walkable, isWallTile } from '../sim/world.js';
 import { itemSig } from '../sim/items.js';
 import { stepFor } from '../data/ingredients.js';
 import { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } from './models.js';
-import { buildRoom, skyColor } from './room.js';
+import { buildRoom, skyColor, syncRoomAreas, disposeRoomAreas } from './room.js';
 import { itemMesh, potContents } from './food.js';
 import { Shape, MAT, meshOf } from './shape.js';
 import { mix } from './shape.js';
@@ -157,14 +158,15 @@ export class View {
 
   ensureLayout(state) {
     const decorKey = ['decor1', 'decor2', 'decor3'].map((k) => state.upgrades[k] ? 1 : 0).join('');
-    const roomKey = state.cuisine + '|' + state.name + '|' + decorKey;
+    const roomKey = state.cuisine + '|' + state.name + '|' + decorKey + '|' + isStory(state);
     if (roomKey !== this.roomKey) {
-      if (this.room) { this.world.remove(this.room.root); disposeTree(this.room.root); }
-      this.room = buildRoom(CUISINES[state.cuisine], state.name, state.upgrades);
+      if (this.room) { this.world.remove(this.room.root); disposeRoomAreas(this.room); disposeTree(this.room.root); }
+      this.room = buildRoom(CUISINES[state.cuisine], state.name, state.upgrades, state);
       this.world.add(this.room.root);
       this.roomKey = roomKey;
       this.layoutKey = '';
     }
+    this.layoutGuide.setState(state);
     const key = state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
     if (key === this.layoutKey) return;
     this.layoutKey = key;
@@ -219,6 +221,7 @@ export class View {
   sync(state, dt, opts = {}) {
     this.t += dt;
     this.ensureLayout(state);
+    syncRoomAreas(this.room, state, dt);
     this.state = state;
     for (const o of state.objects) {
       const e = this.objs.get(o.id);
@@ -485,6 +488,7 @@ export class View {
       if (this.layoutZoom == null) this.layoutZoom = this.zoomTarget == null ? DEFAULT_ZOOM : this.zoomTarget;
       this.zoomTarget = 0;
       this.layoutGuide.setPalette(CUISINES[state.cuisine].palette.accent);
+      this.layoutGuide.setState(state);
     } else if (this.layoutZoom != null) {
       this.zoomTarget = this.layoutZoom;
       this.layoutZoom = null;
@@ -559,7 +563,7 @@ export class View {
     this.chefs.clear();
     for (const [, c] of this.guests) this.world.remove(c.m.root);
     this.guests.clear();
-    if (this.room) { this.world.remove(this.room.root); this.room = null; }
+    if (this.room) { this.world.remove(this.room.root); disposeRoomAreas(this.room); this.room = null; }
     this.contacts.clear();
     this.layoutKey = ''; this.roomKey = '';
   }
@@ -597,23 +601,34 @@ class LayoutGuide {
   constructor() {
     this.root = new THREE.Group();
     this.root.visible = false;
+    this.gridMat = new THREE.MeshBasicMaterial({ color: 0x48b7c4, vertexColors: true, transparent: true, opacity: 0.58, depthWrite: false });
+    this.grid = new THREE.Mesh(new THREE.BufferGeometry(), this.gridMat);
+    this.grid.renderOrder = 4;
+    this.root.add(this.grid);
+    this.origin = this.marker(0xf0c060, 0.28);
+    this.target = this.marker(0x54bd68, 0.52);
+    this.root.add(this.origin, this.target);
+    this.key = '';
+  }
+
+  setState(state) {
+    const areas = lockedAreas(state);
+    const key = `${isStory(state)}:${areas.map((area) => area.id).join(',')}`;
+    if (key === this.key) return;
+    this.key = key;
     const gridShape = new Shape(false);
     for (let z = 1; z < RH - 1; z++) {
       for (let x = 1; x < RW - 1; x++) {
-        if (MAP[z][x] === '#' || MAP[z][x] === 'B' || MAP[z][x] === 'D') continue;
+        if (isWallTile(state, x, z) || MAP[z][x] === 'D') continue;
+        if (areas.some((area) => x >= area.x && x < area.x + area.w && z >= area.z && z < area.z + area.h)) continue;
         gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.06);
         gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.94);
         gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.06, 0.035, z + 0.5);
         gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.94, 0.035, z + 0.5);
       }
     }
-    this.gridMat = new THREE.MeshBasicMaterial({ color: 0x48b7c4, vertexColors: true, transparent: true, opacity: 0.58, depthWrite: false });
-    this.grid = meshOf(gridShape, this.gridMat, false, false);
-    this.grid.renderOrder = 4;
-    this.root.add(this.grid);
-    this.origin = this.marker(0xf0c060, 0.28);
-    this.target = this.marker(0x54bd68, 0.52);
-    this.root.add(this.origin, this.target);
+    this.grid.geometry.dispose();
+    this.grid.geometry = gridShape.build();
   }
 
   marker(color, opacity) {

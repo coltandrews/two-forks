@@ -5,6 +5,7 @@ import { ING, stateInfo, statesOf } from '../data/ingredients.js';
 import { CUISINES, BUILDER } from '../data/cuisines.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { STATION_NAMES } from '../data/layout.js';
+import { isOwned, recipeRequirements, drinkRequirements, ingredientAllowed, unlockList, chapterInfo } from '../data/progression.js';
 import { allDishes, dishById, drinkById, dishCost, courseSlot, menuLimits, menuIngredients, WEEKDAYS, dishVeg } from '../sim/state.js';
 import {
   stockCount, casePrice, pendingCases, autofillPlan, expectedParties, upgradeStatus, rateCustom, classTip, avgRating, forecastDishes, placementStatus,
@@ -16,7 +17,8 @@ import { sfx } from '../audio.js';
 
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const pct = (v) => (v * 100).toFixed(0) + '%';
-const TABS = [['report', 'Report'], ['menu', 'Menu'], ['supplier', 'Supplier'], ['upgrades', 'Upgrades'], ['layout', 'Layout'], ['house', 'Restaurant']];
+const TABS = [['report', 'Report'], ['menu', 'Menu'], ['supplier', 'Supplier'], ['unlocks', 'Unlocks'], ['upgrades', 'Upgrades'], ['layout', 'Layout'], ['house', 'Restaurant']];
+const requirementChips = (requirements) => requirements.length ? `<div class="requirement-chips">${requirements.map((text) => `<span class="requirement-chip">${esc(text)}</span>`).join('')}</div>` : '';
 
 export class Office {
   constructor(app) {
@@ -74,6 +76,7 @@ export class Office {
 
   render(state, force) {
     this.state = state;
+    if (state.mode !== 'story' && this.tab === 'unlocks') this.tab = 'upgrades';
     if (this.layoutMode) { this.renderLayoutBar(state, force); return; }
     const sig = this.sigFor(state);
     if (!force && sig === this.lastSig) return;
@@ -84,7 +87,7 @@ export class Office {
     const top = scroll ? scroll.scrollTop : 0;
     this.root.innerHTML = `<div class="office">
       <div class="office-head"><div><h1>${esc(state.name)}</h1><div class="meta">${CUISINES[state.cuisine].style} · Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]} · ${state.phase === 'office' ? 'after hours' : 'morning'}</div></div>
-        <div class="tabs">${TABS.map(([k, n]) => `<button data-tab="${k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+        <div class="tabs">${TABS.filter(([k]) => k !== 'unlocks' || state.mode === 'story').map(([k, n]) => `<button data-tab="${k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
       <div class="office-body">${this.body(state)}</div>
       <div class="office-foot">${this.foot(state)}</div></div>`;
     const nb = this.root.querySelector('.office-body');
@@ -93,7 +96,7 @@ export class Office {
 
   sigFor(state) {
     return JSON.stringify([this.tab, state.phase, state.day, state.cash, state.menu, state.custom, state.orders, state.upgrades, state.marketing, state.ready, Object.keys(state.players), state.rep.level,
-      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev]);
+      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev, state.mode, state.xp, state.level, state.owned, state.chapter, state.goal, state.pendingPurchase]);
   }
 
   foot(state) {
@@ -116,6 +119,7 @@ export class Office {
       case 'menu': return this.menu(state);
       case 'supplier': return this.supplier(state);
       case 'upgrades': return this.upgrades(state);
+      case 'unlocks': return this.unlocks(state);
       case 'layout': return this.layoutTab(state);
       case 'house': return this.house(state);
     }
@@ -134,7 +138,7 @@ export class Office {
       ${line('<b>Cost of goods sold</b>', -r.cogs)}${line('Food ingredients', -r.cogsFood, 'sub')}${line('Drinks', -r.cogsDrink, 'sub')}
       ${line('Gross profit', r.gross, 'total')}
       ${line('<b>Waste</b>', -r.waste)}${line('Thrown away', -r.wasteParts.binned, 'sub')}${line('Spoiled overnight', -r.wasteParts.spoiled, 'sub')}${line('Left out at closing', -r.wasteParts.cleanup, 'sub')}
-      ${line('<b>Running costs</b>', -r.fixedTotal)}${line('Rent', -f.rent, 'sub')}${line('Equipment loan', -f.loan, 'sub')}${line('Utilities', -f.utilities, 'sub')}${line('Card fees (3%)', -f.cardFees, 'sub')}${line('Napkins and supplies', -f.supplies, 'sub')}${f.cleaning ? line('Dishwashing service (unwashed plates)', -f.cleaning, 'sub') : ''}
+      ${line('<b>Running costs</b>', -r.fixedTotal)}${line('Rent', -f.rent, 'sub')}${line(state.mode === 'story' ? 'Loan payment' : 'Equipment loan', -f.loan, 'sub')}${line('Utilities', -f.utilities, 'sub')}${line('Card fees (3%)', -f.cardFees, 'sub')}${line('Napkins and supplies', -f.supplies, 'sub')}${f.cleaning ? line('Dishwashing service (unwashed plates)', -f.cleaning, 'sub') : ''}
       <tr class="net"><td>Net profit</td><td class="${r.net >= 0 ? 'pos' : 'neg'}">${money(r.net)}</td></tr></table>`;
     const kpi = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
     const kpis = `<div class="kpis">${kpi(r.covers, 'Guests')}${kpi(money(r.avgCheck), 'Avg check / guest')}${kpi(r.foodCostPct + '%', 'Food cost')}${kpi(r.rating ? r.rating.toFixed(1) + '★' : '–', 'Avg rating')}
@@ -152,15 +156,18 @@ export class Office {
       return `<tr><th colspan="6">${slot === 'starter' ? 'Starters & sides' : slot + 's'}</th></tr>` + g.map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${m.n}</td><td class="n">${money(m.price)}</td><td class="n">${money(m.cost)}</td><td class="n">${money(m.cm)}</td><td><span class="cls ${m.cls}" title="${esc(classTip(m.cls))}">${m.cls}</span></td></tr>`).join('');
     }).join('');
     const spoiled = (r.spoiled || []).length ? `<div class="tip">Spoiled this morning: ${r.spoiled.map((s) => `${s.n} ${ING[s.ing].name.toLowerCase()}${s.well ? ' (prep well)' : ''}`).join(', ')}</div>` : '';
-    return `${kpis}<div class="cols2">
+    const progress = r.progression;
+    const xp = state.mode === 'story' && progress ? `<div class="card xp-report"><h3>Chef Level ${progress.level} <span class="xp-total">+${progress.xp} XP</span></h3><div class="xp-lines">${(progress.lines || []).map((x) => `<span>${esc(x.label)} <b>+${x.amount} XP</b></span>`).join('')}</div>${progress.goal ? `<p>${progress.goal.done ? '✓ Goal met' : 'Goal not met'}: ${esc(progress.goal.label)}${progress.goal.done ? ` · +${progress.goal.xp} XP` : ''}</p>` : ''}${progress.relief ? `<p>The bank lent you ${money(progress.relief)} to keep the restaurant open. Total loan balance: ${money(progress.debt)}. This loan is not sales income.</p>` : progress.debtDays ? `<p class="neg">Cash is below zero for ${progress.debtDays} day${progress.debtDays === 1 ? '' : 's'}. The bank allows three days before loan terms change.</p>` : ''}</div>` : '';
+    const crew = (r.crew || []).length ? `<div class="card" style="margin-top:14px"><h3>The crew</h3><div class="tip">Everyone shares the restaurant's progress.</div><table class="crew-report"><tr><th>Chef</th><th>Plated</th><th>Served</th><th>Tables cleared</th></tr>${r.crew.map((chef) => `<tr><td>${esc(chef.name)}</td><td>${chef.plated}</td><td>${chef.served}</td><td>${chef.bused}</td></tr>`).join('')}</table></div>` : '';
+    return `${kpis}${xp}<div class="cols2">
       <div class="card receipt"><h3>Day ${r.day} · Profit &amp; Loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="card"><h3>Net profit, last ${hist.length} day${hist.length > 1 ? 's' : ''}</h3>${spark}</div>
         <div class="card"><h3>Reviews</h3><div class="reviews">${reviews.length ? reviews.map((v) => `<div class="review ${v.critic ? 'critic' : ''}"><span class="st">${'★'.repeat(v.stars)}${'☆'.repeat(5 - v.stars)}</span> ${esc(v.text)} <span class="who">${esc(v.name)}${v.critic ? ', food critic' : ''}</span></div>`).join('') : '<div class="tip">No reviews today.</div>'}</div></div>
         <div class="card"><h3>Tip jar</h3>${tipsToday.length ? tipsToday.map(([n, v]) => `<div>${esc(n)}: <b>${money(v)}</b> today</div>`).join('') : '<div class="tip">Tips go to whoever settles the bill.</div>'}${jar.length ? `<div class="tip">All time: ${jar.map(([n, v]) => `${esc(n)} ${money(v)}`).join(' · ')}</div>` : ''}</div>
       </div></div>
-      <div class="card" style="margin-top:14px"><h3>Menu engineering</h3><div class="tip" style="margin-bottom:6px">Popularity is compared to a fair share of orders (70% rule); profit is each dish's margin against the average. Hover a tag for advice.</div>
-      <table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div>`;
+      ${crew}${isOwned(state, 'features', 'menu_report') ? `<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><div class="tip" style="margin-bottom:6px">Popularity is compared to a fair share of orders (70% rule); profit is each dish's margin against the average. Hover a tag for advice.</div>
+      <table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Available at Chef Level 5. Open the Unlocks tab to get this report.</p></div>'}`;
   }
 
   // ------------------------------------------------------------ menu
@@ -174,11 +181,12 @@ export class Office {
       const d = dishById(state, m.id);
       const cost = dishCost(d);
       const fc = cost / m.price;
-      const locked = d.level > state.rep.level;
+      const requirements = recipeRequirements(state, d);
+      const locked = requirements.length > 0;
       const s = sold.find((x) => x.id === m.id);
       return `<div class="mrow ${m.on ? '' : 'off'} ${locked ? 'locked' : ''}">
-        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked ? 'disabled' : ''} title="${locked ? 'Unlocks at reputation level ' + d.level : m.on ? 'Take off the menu' : 'Put on the menu'}"></button>
-        <div class="nm">${esc(d.name)}${d.custom ? ' <span class="cls Puzzle">House</span>' : ''}${dishVeg(d) ? ' <span title="Vegetarian">🌱</span>' : ''} <span class="appeal" title="Appeal">${'★'.repeat(Math.round(d.appeal / 2))}</span><small>${locked ? `Unlocks at reputation level ${d.level}` : d.comps.map(([i, st]) => stateInfo(i, st).label.toLowerCase()).join(' · ')}</small></div>
+        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked && !m.on ? 'disabled' : ''} title="${locked ? esc(requirements.join(' · ')) : m.on ? 'Take off the menu' : 'Put on the menu'}" aria-label="${esc(d.name)}: ${m.on ? 'remove from menu' : 'add to menu'}"></button>
+        <div class="nm">${esc(d.name)}${d.custom ? ' <span class="cls Puzzle">House</span>' : ''}${dishVeg(d) ? ' <span title="Vegetarian">🌱</span>' : ''} <span class="appeal" title="Appeal">${'★'.repeat(Math.round(d.appeal / 2))}</span><small>${d.comps.map(([i, st]) => stateInfo(i, st).label.toLowerCase()).join(' · ')}</small>${requirementChips(requirements)}</div>
         <div class="price"><button data-act="price" data-id="${m.id}" data-d="-1">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-price="${m.id}"><button data-act="price" data-id="${m.id}" data-d="1">+</button></div>
         <div class="n">${money(cost)}<br><span class="fc ${fc > 0.38 ? 'hi' : ''}">${pct(fc)} cost</span></div>
         <div class="n" title="What guests think it's worth">fair ${money0(d.fair)}</div>
@@ -190,7 +198,8 @@ export class Office {
     };
     const drinks = state.menu.drinks.map((m) => {
       const d = drinkById(state, m.id);
-      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}"></button><div class="nm">${esc(d.name)}</div>
+      const requirements = drinkRequirements(state, d);
+      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}" ${requirements.length && !m.on ? 'disabled' : ''} aria-label="${esc(d.name)}: ${m.on ? 'remove from menu' : 'add to menu'}"></button><div class="nm">${esc(d.name)}${requirementChips(requirements)}</div>
         <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}"><button data-act="dprice" data-id="${m.id}" data-d="0.5">+</button></div>
         <div class="n">${money(d.cost)}<br><span class="fc">${pct(d.cost / m.price)} cost</span></div><div class="n">fair ${money0(d.price)}</div><div></div></div>`;
     }).join('');
@@ -202,16 +211,19 @@ export class Office {
   }
 
   builder(state) {
+    if (!isOwned(state, 'features', 'house_dish')) return '<div class="card" style="margin-top:16px"><h3>Create a house dish</h3><p>Available at Chef Level 6. Open the Unlocks tab to get this tool.</p></div>';
     const dr = this.draft;
     const tpl = BUILDER[dr.tpl];
     const r = dr.comps.length ? rateCustom(dr.comps) : null;
-    const ingOpts = Object.values(ING).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+    const ingOpts = Object.values(ING).filter((i) => ingredientAllowed(state, i.id)).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
     const kinds = [...new Set(ingOpts.map((i) => i.kind))];
-    const sel = this.pickIng || tpl.bases[0][0];
+    const wanted = this.pickIng || tpl.bases[0][0];
+    const sel = ingOpts.some((i) => i.id === wanted) ? wanted : ingOpts[0].id;
     const states = statesOf(sel);
     const custom = (state.custom || []).length;
+    const requirements = recipeRequirements(state, { id: '', custom: true, comps: dr.comps });
     return `<div class="card builder" style="margin-top:16px"><h3>Create a house dish (${custom}/8)</h3>
-      <div class="tip" style="margin-bottom:8px">Pick a type, start with its base, then add up to ${tpl.max} components in total. Classic pairings (bacon + cheddar, avocado + lime, salmon + teriyaki…) make guests like it more. Every ingredient can be ordered from the supplier.</div>
+      <div class="tip" style="margin-bottom:8px">Pick a type, start with its base, then add up to ${tpl.max} components in total. Classic pairings (bacon + cheddar, avocado + lime, salmon + teriyaki…) make guests like it more. ${state.mode === 'story' ? 'Your supplier licenses decide which ingredients you can use.' : 'Every ingredient can be ordered from the supplier.'}</div>
       <div class="row"><input type="text" placeholder="Dish name" maxlength="28" value="${esc(dr.name)}" data-draft="name">
         <select data-draft="course">${['main', 'starter', 'side', 'dessert'].map((c) => `<option ${dr.course === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <select data-draft="tpl">${Object.entries(BUILDER).map(([k, b]) => `<option value="${k}" ${dr.tpl === k ? 'selected' : ''}>${b.name}</option>`).join('')}</select></div>
@@ -221,7 +233,7 @@ export class Office {
         <span class="hint-line">Base: ${tpl.bases.map(([i, s]) => esc(stateInfo(i, s).label.toLowerCase())).join(' or ')}</span></div>
       <div class="chips">${dr.comps.map(([i, s], k) => `<span class="chip2"><span class="sw" style="background:${hex(stateInfo(i, s).color)}"></span>${esc(stateInfo(i, s).label)}<button data-act="rmcomp" data-k="${k}">✕</button></span>`).join('') || '<span class="hint-line">No components yet.</span>'}</div>
       ${r ? `<div class="preview"><span>Ingredient cost <b>${money(r.cost)}</b></span><span>Guests would pay <b>${money0(r.fair)}</b></span><span>Appeal <b>${r.appeal}/9</b></span><span>Pairings <b>${r.pairs}</b></span></div>` : ''}
-      <button class="btn primary" data-act="create" ${dr.comps.length < 2 ? 'disabled' : ''}>Add to the dish list</button></div>`;
+      ${requirementChips(requirements)}<button class="btn primary" data-act="create" ${dr.comps.length < 2 || requirements.length ? 'disabled' : ''}>Add to the dish list</button></div>`;
   }
 
   // ------------------------------------------------------------ supplier
@@ -234,7 +246,7 @@ export class Office {
     const used = new Set(menuIngredients(state));
     const need = {};
     for (const [id, n] of Object.entries(forecast)) for (const [ing] of dishById(state, id).comps) need[ing] = (need[ing] || 0) + n;
-    const ings = Object.values(ING).filter((i) => used.has(i.id) || this.showAllIngs || stockCount(state, i.id) > 0 || pendingCases(state, i.id) > 0);
+    const ings = Object.values(ING).filter((i) => ingredientAllowed(state, i.id) && (used.has(i.id) || this.showAllIngs || stockCount(state, i.id) > 0 || pendingCases(state, i.id) > 0));
     ings.sort((a, b) => (used.has(b.id) - used.has(a.id)) || a.store.localeCompare(b.store) || a.name.localeCompare(b.name));
     const tomorrow = state.phase === 'office' ? state.day + 1 : state.day;
     const rows = ings.map((i) => {
@@ -243,10 +255,11 @@ export class Office {
       const pend = pendingCases(state, i.id);
       const needN = Math.ceil(need[i.id] || 0);
       const short = used.has(i.id) && n + pend * i.case - exp < needN;
-      return `<tr class="${used.has(i.id) ? 'used' : ''}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hex(i.look.color)}"></span> ${esc(i.name)}</td>
+      const storage = state.mode !== 'story' || state.objects.some((o) => o.type === i.store);
+      return `<tr class="${used.has(i.id) ? 'used' : ''}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hex(i.look.color)}"></span> ${esc(i.name)}${storage ? '' : requirementChips([`Needs ${STATION_NAMES[i.store].toLowerCase()}`])}</td>
         <td>${STATION_NAMES[i.store]}</td><td class="n">${n}${exp ? ` <span class="exp">(${exp} spoil soon)</span>` : ''}</td><td class="n ${short ? 'short' : ''}">${needN || ''}</td>
         <td class="n">${i.case} · ${i.keep}d</td><td class="n">${money(casePrice(i.id))}</td>
-        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1">+</button></span></td>
+        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1" ${storage ? '' : 'disabled'}>+</button></span></td>
         <td class="n">${pend ? money(pend * casePrice(i.id)) : ''}</td></tr>`;
     }).join('');
     const total = state.orders.reduce((s, o) => s + o.cases * casePrice(o.ing), 0);
@@ -256,26 +269,42 @@ export class Office {
       <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
       <span class="hint-line">Tonight's order: <b>${money(total)}</b></span></div></div>
       <table class="sup" style="margin-top:12px"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table>
-      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show only what the menu uses' : 'Show every ingredient (for house dishes)'}</button>`;
+      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show only what the menu uses' : state.mode === 'story' ? 'Show all licensed ingredients' : 'Show every ingredient (for house dishes)'}</button>${state.mode === 'story' ? '<p class="hint-line">Buy supplier licenses in the Unlocks tab to order more ingredients.</p>' : ''}`;
   }
 
   // ------------------------------------------------------------ upgrades
 
+  unlocks(state) {
+    const entries = unlockList(state);
+    const chapter = chapterInfo(state);
+    const card = (item) => `<div class="unlock-card ${item.owned ? 'owned' : item.level > state.level ? 'locked' : ''}"><span class="unlock-kind">${esc(item.kind)} · Chef Level ${item.level}</span><h4>${esc(item.name)}</h4><p>${esc(item.desc)}</p>${item.owned ? '<b>✓ Owned</b>' : `<span class="unlock-price">${item.price ? money0(item.price) : 'Free'}</span><button class="btn small ${item.can ? 'primary' : ''}" data-act="unlock" data-kind="${esc(item.kind)}" data-id="${esc(item.id)}" ${item.can && !state.pendingPurchase ? '' : 'disabled'}>${item.can ? (item.price ? 'Buy' : 'Get') : esc(item.reason || `Needs Chef Level ${item.level}`)}</button>`}</div>`;
+    const groups = [
+      ['Owned', entries.filter((x) => x.owned)],
+      ['Buy now', entries.filter((x) => !x.owned && x.level <= state.level)],
+      ['Coming at higher levels', entries.filter((x) => !x.owned && x.level > state.level)],
+    ];
+    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><p>${esc(chapter.text)}</p><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? 'Complete chapter' : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Your restaurant is open</h3><p>The story is complete. Keep serving, improve the room, and earn prestige stars.</p></div>';
+    const tables = UPGRADES.filter((u) => u.table).map((u) => this.upgradeCard(state, u)).join('');
+    return `<div class="unlock-summary"><div><h3>Chef Level ${state.level}</h3><span class="tip">Levels make items available. Cash buys them. Your crew shares all progress.</span></div><b>${money(state.cash)} available</b></div>${gate}<div class="section-title">Tables</div><p class="tip">Open more dining space to add tables. Each table must have a clear path to the door.</p><div class="ups">${tables}</div><div class="section-title">More unlocks</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">Nothing here yet.</div>'}</section>`).join('')}</div>`;
+  }
+
+  upgradeCard(state, upgrade) {
+    const n = state.upgrades[upgrade.id] || 0;
+    const status = upgradeStatus(state, upgrade);
+    return `<div class="up ${n >= upgrade.max ? 'maxed' : ''}"><h4>${esc(upgrade.name)}<span>${money0(upgrade.price)}</span></h4><p>${esc(upgrade.desc)}</p>
+      <div class="owned">${upgrade.max > 1 ? `Owned ${n}/${upgrade.max}` : n ? 'Owned' : ''}</div>
+      <button class="btn small ${status.can ? 'primary' : ''}" data-act="buy" data-id="${upgrade.id}" ${status.can && !state.pendingPurchase ? '' : 'disabled'}>${status.can ? 'Buy' : esc(status.reason)}</button></div>`;
+  }
+
   upgrades(state) {
-    const card = (u) => {
-      const n = state.upgrades[u.id] || 0;
-      const st = upgradeStatus(state, u);
-      return `<div class="up ${n >= u.max ? 'maxed' : ''}"><h4>${esc(u.name)}<span>${money0(u.price)}</span></h4><p>${esc(u.desc)}</p>
-        <div class="owned">${u.max > 1 ? `Owned ${n}/${u.max}` : n ? 'Owned' : ''}</div>
-        <button class="btn small ${st.can ? 'primary' : ''}" data-act="buy" data-id="${u.id}" ${st.can ? '' : 'disabled'}>${st.can ? 'Buy' : esc(st.reason)}</button></div>`;
-    };
     const mk = MARKETING.map((m) => {
       const running = state.marketing && state.marketing.days > 0;
+      const licensed = isOwned(state, 'features', 'marketing');
       return `<div class="up"><h4>${esc(m.name)}<span>${money0(m.price)}</span></h4><p>+${Math.round(m.boost * 100)}% guests for ${m.days} day${m.days > 1 ? 's' : ''}, starting with the next service.</p>
-        <button class="btn small ${!running && state.cash >= m.price ? 'primary' : ''}" data-act="market" data-id="${m.id}" ${running || state.cash < m.price ? 'disabled' : ''}>${running ? 'Campaign running' : 'Run it'}</button></div>`;
+        <button class="btn small ${licensed && !running && state.cash >= m.price ? 'primary' : ''}" data-act="market" data-id="${m.id}" ${!licensed || running || state.cash < m.price ? 'disabled' : ''}>${!licensed ? 'Needs Marketing in Unlocks' : running ? 'Campaign running' : 'Run it'}</button></div>`;
     }).join('');
-    const kitchen = UPGRADES.filter((u) => u.group === 'Kitchen').map(card).join('');
-    const dining = UPGRADES.filter((u) => u.group === 'Dining room').map(card).join('');
+    const kitchen = UPGRADES.filter((u) => u.group === 'Kitchen').map((u) => this.upgradeCard(state, u)).join('');
+    const dining = UPGRADES.filter((u) => u.group === 'Dining room').map((u) => this.upgradeCard(state, u)).join('');
     return `<div class="tip">New stations and tables are placed automatically. Rearrange them in the Layout tab. Every heat station adds $${CFG.money.utilityPerStation} a day to utilities.</div>
       <div class="section-title">Kitchen</div><div class="ups">${kitchen}</div>
       <div class="section-title">Dining room</div><div class="ups">${dining}</div>
@@ -285,7 +314,7 @@ export class Office {
   // ------------------------------------------------------------ layout
 
   layoutTab(state) {
-    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. You can use the full floor. The grid will show if the new place is safe. Doors and walls stay fixed.</p>
+    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. ${state.mode === 'story' ? 'You can use every room that you have leased. Buy leases in the Unlocks tab to open more floor space.' : 'You can use the full floor.'} The grid will show if the new place is safe. Doors and walls stay fixed.</p>
       <button class="btn primary" data-act="layout">Open floor planner</button></div>`;
   }
 
@@ -307,7 +336,7 @@ export class Office {
     const L = state.lifetime;
     return `<div class="cols2"><div class="card"><h3>${esc(state.name)}</h3><p>${esc(c.style)}. ${esc(c.blurb)}</p>
       <p>Open ${L.days} day${L.days === 1 ? '' : 's'} · ${L.guests} guests served · ${money0(L.revenue)} lifetime revenue · best day ${money(L.bestDay)}</p>
-      <p>Average rating ${avgRating(state) ? avgRating(state).toFixed(2) + '★' : '–'} · Reputation level ${state.rep.level}</p>
+      <p><span class="mode-badge ${state.mode === 'story' ? 'story' : ''}">${state.mode === 'story' ? 'STORY' : 'ARCADE'}</span> Average rating ${avgRating(state) ? avgRating(state).toFixed(2) + '★' : '–'}${state.mode === 'story' ? ` · Chef Level ${state.level} · ${state.xp} XP` : ''}</p>
       <button class="btn" data-act="chef">Change my chef</button></div>
       <div class="card"><h3>Save</h3>${host ? `<p>The game saves on this laptop after every day. A save code is a backup you can paste into any browser (Host → Import a save code).</p><button class="btn" data-act="code">Show save code</button>` : '<p>Your partner\'s laptop keeps the save. Only the host can export it.</p>'}</div></div>`;
   }
@@ -346,6 +375,8 @@ export class Office {
       case 'autofill': cmd({ c: 'autofill' }); break;
       case 'allings': this.showAllIngs = !this.showAllIngs; this.render(s, true); break;
       case 'buy': cmd({ c: 'upgrade', id: b.dataset.id }); break;
+      case 'unlock': cmd({ c: 'unlock', kind: b.dataset.kind, id: b.dataset.id }); break;
+      case 'chapter': cmd({ c: 'chapter' }); break;
       case 'market': cmd({ c: 'marketing', id: b.dataset.id }); break;
       case 'layout': this.startLayout(s); break;
       case 'layoutdone': this.stopLayout(); break;

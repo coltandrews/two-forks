@@ -11,7 +11,7 @@ import { Net } from './net.js';
 const HOST_PID = 'H', CLIENT_PID = 'C';
 
 const strip = (k, v) => (k === 'path' || k === 'tx' || k === 'tz' || k === 'moving' ? undefined : v);
-const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created'];
+const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created', 'mode', 'xp', 'level', 'prestige', 'owned', 'chapter', 'chapterDay', 'storyStats', 'debt', 'debtDays'];
 
 function liveOf(state) {
   const o = {};
@@ -51,7 +51,7 @@ export class Session {
   gridFor() {
     const s = this.state;
     if (!s) return null;
-    const key = s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
+    const key = (s.mode || 'arcade') + JSON.stringify(s.owned?.areas || {}) + s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
     if (key !== this.gridKey) { this.grid = buildGrid(s); this.gridKey = key; }
     return this.grid;
   }
@@ -237,6 +237,7 @@ export class Session {
       steps++;
       const evs = this.sim.drain();
       if (evs.length) {
+        if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd'].includes(e.type))) this.sendSnapshots(true);
         const mine = [], theirs = [];
         for (const e of evs) {
           if (!e.to || e.to === this.selfPid) mine.push(e);

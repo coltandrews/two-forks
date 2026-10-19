@@ -181,6 +181,8 @@ class App {
         if (r.stars >= 5 || r.stars <= 1 || r.critic) this.hud.toast(`${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}  "${r.text}"`, r.stars >= 4 ? 'good' : 'bad', 4200);
         break;
       }
+      case 'chapter': this.hud.showStoryCard(e); break;
+      case 'chefLevelUp': this.hud.showLevelUp(e); this.fx.confetti(); break;
       case 'levelUp': this.hud.levelUp(e.level, e.dishes); this.fx.confetti(); break;
       case 'dayEnd': {
         this.hud.closeModal();

@@ -1,17 +1,20 @@
 // The authoritative game. Only the host runs this; the partner sends it
 // positions and button presses and renders the snapshots it sends back.
+import { isStory, chapterInfo, CHAPTERS, AREAS, unlockList } from '../data/progression.js';
+import { UPGRADES, MARKETING } from '../data/upgrades.js';
+import { dailyGoal } from './progression.js';
 import { CFG } from '../config.js';
 import { SPAWN_POINTS, FRONT_DOOR } from '../data/layout.js';
 import { ING } from '../data/ingredients.js';
-import { buildGrid } from './world.js';
-import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS } from './state.js';
+import { buildGrid, collide } from './world.js';
+import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId } from './state.js';
 import {
   actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
 } from './kitchen.js';
-import { updateParties, spawnParty, buildSchedule, compItem, sendHome } from './guests.js';
+import { updateParties, spawnParty, buildSchedule, compItem, sendHome, pay } from './guests.js';
 import {
   spoil, deliverOrders, expectedParties, closeBooks, placeOrder, cancelOrder, applyAutofill, buyUpgrade,
-  buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot,
+  buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot, buyUnlock, completeChapter, upgradeStatus, autofillPlan, casePrice,
 } from './economy.js';
 
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -22,6 +25,7 @@ export class Sim {
     this.events = [];
     this.time = state.t || 0;
     this.layoutRev = 0;
+    this.announcedLevel = state.level || 1;
     this.rebuild();
     if (!state.today) state.today = freshToday();
     if (state.phase === 'morning' && !state.morningDone) this.beginMorning(true);
@@ -43,6 +47,10 @@ export class Sim {
 
   addPlayer(pid, profile) {
     const S = this.state;
+    if (S.pendingPurchase && !S.players[pid]) {
+      delete S.pendingPurchase;
+      this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
+    }
     const slot = Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0;
     const sp = SPAWN_POINTS[slot];
     S.players[pid] = {
@@ -68,6 +76,10 @@ export class Sim {
     const name = S.players[pid].name;
     delete S.players[pid];
     delete S.ready[pid];
+    if (S.pendingPurchase) {
+      delete S.pendingPurchase;
+      this.emit({ type: 'toast', text: 'Purchase canceled because a chef left.', kind: 'warn' });
+    }
     this.emit({ type: 'toast', text: `${name} left the kitchen.`, kind: 'warn' });
   }
 
@@ -75,7 +87,8 @@ export class Sim {
     const p = this.state.players[pid];
     if (!p) return;
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(rot)) return;
-    p.x = x; p.z = z; p.rot = rot;
+    const position = collide(this.grid, { x, z }, CFG.move.radius);
+    p.x = position.x; p.z = position.z; p.rot = rot;
   }
 
   setWork(pid, on) {
@@ -95,10 +108,67 @@ export class Sim {
 
   command(pid, c) {
     const S = this.state;
-    const r = this._command(pid, c) || {};
+    if (!S.players[pid] || !c || typeof c.c !== 'string') return { ok: false };
+    let r;
+    if (c.c === 'approvePurchase') r = this.approvePurchase(pid, c);
+    else {
+      const quote = this.purchaseQuote(c);
+      if (quote && S.pendingPurchase) r = { ok: false, reason: 'Finish the pending purchase first.' };
+      else if (quote && isStory(S) && quote.price > 500) {
+        if (!['morning', 'office'].includes(S.phase)) r = { ok: false, reason: 'Approve large purchases before opening or after closing.' };
+        else {
+          S.pendingPurchase = { id: nextId(S, 'purchase'), name: quote.name, price: quote.price, requestedBy: pid, required: Object.keys(S.players), approved: [], command: { ...c } };
+          r = { ok: true, pending: true };
+        }
+      } else r = this._command(pid, c) || {};
+    }
     if (r.reason) this.emit({ type: 'toast', text: r.reason, kind: 'bad', to: pid });
     if (r.layout) this.rebuild();
+    if (r.chapter) this.emit({ type: 'chapter', ...r.chapter });
+    this.syncProgression();
+    if (r.ok && ['unlock', 'chapter', 'approvePurchase', 'upgrade'].includes(c.c)) this.emit({ type: 'save' });
     return r;
+  }
+
+  purchaseQuote(c) {
+    const S = this.state;
+    if (c.c === 'chapter') {
+      const info = chapterInfo(S);
+      return info?.ready ? { name: info.area ? 'Lease: ' + AREAS.find((a) => a.id === info.area).name : 'Finish the story', price: info.price } : null;
+    }
+    if (c.c === 'unlock') {
+      const row = unlockList(S).find((u) => u.kind === c.kind && u.id === c.id && u.can);
+      return row ? { name: row.name, price: row.price } : null;
+    }
+    if (c.c === 'upgrade') {
+      const row = UPGRADES.find((u) => u.id === c.id);
+      return row && upgradeStatus(S, row).can ? { name: row.name, price: row.price } : null;
+    }
+    if (c.c === 'marketing') return MARKETING.find((m) => m.id === c.id) || null;
+    if ((c.c === 'order' || c.c === 'rush') && ING[c.ing] && c.cases > 0) return { name: 'Supplier order', price: casePrice(c.ing, c.c === 'rush') * Math.min(c.c === 'rush' ? 5 : 50, c.cases | 0) };
+    if (c.c === 'autofill') return { name: 'Supplier autofill', price: Math.round(autofillPlan(S, this.playerCount()).reduce((sum, row) => sum + casePrice(row.ing) * row.cases, 0) * 100) / 100 };
+    return null;
+  }
+
+  approvePurchase(pid, c) {
+    const S = this.state, purchase = S.pendingPurchase;
+    if (!purchase || purchase.id !== c.id || !purchase.required.includes(pid)) return { ok: false };
+    if (c.approve !== true) { delete S.pendingPurchase; return { ok: true }; }
+    if (!purchase.approved.includes(pid)) purchase.approved.push(pid);
+    if (!purchase.required.every((id) => purchase.approved.includes(id))) return { ok: true, pending: true };
+    delete S.pendingPurchase;
+    const quote = this.purchaseQuote(purchase.command);
+    if (!['morning', 'office'].includes(S.phase) || !quote || quote.price !== purchase.price) return { ok: false, reason: 'The purchase changed. Please request it again.' };
+    return this._command(pid, purchase.command) || {};
+  }
+
+  syncProgression() {
+    const S = this.state;
+    if (!isStory(S) || S.level <= this.announcedLevel) return;
+    const unlocks = unlockList(S).filter((u) => u.level > this.announcedLevel && u.level <= S.level).map((u) => u.name);
+    this.announcedLevel = S.level;
+    this.emit({ type: 'chefLevelUp', level: S.level, unlocks });
+    this.emit({ type: 'sfx', name: 'level' });
   }
 
   _command(pid, c) {
@@ -132,6 +202,10 @@ export class Sim {
         if (r.ok) this.emit({ type: 'sfx', name: 'cash' });
         return r;
       }
+      case 'unlock':
+      case 'chapter':
+        if (!['morning', 'office'].includes(S.phase)) return { ok: false, reason: 'Use the office before opening or after closing.' };
+        return c.c === 'chapter' ? completeChapter(S) : buyUnlock(S, c.kind, c.id);
       case 'marketing': return buyMarketing(S, c.id);
       case 'price': setPrice(S, c.id, c.price, c.drink); return null;
       case 'toggle': return toggleDish(S, c.id, c.on, c.drink);
@@ -151,6 +225,7 @@ export class Sim {
   setReady(pid, on) {
     const S = this.state;
     if (S.phase !== 'morning' && S.phase !== 'office') return null;
+    if (S.pendingPurchase) return { ok: false, reason: 'Approve or cancel the pending purchase first.' };
     if (on) S.ready[pid] = true; else delete S.ready[pid];
     const ids = Object.keys(S.players);
     if (ids.length && ids.every((id) => S.ready[id])) {
@@ -171,6 +246,7 @@ export class Sim {
     if (initial && S.day === 1 && !S.started) {
       S.started = true;
       this.firstDelivery();
+      if (isStory(S)) this.emit({ type: 'chapter', chapter: 1, ...CHAPTERS[0] });
     }
   }
 
@@ -210,15 +286,12 @@ export class Sim {
     for (const p of [...S.parties]) {
       // Anyone still here pays what they owe.
       if (['eating', 'dessertEat', 'paying', 'dessertReady', 'dessertWait'].includes(p.state)) {
-        const food = p.items.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
-        const drinks = p.drinks.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
-        S.cash = round2(S.cash + food + drinks);
-        S.today.foodRev = round2(S.today.foodRev + food);
-        S.today.drinkRev = round2(S.today.drinkRev + drinks);
+        pay(this, p, null);
       }
     }
     S.parties = [];
     const cl = cleanup(this);
+    delete S.pendingPurchase;
     const report = closeBooks(S, { cleanup: cl, spoiled: S.today.spoiledLines || [] });
     S.phase = 'office';
     S.ready = {};
@@ -227,6 +300,7 @@ export class Sim {
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
     }
     if (S.marketing && S.marketing.days > 0) { S.marketing.days -= 1; if (S.marketing.days <= 0) S.marketing = null; }
+    this.syncProgression();
     this.emit({ type: 'dayEnd', report });
     this.emit({ type: 'sfx', name: 'bell' });
     this.emit({ type: 'save' });
@@ -236,6 +310,7 @@ export class Sim {
     const S = this.state;
     S.day += 1;
     S.today = freshToday();
+    if (isStory(S)) S.goal = dailyGoal(S);
     const sp = spoil(S);
     S.today.waste.spoiled = sp.total;
     S.today.spoiledLines = sp.lines;
@@ -273,6 +348,7 @@ export class Sim {
     }
 
     tickStations(this, dt);
+    this.syncProgression();
     if (S.upgrades.dishwasher) {
       const sink = S.objects.find((o) => o.type === 'sink');
       if (sink.n > 0) {
@@ -317,6 +393,7 @@ export class Sim {
         }
       }
       updateParties(this, dt);
+      this.syncProgression();
       if (S.phase === 'closing' && !S.parties.length) this.endDay();
     }
   }

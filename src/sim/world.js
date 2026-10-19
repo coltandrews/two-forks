@@ -1,6 +1,7 @@
 // Tile grid, collision, pathfinding and placement rules. Pure functions over
 // the game state; no rendering here.
 import { MAP, TABLE_SIZE } from '../data/layout.js';
+import { isStory, lockedAreas } from '../data/progression.js';
 
 export const W = MAP[0].length;
 export const H = MAP.length;
@@ -11,6 +12,12 @@ export function baseTile(x, z) {
 }
 
 export function isWallChar(c) { return c === '#' || c === 'B'; }
+
+/** Story keeps an aisle between the front counter and the small kitchen. */
+export function isWallTile(state, x, z) {
+  if (isStory(state) && z === 5 && x >= 1 && x <= 3) return false;
+  return isWallChar(baseTile(x, z));
+}
 
 export function footprint(o) {
   if (o.type === 'table') {
@@ -25,7 +32,12 @@ export function buildGrid(state) {
   const blocked = new Uint8Array(W * H);
   const owner = new Array(W * H).fill(null);
   for (let z = 0; z < H; z++) {
-    for (let x = 0; x < W; x++) if (isWallChar(MAP[z][x])) blocked[z * W + x] = 1;
+    for (let x = 0; x < W; x++) if (isWallTile(state, x, z)) blocked[z * W + x] = 1;
+  }
+  for (const area of lockedAreas(state)) {
+    for (let z = area.z; z < area.z + area.h; z++) {
+      for (let x = area.x; x < area.x + area.w; x++) blocked[z * W + x] = 1;
+    }
   }
   for (const o of state.objects) {
     const f = footprint(o);
@@ -145,6 +157,14 @@ export function approachTile(grid, tx, tz, px = tx, pz = tz) {
  * object usable from at least one walkable neighbor.
  */
 export function validateLayout(state, door) {
+  for (const area of lockedAreas(state)) {
+    for (const o of state.objects) {
+      const f = footprint(o);
+      if (f.x < area.x + area.w && f.x + f.w > area.x && f.z < area.z + area.h && f.z + f.h > area.z) {
+        return { ok: false, reason: `Lease the ${area.name} before placing objects there.` };
+      }
+    }
+  }
   const grid = buildGrid(state);
   const seen = new Uint8Array(W * H);
   const q = [door.z * W + door.x];
@@ -184,7 +204,7 @@ export function validateLayout(state, door) {
 
 /** Whether a footprint fits on plain floor in the given rows. */
 export function fits(state, f, zMin, zMax, ignoreId = null) {
-  const grid = buildGrid({ objects: state.objects.filter((o) => o.id !== ignoreId) });
+  const grid = buildGrid({ ...state, objects: state.objects.filter((o) => o.id !== ignoreId) });
   for (let dz = 0; dz < f.h; dz++) {
     for (let dx = 0; dx < f.w; dx++) {
       const x = f.x + dx, z = f.z + dz;

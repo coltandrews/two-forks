@@ -1,4 +1,6 @@
 // Parties: arrival, the queue, seating, ordering, eating, paying, reviews.
+import { isStory, drinkRequirements } from '../data/progression.js';
+import { awardXP, paidProgress, creditWork } from './progression.js';
 import { CFG } from '../config.js';
 import { QUEUE_SPOTS, FRONT_DOOR } from '../data/layout.js';
 import { ING } from '../data/ingredients.js';
@@ -70,7 +72,8 @@ export function spawnParty(sim, opts = {}) {
   const waiting = S.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
   if (waiting.length >= CFG.queueMax) { S.today.turnedAway++; return null; }
   const maxSeats = Math.max(...S.objects.filter((o) => o.type === 'table').map((t) => t.seats), 2);
-  const critic = opts.critic ?? (S.day >= 3 && Math.random() < 0.035);
+  const critic = opts.critic ?? (isStory(S) ? S.chapter === 3 && !S.storyStats.criticPassed && !S.today.criticVisited : S.day >= 3 && Math.random() < 0.035);
+  if (critic && isStory(S)) S.today.criticVisited = true;
   const size = critic ? 1 : opts.size || rollSize(maxSeats);
   const r = Math.random();
   const kind = critic ? 'critic' : r < 0.3 ? 'budget' : r < 0.8 ? 'regular' : 'foodie';
@@ -195,7 +198,7 @@ export function orderable(state, slot) {
 }
 
 function pickDrink(state) {
-  const on = state.menu.drinks.filter((d) => d.on);
+  const on = state.menu.drinks.filter((d) => d.on && !drinkRequirements(state, drinkById(state, d.id)).length);
   if (!on.length) return null;
   const w = on.map((m) => { const d = drinkById(state, m.id); return Math.pow(d.price / m.price, 1.6); });
   let r = Math.random() * w.reduce((s, x) => s + x, 0);
@@ -309,6 +312,7 @@ export function serveTo(sim, pid, table, item, dry) {
     if (!d) return dry ? { blocked: p.drinks.some((x) => !x.served) ? "They didn't order that drink" : 'No drinks needed here' } : null;
     if (dry) return 'Serve ' + drinkById(S, item.id).name.toLowerCase();
     d.served = true;
+    creditWork(S, pid, 'served');
     S.today.cogsDrink = round2(S.today.cogsDrink + (item.cost || 0));
     S.today.soldDrinks[item.id] = (S.today.soldDrinks[item.id] || 0) + 1;
     p.mood = Math.min(100, p.mood + 3);
@@ -328,6 +332,10 @@ export function serveTo(sim, pid, table, item, dry) {
   line.served = true;
   line.q = q;
   line.cold = cold;
+  line.late = p.t > p.grace;
+  line.course = dish.course;
+  creditWork(S, pid, 'served');
+  creditWork(S, item.platedBy || pid, 'plated');
   const cost = itemCost(item);
   S.today.cogsFood = round2(S.today.cogsFood + cost);
   const sold = S.today.sold[id] || (S.today.sold[id] = { n: 0, rev: 0, cost: 0 });
@@ -391,7 +399,9 @@ function clearPlates(sim, party) {
   party.guests.forEach((g) => { g.eating = false; });
 }
 
-function pay(sim, party, pid) {
+export function pay(sim, party, pid) {
+  if (party.settled) return;
+  party.settled = true;
   const S = sim.state;
   const food = party.items.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
   const drinks = party.drinks.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
@@ -411,6 +421,7 @@ function pay(sim, party, pid) {
     S.tipJar = S.tipJar || {};
     S.tipJar[who] = round2((S.tipJar[who] || 0) + tip);
   }
+  paidProgress(S, party);
   party.paid = bill;
   party.tip = tip;
   sim.emit({ type: 'sfx', name: 'cash' });
@@ -459,6 +470,8 @@ const LINES = {
 };
 
 function review(sim, party, paid) {
+  if (party.reviewed) return;
+  party.reviewed = true;
   const S = sim.state;
   const served = party.items.filter((x) => x.served);
   const q = served.length ? served.reduce((s, x) => s + (x.q ?? 1), 0) / served.length : 0.5;
@@ -497,6 +510,10 @@ function review(sim, party, paid) {
   S.rep.ratings.push(stars);
   if (S.rep.ratings.length > CFG.rep.window) S.rep.ratings.shift();
   S.today.ratings.push(stars);
+  if (isStory(S) && paid && party.items.some((x) => x.served && x.price > 0)) {
+    awardXP(S, stars === 5 ? 30 : stars === 4 ? 15 : 0, 'Guest reviews');
+    if (party.kind === 'critic' && stars >= 4) S.storyStats.criticPassed = true;
+  }
   const r = { day: S.day, stars, text, name: party.name, critic: party.kind === 'critic', size: party.size };
   const rt = S.objects.find((o) => o.id === party.table);
   const at = rt ? { x: rt.x + (rt.seats === 4 ? 1 : 1.5), z: rt.z + (rt.seats === 4 ? 1.5 : 0.5) } : { x: 2.5, z: 12.5 };
@@ -504,10 +521,7 @@ function review(sim, party, paid) {
   if (S.reviews.length > 30) S.reviews.pop();
   sim.emit({ type: 'review', review: r, x: at.x, z: at.z });
   const lv = repLevel(S.rep.points);
-  if (lv > S.rep.level) {
-    S.rep.level = lv;
-    sim.onLevelUp(lv);
-  }
+  S.rep.level = lv;
 }
 
 // ------------------------------------------------------------ per tick

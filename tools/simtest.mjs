@@ -3,19 +3,43 @@
 // Run: node tools/simtest.mjs [cuisine] [days]
 import { newState, dishById, serialize, deserialize } from '../src/sim/state.js';
 import { Sim } from '../src/sim/sim.js';
-import { actE, findTarget, describe } from '../src/sim/kitchen.js';
-import { walkable, footprint, buildGrid, validateLayout } from '../src/sim/world.js';
+import { actE, findTarget } from '../src/sim/kitchen.js';
+import { walkable, footprint, validateLayout } from '../src/sim/world.js';
 import { ING } from '../src/data/ingredients.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
-import { HEAT_TYPES } from '../src/data/layout.js';
-import { autofillPlan, stockCount, placementStatus, tryMove } from '../src/sim/economy.js';
-import { CFG } from '../src/config.js';
+import { autofillPlan, placementStatus, tryMove } from '../src/sim/economy.js';
+import { pathToFileURL } from 'node:url';
 
 const DT = 1 / 30;
 let sim;
-const PID = 'A';
+let PID = 'A';
 let pickerQueue = [];
 let log = [];
+let supportBot = false;
+let supporting = false;
+let ticks = 0;
+
+/** A repeatable world seed. Restore the previous source after each test. */
+export function seededRandom(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6D2B79F5;
+    let n = value;
+    n = Math.imul(n ^ n >>> 15, n | 1);
+    n ^= n + Math.imul(n ^ n >>> 7, n | 61);
+    return ((n ^ n >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+export function useBot(nextSim, { support = false } = {}) {
+  sim = nextSim;
+  PID = 'A';
+  pickerQueue = [];
+  log = [];
+  supportBot = support;
+  supporting = false;
+  ticks = 0;
+}
 
 function step(n = 1) {
   for (let i = 0; i < n; i++) {
@@ -23,9 +47,10 @@ function step(n = 1) {
     for (const e of sim.drain()) {
       if (e.type === 'picker') pickerQueue.push(e);
       if (e.type === 'toast' && /burnt|walked|left|gave up/.test(e.text)) log.push(`[d${sim.state.day} ${fmtClock(sim.state.clock)}] ${e.text}`);
-      if (e.type === 'levelUp') log.push(`LEVEL UP ${e.level}: ${e.dishes.join(', ')}`);
+      if (e.type === 'levelUp') log.push(`LEVEL UP ${e.level}: ${(e.dishes || e.unlocks || []).join(', ')}`);
     }
     if (sim.state.phase === 'office') return;
+    if (supportBot && !supporting && ++ticks % 15 === 0) supportTick();
   }
 }
 const fmtClock = (m) => `${Math.floor(m / 60)}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
@@ -41,7 +66,7 @@ function face(o) {
       if ((dx < 0 || dx >= f.w) && (dz < 0 || dz >= f.h)) continue; // no diagonals
       const x = f.x + dx, z = f.z + dz;
       if (!walkable(g, x, z)) continue;
-      const d = Math.random();
+      const d = (x + 0.5 - P().x) ** 2 + (z + 0.5 - P().z) ** 2;
       if (d < bd) { bd = d; best = { x, z, tx: Math.max(f.x, Math.min(x, f.x + f.w - 1)), tz: Math.max(f.z, Math.min(z, f.z + f.h - 1)) }; }
     }
   }
@@ -104,25 +129,57 @@ function freeStation(type) {
   return objs(type).find((o) => !o.slot);
 }
 
-/** Leaves the ingredient [ing, st] in the bot's hand. */
-function prepare(ing, st) {
-  const well = objs('well').find((w) => w.well && w.well.ing === ing && w.well.st === st);
-  if (well) { E(well); return true; }
-  if (!takeRaw(ing)) return false;
-  for (const s of chainTo(ing, st)) {
-    let station = freeStation(s.at);
-    if (!station) { waitFor(() => freeStation(s.at), 90); station = freeStation(s.at); }
-    if (!station) throw new Error('No free ' + s.at);
-    E(station);
-    if (s.at === 'board') hold(station, () => station.slot && station.slot.st === s.to);
-    else waitFor(() => station.slot && station.slot.st === s.to, 90);
-    E(station);
-    if (!P().hand || P().hand.st !== s.to) throw new Error(`Expected ${ing}:${s.to} in hand, got ${JSON.stringify(P().hand)}`);
+// Start independent heat steps together, then plate each finished component.
+// This is normal kitchen work: no timer, stock, or quality value is changed.
+function prepareTogether(comps, counter) {
+  const tasks = comps.map(([ing, st]) => ({ ing, st, steps: chainTo(ing, st), at: null, done: false }));
+  let guard = 0;
+  while (tasks.some((t) => !t.done) && guard++ < 50000) {
+    let moved = false;
+    const readyFirst = [...tasks].sort((a, b) => Number(b.at?.type === 'board') - Number(a.at?.type === 'board'));
+    for (const task of readyFirst) {
+      if (task.done || !task.at) continue;
+      const stepInfo = task.steps[0];
+      if (!task.at.slot || task.at.slot.st !== stepInfo.to) continue;
+      E(task.at);
+      task.steps.shift();
+      task.at = null;
+      if (!task.steps.length) {
+        if (E(counter) !== 'ok') throw new Error('Could not plate ' + task.ing);
+        task.done = true;
+      } else {
+        const next = freeStation(task.steps[0].at);
+        if (!next) throw new Error('No free next station for ' + task.ing);
+        E(next);
+        task.at = next;
+        if (task.steps[0].at === 'board') hold(next, () => next.slot?.st === task.steps[0].to);
+      }
+      moved = true;
+    }
+    for (const task of tasks) {
+      if (task.done || task.at) continue;
+      const station = task.steps.length ? freeStation(task.steps[0].at) : null;
+      if (task.steps.length && !station) continue;
+      if (task.steps[0]?.at === 'board' && task.steps[1] && !freeStation(task.steps[1].at)) continue;
+      if (task.steps.length && tasks.some((other) => other.at?.type === 'board' && other.steps[1]?.at === task.steps[0].at)) continue;
+      if (!takeRaw(task.ing)) return false;
+      if (!station) {
+        if (E(counter) !== 'ok') throw new Error('Could not plate ' + task.ing);
+        task.done = true;
+      } else {
+        E(station);
+        task.at = station;
+        if (task.steps[0].at === 'board') hold(station, () => station.slot?.st === task.steps[0].to);
+      }
+      moved = true;
+    }
+    if (!moved) step(3);
+    if (sim.state.phase === 'office') return false;
   }
-  return true;
+  return tasks.every((t) => t.done);
 }
 
-function cook(dishId) {
+export function cook(dishId) {
   const dish = dishById(sim.state, dishId);
   const container = dish.comps.find(([i]) => ING[i].container);
   const rack = objs('rack')[0];
@@ -136,10 +193,7 @@ function cook(dishId) {
     const c2 = objs('counter').find((c) => !c.slot);
     if (!takeRaw(container[0])) return abort(counter);
     E(c2); // dough down
-    for (const [ing, st] of rest) {
-      if (!prepare(ing, st)) return abort(counter, c2);
-      E(c2); // topping
-    }
+    if (!prepareTogether(rest, c2)) return abort(counter, c2);
     E(c2); // pick dough
     const oven = freeStation('oven') || (waitFor(() => freeStation('oven')), freeStation('oven'));
     E(oven);
@@ -147,11 +201,7 @@ function cook(dishId) {
     E(oven);
     E(counter); // dough onto plate? combine: hand ing + slot plate
   } else {
-    for (const [ing, st] of rest) {
-      if (!prepare(ing, st)) return abort(counter);
-      const r = E(counter);
-      if (r !== 'ok') throw new Error('Could not plate ' + ing + ' ' + JSON.stringify(r));
-    }
+    if (!prepareTogether(rest, counter)) return abort(counter);
   }
   E(counter); // pick up plate
   return P().hand && P().hand.k === 'plate';
@@ -169,11 +219,11 @@ function abort(...cs) {
 
 const tableOf = (p) => sim.state.objects.find((o) => o.id === p.table);
 
-function serviceTick() {
+function serviceTick({ kitchen = true } = {}) {
   const S = sim.state;
   // Settle and take orders first.
   for (const p of S.parties) {
-    if (['ordering', 'dessertReady', 'paying'].includes(p.state)) {
+    if (!P().hand && ['ordering', 'dessertReady', 'paying'].includes(p.state)) {
       const t = tableOf(p);
       const st = p.state;
       hold(t, () => p.state !== st, 6);
@@ -196,7 +246,7 @@ function serviceTick() {
     E(dirty);
     E(objs('sink')[0]);
     const sink = objs('sink')[0];
-    hold(sink, () => sink.n === 0, 30);
+    hold(sink, () => sink.n === 0, kitchen ? 30 : 0.5);
     return true;
   }
   // Drinks.
@@ -212,6 +262,11 @@ function serviceTick() {
       if (r !== 'served') throw new Error('Drink not served: ' + JSON.stringify(r));
       return true;
     }
+  }
+  if (!kitchen) {
+    const sink = objs('sink')[0];
+    if (sink.n && !P().hand) hold(sink, () => sink.n === 0, 0.5);
+    return false;
   }
   // Cook the oldest ticket.
   const open = S.parties.filter((p) => ['waitingFood', 'dessertWait'].includes(p.state)).sort((a, b) => a.ticket - b.ticket);
@@ -234,6 +289,18 @@ function serviceTick() {
   return false;
 }
 
+// A second chef handles the dining room while the first chef waits for heat.
+// Both use the normal commands, cooking times, guest paths, and work timers.
+// Chef travel is still instantaneous, as in the original simulation test.
+function supportTick() {
+  if (!sim.state.players.B || !['service', 'closing'].includes(sim.state.phase)) return;
+  const previousPid = PID;
+  supporting = true;
+  PID = 'B';
+  try { serviceTick({ kitchen: false }); }
+  finally { PID = previousPid; supporting = false; }
+}
+
 function unpackAll() {
   const dock = objs('dock')[0];
   let n = 0;
@@ -247,11 +314,12 @@ function unpackAll() {
   return n;
 }
 
-function playDay() {
+export function playDay() {
   const S = sim.state;
   const unpacked = unpackAll();
   // Morning prep: a well of chopped lettuce if the menu uses it.
   sim.command(PID, { c: 'ready' });
+  if (supportBot) sim.command('B', { c: 'ready' });
   if (S.phase !== 'service') throw new Error('Did not open');
   let guard = 0;
   while (S.phase !== 'office' && guard++ < 200000) {
@@ -261,11 +329,12 @@ function playDay() {
       if (S.phase !== 'office') throw err;
     }
   }
+  if (S.phase !== 'office') throw new Error('Service did not finish');
   return unpacked;
 }
 
 function runCuisine(cuisine, days) {
-  sim = new Sim(newState({ cuisine, name: 'Test ' + cuisine }));
+  sim = new Sim(newState({ cuisine, name: 'Test ' + cuisine, mode: 'arcade' }));
   sim.addPlayer(PID, { name: 'Bot' });
   log = [];
   const out = [];
@@ -301,7 +370,7 @@ function runCuisine(cuisine, days) {
 /** Every dish in every cuisine can be cooked from scratch. */
 function cookEveryDish() {
   for (const c of CUISINE_ORDER) {
-    sim = new Sim(newState({ cuisine: c, name: 'x' }));
+    sim = new Sim(newState({ cuisine: c, name: 'x', mode: 'arcade' }));
     sim.state.rep.level = 10;
     sim.addPlayer(PID, { name: 'Bot' });
     for (const d of sim.state.objects) if (d.type === 'rack') d.n = 99;
@@ -323,8 +392,8 @@ function verifyStartingLayouts() {
   const signatures = new Set();
   let expectedCounts = null;
   for (const cuisine of CUISINE_ORDER) {
-    const state = newState({ cuisine, name: 'Layout test' });
-    if (state.cash !== CFG.money.startCash || state.cash !== 1500) throw new Error(`Wrong starting cash for ${cuisine}: ${state.cash}`);
+    const state = newState({ cuisine, name: 'Layout test', mode: 'arcade' });
+    if (state.cash !== 3000) throw new Error(`Wrong normal arcade cash for ${cuisine}: ${state.cash}`);
     const status = validateLayout(state, { x: 2, z: 14 });
     if (!status.ok) throw new Error(`Invalid starting layout for ${cuisine}: ${status.reason}`);
     const counts = Object.fromEntries([...new Set(state.objects.map((o) => o.type))].sort().map((type) => [type, state.objects.filter((o) => o.type === type).length]));
@@ -334,7 +403,7 @@ function verifyStartingLayouts() {
   }
   if (signatures.size !== CUISINE_ORDER.length) throw new Error('Starting layouts are not unique');
 
-  const state = newState({ cuisine: 'southern', name: 'Move test' });
+  const state = newState({ cuisine: 'southern', name: 'Move test', mode: 'arcade' });
   const drinks = state.objects.find((o) => o.type === 'drinks');
   let target = null;
   for (let z = 6; z <= 13 && !target; z++) {
@@ -349,8 +418,11 @@ function verifyStartingLayouts() {
 }
 
 const itemsMod = await import('../src/sim/items.js');
-verifyStartingLayouts();
-cookEveryDish();
-const only = process.argv[2];
-const days = +(process.argv[3] || 3);
-for (const c of only ? [only] : CUISINE_ORDER) runCuisine(c, days);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  Math.random = seededRandom(20261018);
+  verifyStartingLayouts();
+  cookEveryDish();
+  const only = process.argv[2];
+  const days = +(process.argv[3] || 3);
+  for (const c of only ? [only] : CUISINE_ORDER) runCuisine(c, days);
+}

@@ -3,8 +3,10 @@ import { BUILD, CFG } from '../config.js';
 import { CUISINES } from '../data/cuisines.js';
 import { ING } from '../data/ingredients.js';
 import { startingObjects } from '../data/layout.js';
+import { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } from '../data/progression.js';
+import { dailyGoal } from './progression.js';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function nextId(state, prefix = 'o') {
@@ -43,11 +45,12 @@ export function courseSlot(course) {
 }
 
 export function menuLimits(state) {
+  const base = isStory(state) && !state.owned.areas.main_room ? { main: 2, starter: 1, dessert: state.level >= 4 ? 1 : 0 } : CFG.menuSlots;
   const extra = state.upgrades.menu_board ? CFG.menuBoardBonus : { main: 0, starter: 0, dessert: 0 };
   return {
-    main: CFG.menuSlots.main + extra.main,
-    starter: CFG.menuSlots.starter + extra.starter,
-    dessert: CFG.menuSlots.dessert + extra.dessert,
+    main: base.main + extra.main,
+    starter: base.starter + extra.starter,
+    dessert: base.dessert + extra.dessert,
   };
 }
 
@@ -75,7 +78,7 @@ export function menuIngredients(state) {
 }
 
 function buildObjects(state) {
-  return startingObjects(state.cuisine).map((spec) => initObject({ id: nextId(state), ...spec }));
+  return (isStory(state) ? storyObjects(state.cuisine) : startingObjects(state.cuisine)).map((spec) => initObject({ id: nextId(state), ...spec }));
 }
 
 export function initObject(o) {
@@ -97,7 +100,7 @@ export function numberTables(state) {
   tables.forEach((t, i) => { t.num = i + 1; });
 }
 
-export function newState({ cuisine, name }) {
+export function newState({ cuisine, name, mode = 'arcade', cash = 3000 }) {
   const c = CUISINES[cuisine];
   const state = {
     v: SAVE_VERSION,
@@ -110,7 +113,8 @@ export function newState({ cuisine, name }) {
     phase: 'morning',
     clock: 8 * 60,
     paused: false,
-    cash: CFG.money.startCash,
+    mode: mode === 'story' ? 'story' : 'arcade',
+    cash: mode === 'story' ? 600 : [1500, 3000, 5000].includes(cash) ? cash : 3000,
     rep: { points: 0, level: 1, ratings: [] },
     upgrades: {},
     marketing: null,                 // { id, days, boost }
@@ -131,13 +135,18 @@ export function newState({ cuisine, name }) {
     tip: 0,                          // tutorial step
   };
   state.objects = buildObjects(state);
+  if (isStory(state)) {
+    Object.assign(state, { xp: 0, level: 1, prestige: 0, owned: { licenses: {}, stations: {}, areas: {}, features: {} }, chapter: 1, storyStats: { paidGuests: 0, bestPaidDay: 0, criticPassed: false }, debt: 600, debtDays: 0 });
+    for (const o of state.objects) if (o.type !== 'table') state.owned.stations[o.type] = true;
+    state.goal = dailyGoal(state);
+  }
   numberTables(state);
   state.objects.find((o) => o.type === 'rack').n = CFG.plates;
 
   for (const d of c.dishes) {
-    state.menu.dishes.push({ id: d.id, price: d.fair, on: d.level <= 1 });
+    state.menu.dishes.push({ id: d.id, price: d.fair, on: isStory(state) ? STARTERS[cuisine].includes(d.id) : d.level <= 1 });
   }
-  for (const d of c.drinks) state.menu.drinks.push({ id: d.id, price: d.price, on: true });
+  for (const d of c.drinks) state.menu.drinks.push({ id: d.id, price: d.price, on: !isStory(state) || startingDrinks(cuisine).includes(d.id) });
   state.unlocked = c.dishes.filter((d) => d.level <= 1).map((d) => d.id);
   state.today = freshToday();
   return state;
@@ -151,6 +160,7 @@ export function freshToday() {
     rushSpend: 0, purchases: 0,
     tips: {}, sold: {}, soldDrinks: {}, ratings: [], ticketTimes: [], cold: 0, burnt: 0,
     dirtyLeft: 0, peakQueue: 0, repStart: 0,
+    paidGuests: 0, hotPaid: 0, dessertsPaid: 0, xpLines: [], contributions: {},
   };
 }
 
@@ -161,6 +171,7 @@ export function serialize(state) {
   s.parties = [];
   s.tickets = [];
   s.ready = {};
+  delete s.pendingPurchase;
   for (const o of s.objects) {
     if (o.type === 'table') { o.party = null; }
   }
@@ -170,6 +181,20 @@ export function serialize(state) {
 export function deserialize(obj) {
   if (!obj || typeof obj !== 'object' || !obj.cuisine || !CUISINES[obj.cuisine]) throw new Error('Not a Two Forks save');
   const s = obj;
+  s.mode = s.mode === 'story' ? 'story' : 'arcade';
+  s.v = SAVE_VERSION;
+  delete s.pendingPurchase;
+  if (isStory(s)) {
+    s.xp = Math.max(0, Number(s.xp) || 0);
+    s.level = XP_LEVELS.reduce((level, at, i) => s.xp >= at ? i + 1 : level, 1);
+    s.prestige = Math.floor(Math.max(0, s.xp - XP_LEVELS[19]) / 2000);
+    s.owned = s.owned || {};
+    for (const kind of ['licenses', 'stations', 'areas', 'features']) s.owned[kind] ||= {};
+    s.chapter = Math.max(1, Math.min(5, Number(s.chapter) || 1));
+    s.storyStats ||= { paidGuests: 0, bestPaidDay: 0, criticPassed: false };
+    s.debt = Math.max(0, Number(s.debt) || 0);
+    s.debtDays = Math.max(0, Number(s.debtDays) || 0);
+  }
   s.players = {};
   s.parties = [];
   s.tickets = [];
@@ -181,6 +206,7 @@ export function deserialize(obj) {
     s.clock = 8 * 60;
     s.today = freshToday();
   }
+  if (isStory(s) && (!s.goal || s.phase === 'morning')) s.goal = dailyGoal(s);
   s.build = BUILD;
   return s;
 }

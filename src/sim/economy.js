@@ -1,5 +1,7 @@
 // Stock, supplier orders, forecasting, upgrades, layout changes, custom
 // dishes and the end-of-day P&L.
+import { isStory, isOwned, ingredientAllowed, recipeRequirements, drinkRequirements, upgradeRequirements, unlockList, chapterInfo, CHAPTERS, storyRent } from '../data/progression.js';
+import { awardXP, finishProgress } from './progression.js';
 import { CFG } from '../config.js';
 import { ING, statesOf } from '../data/ingredients.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
@@ -98,7 +100,9 @@ export function canSpend(state, amount) {
 }
 
 export function placeOrder(state, ing, cases, rush = false, now = 0) {
-  if (!ING[ing] || cases <= 0) return { ok: false, reason: 'Nothing to order.' };
+  if (!ING[ing] || !Number.isInteger(cases) || cases <= 0 || cases > 50) return { ok: false, reason: 'Nothing to order.' };
+  if (!ingredientAllowed(state, ing)) return { ok: false, reason: 'Buy the ingredient license in Unlocks first.' };
+  if (isStory(state) && !state.objects.some((o) => o.type === ING[ing].store)) return { ok: false, reason: 'Buy the required storage first.' };
   const price = casePrice(ing, rush) * cases;
   if (!canSpend(state, price)) return { ok: false, reason: 'Not enough cash for that order.' };
   state.cash = round2(state.cash - price);
@@ -154,7 +158,7 @@ export function menuItemsOn(state, course) {
   return state.menu.dishes.filter((m) => {
     if (!m.on) return false;
     const d = dishById(state, m.id);
-    return d && (!course || courseSlot(d.course) === course) && d.level <= state.rep.level;
+    return d && (!course || courseSlot(d.course) === course) && recipeRequirements(state, d).length === 0;
   });
 }
 
@@ -320,6 +324,8 @@ function placeNew(state, o) {
 
 export function upgradeStatus(state, u) {
   const n = state.upgrades[u.id] || 0;
+  const needs = upgradeRequirements(state, u);
+  if (needs.length) return { can: false, reason: needs.join(' · ') };
   if (n >= u.max) return { can: false, reason: 'Owned' };
   if (u.needs && !state.upgrades[u.needs]) return { can: false, reason: 'Needs ' + UPGRADES.find((x) => x.id === u.needs).name };
   if (state.cash < u.price) return { can: false, reason: 'Not enough cash' };
@@ -337,6 +343,7 @@ export function buyUpgrade(state, id) {
     initObject(o);
     if (!placeNew(state, o)) return { ok: false, reason: 'No room. Move things around in the layout editor first.' };
   }
+  if (isStory(state) && u.station) state.owned.stations[u.station] = true;
   state.upgrades[id] = (state.upgrades[id] || 0) + 1;
   state.cash = round2(state.cash - u.price);
   state.spentUpgrades = round2((state.spentUpgrades || 0) + u.price);
@@ -344,6 +351,7 @@ export function buyUpgrade(state, id) {
 }
 
 export function buyMarketing(state, id) {
+  if (!isOwned(state, 'features', 'marketing')) return { ok: false, reason: 'Marketing opens at Chef Level 3.' };
   const m = MARKETING.find((x) => x.id === id);
   if (!m) return { ok: false };
   if (state.marketing && state.marketing.days > 0) return { ok: false, reason: 'A campaign is already running.' };
@@ -359,7 +367,7 @@ export function buyMarketing(state, id) {
 export function setPrice(state, id, price, drink = false) {
   const list = drink ? state.menu.drinks : state.menu.dishes;
   const m = list.find((x) => x.id === id);
-  if (!m) return false;
+  if (!m || !Number.isFinite(price)) return false;
   m.price = Math.max(1, Math.min(99, Math.round(price * 2) / 2));
   return true;
 }
@@ -368,9 +376,12 @@ export function toggleDish(state, id, on, drink = false) {
   const list = drink ? state.menu.drinks : state.menu.dishes;
   const m = list.find((x) => x.id === id);
   if (!m) return { ok: false };
-  if (!drink && on) {
+  if (on) {
+    const needs = drink ? drinkRequirements(state, drinkById(state, id)) : recipeRequirements(state, dishById(state, id));
+    if (needs.length) return { ok: false, reason: 'Needs ' + needs.join(', ') + '.' };
+  }
+  if (!drink && on && !m.on) {
     const d = dishById(state, id);
-    if (d.level > state.rep.level) return { ok: false, reason: `Unlocks at reputation level ${d.level}.` };
     const slot = courseSlot(d.course);
     const lim = menuLimits(state)[slot];
     const used = state.menu.dishes.filter((x) => x.on && courseSlot(dishById(state, x.id).course) === slot).length;
@@ -396,6 +407,8 @@ export function rateCustom(comps) {
 }
 
 export function createDish(state, spec) {
+  if (!isOwned(state, 'features', 'house_dish')) return { ok: false, reason: 'The house-dish creator opens at Chef Level 6.' };
+  if (!spec || !Array.isArray(spec.comps)) return { ok: false, reason: 'Choose the dish ingredients.' };
   const tpl = BUILDER[spec.tpl];
   if (!tpl) return { ok: false, reason: 'Pick a dish type.' };
   const comps = (spec.comps || []).filter((c) => ING[c[0]] && statesOf(c[0]).includes(c[1]) && c[1] !== 'burnt');
@@ -409,6 +422,8 @@ export function createDish(state, spec) {
   const name = String(spec.name || '').trim().slice(0, 28) || 'House special';
   const all = allDishes(state);
   if (all.some((d) => d.comps.length === comps.length && sameComps(d.comps, comps))) return { ok: false, reason: 'That dish is already on the list.' };
+  const needs = recipeRequirements(state, { id: '', level: 1, custom: true, comps });
+  if (needs.length) return { ok: false, reason: 'Needs ' + needs.join(', ') + '.' };
   const r = rateCustom(comps);
   const id = 'c' + nextId(state, '');
   const dish = { id, name, course, tpl: spec.tpl, comps, fair: r.fair, appeal: r.appeal, level: 1, custom: true };
@@ -438,9 +453,9 @@ export function fixedCosts(state) {
   const t = state.today;
   const revenue = t.foodRev + t.drinkRev;
   return {
-    rent: M.rent,
-    loan: M.loan,
-    utilities: round2(M.utilities + heat * M.utilityPerStation + (state.upgrades.dishwasher ? 4 : 0)),
+    rent: isStory(state) ? storyRent(state) : M.rent,
+    loan: isStory(state) ? Math.min(state.debt || 0, state.cash < 0 ? 0 : 10) : M.loan,
+    utilities: round2((isStory(state) ? 10 : M.utilities) + heat * M.utilityPerStation + (state.upgrades.dishwasher ? 4 : 0)),
     cardFees: round2(revenue * M.cardFee),
     supplies: round2(t.covers * M.suppliesPerGuest),
     cleaning: round2(t.dirtyLeft * M.cleaningPerPlate),
@@ -494,6 +509,8 @@ export function closeBooks(state, extra = {}) {
   const gross = round2(revenue - cogs);
   const net = round2(gross - waste - fixedTotal);
   state.cash = round2(state.cash - fixedTotal);
+  if (isStory(state)) state.debt = round2(Math.max(0, state.debt - fixed.loan));
+  const progression = finishProgress(state);
   const ratings = t.ratings;
   const avg = ratings.length ? ratings.reduce((s, x) => s + x, 0) / ratings.length : 0;
   const ticket = t.ticketTimes.length ? t.ticketTimes.reduce((s, x) => s + x, 0) / t.ticketTimes.length : 0;
@@ -511,6 +528,7 @@ export function closeBooks(state, extra = {}) {
     tips: { ...t.tips }, cold: t.cold, burnt: t.burnt,
     repGain: state.rep.points - t.repStart, repPoints: state.rep.points, level: state.rep.level,
     menu: menuEngineering(state),
+    ...(progression ? { progression, crew: Object.values(t.contributions || {}).map((c) => ({ ...c })) } : {}),
     drinks: Object.entries(t.soldDrinks).map(([id, n]) => ({ id, name: (drinkById(state, id) || { name: id }).name, n })),
     ...extra,
   };
@@ -525,4 +543,32 @@ export function closeBooks(state, extra = {}) {
   state.lifetime.bestDay = Math.max(state.lifetime.bestDay, net);
   state.report = report;
   return report;
+}
+
+/** Apply a Story unlock after all shared approvals have been checked. */
+export function buyUnlock(state, kind, id) {
+  const row = unlockList(state).find((u) => u.kind === kind && u.id === id);
+  if (!row || !row.can) return { ok: false, reason: row?.reason || 'Unknown unlock.' };
+  if (kind === 'areas') return completeChapter(state);
+  if (kind === 'recipes' || kind === 'features') return { ok: false, reason: 'This opens automatically at its Chef Level.' };
+  if (kind === 'stations') {
+    const o = initObject({ id: nextId(state), type: id, x: 0, z: 0 });
+    if (!placeNew(state, o)) return { ok: false, reason: 'No room. Move equipment in the floor planner first.' };
+  }
+  state.owned[kind][id] = true;
+  state.cash = round2(state.cash - row.price);
+  state.spentUpgrades = round2((state.spentUpgrades || 0) + row.price);
+  return { ok: true, layout: kind === 'stations' };
+}
+export function completeChapter(state) {
+  const chapter = chapterInfo(state);
+  if (!chapter || !chapter.ready) return { ok: false, reason: chapter?.reason || 'The story is complete.' };
+  state.cash = round2(state.cash - chapter.price);
+  state.spentUpgrades = round2((state.spentUpgrades || 0) + chapter.price);
+  if (chapter.area) state.owned.areas[chapter.area] = true;
+  state.chapter++;
+  state.chapterDay = state.day;
+  awardXP(state, 150, 'Chapter goal');
+  const next = CHAPTERS[state.chapter - 1];
+  return { ok: true, layout: !!chapter.area, chapter: next ? { chapter: next.id, title: next.title, text: next.text } : { chapter: 5, title: 'A place worth keeping', text: 'The final review is in: a small counter has become a restaurant the town trusts. The story is complete. Keep serving, redesign the room, and earn prestige stars.' } };
 }

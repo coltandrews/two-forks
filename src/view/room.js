@@ -3,11 +3,11 @@
 import * as THREE from 'three';
 import { Shape, MAT, meshOf, shade, mix } from './shape.js';
 import { MAP, KITCHEN_MAX_Z } from '../data/layout.js';
+import { lockedAreas } from '../data/progression.js';
+import { isWallTile } from '../sim/world.js';
 
 const W = MAP[0].length, H = MAP.length;
 const WALL_H = 2.8, DIVIDER_H = 1.05, FRONT_H = 0.45;
-
-function isWall(x, z) { const c = MAP[z] && MAP[z][x]; return c === '#' || c === 'B'; }
 
 function nameSign(name, style, pal) {
   const c = document.createElement('canvas');
@@ -43,11 +43,12 @@ function nameSign(name, style, pal) {
   return m;
 }
 
-export function buildRoom(cuisine, name, upgrades) {
+export function buildRoom(cuisine, name, upgrades, state) {
   const pal = cuisine.palette;
   const root = new THREE.Group();
   const s = new Shape();
   const glow = new Shape(false);
+  const isWall = (x, z) => isWallTile(state, x, z);
 
   // Floors.
   for (let z = 0; z < H; z++) {
@@ -169,7 +170,139 @@ export function buildRoom(cuisine, name, upgrades) {
   sign.position.set(10, 2.3, 1.03);
   root.add(sign);
 
-  return { root, winMat, outsideMat, pal };
+  const room = { root, winMat, outsideMat, pal, locks: new Map(), releasing: [] };
+  syncRoomAreas(room, state, 0);
+  return room;
+}
+
+function leaseSign(name) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 160;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#eee1bc';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#66543a';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#473a2b';
+  ctx.font = 'bold 52px sans-serif';
+  ctx.fillText('FOR LEASE', 256, 69);
+  ctx.font = '28px sans-serif';
+  ctx.fillText(name, 256, 120, 460);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.78), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+}
+
+/** One merged mesh per fence edge; all boards share the room's flat material. */
+function lockedAreaModel(area, pal) {
+  const root = new THREE.Group();
+  root.position.set(area.x, 0, area.z);
+  const ground = new Shape();
+  const panels = [];
+  const covers = [];
+  ground.box(area.w - 0.08, 0.014, area.h - 0.08, area.kind === 'kitchen' ? 0x5d686b : mix(pal.floorB, 0x665b4c, 0.65), area.w / 2, 0.012, area.h / 2);
+  const edges = [
+    [area.w / 2, area.h - 0.09, area.w - 0.18, 0],
+    [area.w / 2, 0.09, area.w - 0.18, Math.PI],
+    [0.09, area.h / 2, area.h - 0.18, -Math.PI / 2],
+    [area.w - 0.09, area.h / 2, area.h - 0.18, Math.PI / 2],
+  ];
+  for (const [x, z, length, yaw] of edges) {
+    const panel = new THREE.Group();
+    panel.position.set(x, 0, z);
+    panel.rotation.order = 'YXZ';
+    panel.rotation.y = yaw;
+    const s = new Shape();
+    if (area.kind === 'dining') {
+      for (const y of [0.24, 0.65, 1.06]) {
+        s.box(length, 0.36, 0.075, y === 0.65 ? 0xad8759 : 0xbd9869, 0, y, 0);
+        s.box(length, 0.025, 0.08, 0xcba77a, 0, y + 0.16, 0);
+      }
+      const count = Math.ceil(length / 2);
+      for (let i = 0; i <= count; i++) {
+        const px = -length / 2 + i * length / count;
+        s.box(0.095, 1.28, 0.13, 0x7e6343, px, 0.64, -0.02);
+      }
+    } else {
+      // A tape border stays low, so the covered kitchen bays remain visible.
+      s.box(length, 0.018, 0.13, 0xe2ba59, 0, 0.035, 0);
+      for (let px = -length / 2 + 0.16; px < length / 2; px += 0.5) {
+        s.box(0.23, 0.019, 0.13, 0x3f4544, px, 0.038, 0);
+      }
+    }
+    panel.add(meshOf(s));
+    root.add(panel);
+    panels.push(panel);
+  }
+  if (area.kind === 'dining') {
+    const sign = leaseSign(area.name);
+    sign.position.set(0, 0.8, 0.075);
+    panels[0].add(sign);
+  } else {
+    // Four-sided draped covers give the bay a clear silhouette at a distance.
+    const count = Math.max(1, Math.floor(area.w / 2.5));
+    for (let i = 0; i < count; i++) {
+      const s = new Shape();
+      const x = (i + 0.5) * area.w / count;
+      s.cyl(0.6, 0.88, 0.85, 4, i % 2 ? 0x748c94 : 0x657e89, 0, 0.43, 0, 0, Math.PI / 4);
+      s.box(1.0, 0.03, 0.78, 0x899fa5, 0, 0.87, 0);
+      const cover = meshOf(s);
+      cover.position.set(x, 0, area.h / 2);
+      root.add(cover);
+      covers.push(cover);
+    }
+  }
+  root.add(meshOf(ground, MAT.solid, false, true));
+  return { root, panels, covers, elapsed: 0 };
+}
+
+function disposeLockedArea(lock) {
+  lock.root.traverse((o) => {
+    if (!o.isMesh) return;
+    o.geometry.dispose();
+    if (o.material === MAT.solid) return;
+    if (o.material.map) o.material.map.dispose();
+    o.material.dispose();
+  });
+}
+
+export function disposeRoomAreas(room) {
+  for (const lock of [...room.locks.values(), ...room.releasing]) {
+    room.root.remove(lock.root);
+    disposeLockedArea(lock);
+  }
+  room.locks.clear();
+  room.releasing.length = 0;
+}
+
+/** Area ownership is shared state, so the same transition runs on each client. */
+export function syncRoomAreas(room, state, dt) {
+  const areas = lockedAreas(state);
+  const ids = new Set(areas.map((area) => area.id));
+  for (const [id, lock] of room.locks) {
+    if (ids.has(id)) continue;
+    room.locks.delete(id);
+    room.releasing.push(lock);
+  }
+  for (const area of areas) {
+    if (room.locks.has(area.id)) continue;
+    const lock = lockedAreaModel(area, room.pal);
+    room.locks.set(area.id, lock);
+    room.root.add(lock.root);
+  }
+  for (let i = room.releasing.length - 1; i >= 0; i--) {
+    const lock = room.releasing[i];
+    lock.elapsed += dt;
+    const t = Math.min(1, lock.elapsed / 0.75);
+    for (const panel of lock.panels) panel.rotation.x = -Math.PI / 2 * t * t;
+    for (const cover of lock.covers) cover.scale.y = Math.max(0.02, 1 - t * t);
+    if (t < 1) continue;
+    room.root.remove(lock.root);
+    disposeLockedArea(lock);
+    room.releasing.splice(i, 1);
+  }
 }
 
 function frame(s, x, y, z, w, h, c, face) {

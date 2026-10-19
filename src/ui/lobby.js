@@ -36,7 +36,7 @@ export function listSaves() { return store.get('tf-saves', []).sort((a, b) => b.
 export function writeSave(id, state) {
   const ok = store.set('tf-save-' + id, state);
   const list = store.get('tf-saves', []).filter((s) => s.id !== id);
-  list.push({ id, name: state.name, cuisine: state.cuisine, day: state.day, cash: state.cash, phase: state.phase, updated: Date.now() });
+  list.push({ id, name: state.name, cuisine: state.cuisine, mode: state.mode === 'story' ? 'story' : 'arcade', day: state.day, cash: state.cash, phase: state.phase, updated: Date.now() });
   store.set('tf-saves', list);
   return ok;
 }
@@ -58,6 +58,8 @@ export class Lobby {
     this.mode = 'host';
     this.pick = 'southern';
     this.pickName = CUISINES.southern.name;
+    this.gameMode = 'story';
+    this.startCash = 3000;
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('input', (e) => this.onInput(e));
     this.root.addEventListener('keydown', (e) => {
@@ -99,7 +101,7 @@ export class Lobby {
         h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Practice solo' : 'Host a restaurant'}</h1><p>Pick up where you left off, or open somewhere new.</p></div>
         <div class="saves">${saves.map((s) => {
           const c = CUISINES[s.cuisine];
-          return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)}</b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
+          return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)} <small class="mode-badge ${s.mode === 'story' ? 'story' : ''}">${s.mode === 'story' ? 'STORY' : 'ARCADE'}</small></b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
         }).join('') || '<div class="hint-line">No saved restaurants on this laptop yet.</div>'}</div>
         <div class="lobby-foot"><button class="btn primary" data-act="new">Open a new restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
         break;
@@ -107,6 +109,11 @@ export class Lobby {
       case 'new': {
         const c = CUISINES[this.pick];
         h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
+        <div class="mode-choices" aria-label="Game mode">
+          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600 and a small counter. Earn XP, buy equipment, and open each room.</span></button>
+          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>The full building and menu are open. Design and run your restaurant at your own pace.</span></button>
+        </div>
+        ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : '<p class="hint-line">Four chapters · About 20 days · Shared progress · Setbacks without a game over</p>'}
         <div class="cuisines">${CUISINE_ORDER.map((id) => {
           const z = CUISINES[id];
           const p = z.palette;
@@ -114,7 +121,7 @@ export class Lobby {
           return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}"><div class="sw">${sw}</div><div class="tx"><small>${esc(z.style)}</small><b>${esc(z.name)}</b><p>${esc(z.blurb)}</p></div></button>`;
         }).join('')}</div>
         <div class="field"><label>Restaurant name</label><input data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
-        <div class="hint-line">Opening menu: ${c.dishes.filter((d) => d.level <= 1).map((d) => esc(d.name)).join(' · ')}. More dishes unlock as your reputation grows.</div>
+        <div class="hint-line">${this.gameMode === 'story' ? 'Start with two mains, one starter, and two drinks. Earn Chef Levels to open more recipes and equipment.' : 'Every recipe is available from day one. Choose which dishes to put on your menu.'}</div>
         <div class="lobby-foot"><button class="btn primary" data-act="create">Open ${esc(this.pickName || c.name)}</button></div>`;
         break;
       }
@@ -226,6 +233,8 @@ export class Lobby {
       case 'joinscr': this.needChef(() => this.go('join')); break;
       case 'saves': this.go('saves'); break;
       case 'new': this.go('new'); break;
+      case 'gameMode': this.gameMode = b.dataset.id === 'arcade' ? 'arcade' : 'story'; this.render(); break;
+      case 'startCash': this.startCash = +b.dataset.cash; this.render(); break;
       case 'importscr': this.go('import'); break;
       case 'cuisine': {
         const was = CUISINES[this.pick].name;
@@ -294,7 +303,7 @@ export class Lobby {
 
   create() {
     const name = (this.pickName || '').trim() || CUISINES[this.pick].name;
-    const state = newState({ cuisine: this.pick, name });
+    const state = newState({ cuisine: this.pick, name, mode: this.gameMode, cash: this.startCash });
     this.app.start({ mode: this.mode, state, saveId: 's' + Date.now().toString(36), loaded: false });
   }
 

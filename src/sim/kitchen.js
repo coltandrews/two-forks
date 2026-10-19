@@ -5,6 +5,8 @@
 // Each action runs in two modes: dry (returns the prompt text, changes
 // nothing) and live (does it). The HUD prompt and the real action can never
 // disagree because they are the same code.
+import { ingredientAllowed, drinkRequirements } from '../data/progression.js';
+import { creditWork } from './progression.js';
 import { CFG } from '../config.js';
 import { ING, stateInfo, stepFor } from '../data/ingredients.js';
 import { HEAT_TYPES, STORE_TYPES, STATION_NAMES } from '../data/layout.js';
@@ -87,6 +89,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (dry) return `Plate ${lc(ingName(s))}`;
     const { one, left } = takePortion(s);
     addToPlate(h, one);
+    h.platedBy = p.id;
     setSurface(left);
     sfx(ctx, 'plate');
     return 'ok';
@@ -96,6 +99,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (plateFull(s)) return dry ? { blocked: 'Plate is full' } : null;
     if (dry) return `Add ${lc(ingName(h))} to plate`;
     addToPlate(s, h);
+    s.platedBy = p.id;
     p.hand = null;
     sfx(ctx, 'plate');
     return 'ok';
@@ -123,6 +127,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (plateFull(h)) return dry ? { blocked: 'Plate is full' } : null;
     if (dry) return `Plate ${lc(itemLabel(ctx.state, s))}`;
     addToPlate(h, s);
+    h.platedBy = p.id;
     setSurface(null);
     sfx(ctx, 'plate');
     return 'ok';
@@ -133,7 +138,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
 function giveTo(ctx, p, it) {
   const h = p.hand;
   if (!h) { p.hand = it; return true; }
-  if (h.k === 'plate' && !plateFull(h)) { addToPlate(h, it); return true; }
+  if (h.k === 'plate' && !plateFull(h)) { addToPlate(h, it); h.platedBy = p.id; return true; }
   if (canTop(h) && toppable(it)) { h.top = h.top || []; h.top.push({ ing: it.ing, st: it.st, cost: it.cost }); return true; }
   return false;
 }
@@ -303,6 +308,7 @@ export function actE(ctx, pid, dry, target) {
       if (plateFull(h)) return dry ? { blocked: 'Plate is full' } : null;
       if (dry) return `Plate ${lc(stateInfo(w.ing, w.st).label)} (${w.n} left)`;
       addToPlate(h, wellPortion(o));
+      h.platedBy = p.id;
       sfx(ctx, 'plate', o);
       return 'ok';
     }
@@ -410,6 +416,7 @@ export function actE(ctx, pid, dry, target) {
     if (o.dirty > 0 && (!h || h.k === 'dirty')) {
       if (h && h.n + o.dirty > 8) return dry ? { blocked: 'Too many plates to carry' } : null;
       if (dry) return `Clear ${o.dirty} dirty plate${o.dirty > 1 ? 's' : ''}`;
+      creditWork(S, pid, 'bused', o.dirty);
       if (h) h.n += o.dirty; else p.hand = { k: 'dirty', n: o.dirty };
       o.dirty = 0;
       sfx(ctx, 'plateclink', o);
@@ -512,6 +519,7 @@ function near(ctx, p, o) {
 }
 
 export function takeFromStore(ctx, pid, objId, ing) {
+  if (!ingredientAllowed(ctx.state, ing)) return;
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
@@ -529,6 +537,8 @@ export function takeFromStore(ctx, pid, objId, ing) {
 }
 
 export function takeDrink(ctx, pid, objId, id) {
+  const drink = drinkById(ctx.state, id);
+  if (!drink || drinkRequirements(ctx.state, drink).length) return;
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
