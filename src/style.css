@@ -217,8 +217,23 @@ kbd {
 .dot.on { background: var(--green); }
 .dot.off { background: var(--red); }
 
-.morning { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); padding: 0 18px 14px; width: min(580px, 92vw); text-align: left; overflow: hidden; }
-.morning h3 { margin: 0 -18px 8px; padding: 9px 18px 7px; font: 1.5rem var(--display); letter-spacing: 0.02em; background: var(--yellow); border-bottom: 3px solid var(--ink); }
+.morning { position: absolute; left: 14px; top: 150px; padding: 0 14px 12px; width: 300px; max-height: calc(100vh - 380px); min-height: 0; text-align: left; overflow: auto; z-index: 2; }
+.morning h3 { font-size: 1.2rem !important; }
+.morning ul { font-size: 0.84rem !important; padding-left: 16px !important; }
+.morning .row .btn { flex: 1 1 auto; }
+.morning .partner { flex-basis: 100%; font: 800 12px var(--body); color: var(--ink-3); }
+.ui-toggle { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px; background: rgba(255,255,255,0.82); border: 2.5px solid var(--ink); box-shadow: 0 3px 0 var(--ink); font: 900 12px var(--body); color: var(--ink); cursor: pointer; opacity: 0.55; transition: opacity 0.15s, transform 0.1s; }
+.ui-toggle:hover { opacity: 1; }
+.ui-toggle:active { transform: translateX(-50%) translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.ui-toggle kbd { font-size: 11px; }
+.ui-toggle .eye { width: 14px; height: 9px; border: 2px solid var(--ink); border-radius: 50% / 60%; position: relative; }
+.ui-toggle .eye::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; background: var(--ink); border-radius: 50%; transform: translate(-50%, -50%); }
+#hud.ui-min .ui-toggle { opacity: 0.9; }
+#hud.ui-min .ui-toggle .eye::before { content: ''; position: absolute; left: -3px; right: -3px; top: 50%; height: 2px; background: var(--ink); transform: rotate(-30deg); }
+#hud.ui-min .hud-tl, #hud.ui-min .hud-tr, #hud.ui-min .hud-br, #hud.ui-min .hud-bl { display: none !important; }
+#hud.ui-min .morning { top: auto; bottom: 76px; left: 14px; width: auto; max-height: none; padding: 10px 12px; }
+#hud.ui-min .morning h3, #hud.ui-min .morning ul, #hud.ui-min .morning .partner { display: none; }
+.morning h3 { margin: 0 -14px 8px; padding: 8px 14px 6px; font: 1.5rem var(--display); letter-spacing: 0.02em; background: var(--yellow); border-bottom: 3px solid var(--ink); }
 .morning ul { margin: 4px 0 12px; padding-left: 20px; color: var(--ink-2); font-weight: 700; font-size: 0.93rem; }
 .morning li { margin: 3px 0; }
 .morning li.warn { color: var(--red-d); font-weight: 900; }

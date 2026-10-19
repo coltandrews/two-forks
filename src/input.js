@@ -1,7 +1,7 @@
 // Keyboard state. Movement keys are polled and can be rebound (arrow keys
 // always work too); action keys fire callbacks once per press.
 const DEFAULT_BINDS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' };
-const RESERVED = new Set(['KeyE', 'KeyQ', 'KeyB', 'KeyO', 'KeyC', 'KeyH', 'Tab', 'Space', 'Enter']);
+const RESERVED = new Set(['KeyE', 'KeyQ', 'KeyB', 'KeyO', 'KeyC', 'KeyH', 'KeyU', 'Tab', 'Space', 'Enter']);
 const ARROWS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
 
 export function keyName(code) {

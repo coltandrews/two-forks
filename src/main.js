@@ -222,6 +222,7 @@ class App {
     });
     this.input.on('digit', (d) => { if (inGame()) this.hud.pickerKey(d); });
     this.input.on('h', () => { if (inGame()) this.hud.toggleKeys(); });
+    this.input.on('u', () => { if (inGame()) this.hud.toggleMinimal(); });
     this.input.on('esc', () => {
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;

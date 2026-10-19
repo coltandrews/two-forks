@@ -54,10 +54,11 @@ export class Hud {
       <div class="hud-bl"><div class="rail"></div><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
         <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
         <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-        <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span>
+        <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span><span><kbd>U</kbd> hide UI</span>
       </div></div>
       <div class="panel hud-br"></div>
       <div class="panel morning" hidden></div>
+      <button class="ui-toggle" data-act="ui" title="Hide or show the UI (U)"><span class="eye"></span><b>Hide UI</b><kbd>U</kbd></button>
       <div class="panel closing" hidden></div>`;
     const q = (s) => this.root.querySelector(s);
     this.el = {
@@ -70,6 +71,10 @@ export class Hud {
     let keys = null;
     try { keys = localStorage.getItem('tf-keys'); } catch { /* ignore */ }
     if (keys === '0') this.toggleKeys(true);
+    let mini = null;
+    try { mini = localStorage.getItem('tf-mini'); } catch { /* ignore */ }
+    if (mini === '1') this.toggleMinimal(true);
+    this.root.querySelector('.ui-toggle').addEventListener('click', () => { this.toggleMinimal(); sfx('ui'); });
     this.el.rail.addEventListener('click', (e) => {
       const b = e.target.closest('button.x');
       if (!b) return;
@@ -106,6 +111,15 @@ export class Hud {
     this.el.keys.hidden = this.keysHidden;
     this.root.querySelector('.keys-toggle').hidden = !this.keysHidden;
     try { localStorage.setItem('tf-keys', this.keysHidden ? '0' : '1'); } catch { /* ignore */ }
+  }
+
+  /** Minimal mode hides panels, tickets and key help; prompts, bubbles and toasts stay. */
+  toggleMinimal(force) {
+    this.minimal = force != null ? force : !this.minimal;
+    this.root.classList.toggle('ui-min', this.minimal);
+    const b = this.root.querySelector('.ui-toggle b');
+    if (b) b.textContent = this.minimal ? 'Show UI' : 'Hide UI';
+    try { localStorage.setItem('tf-mini', this.minimal ? '1' : '0'); } catch { /* ignore */ }
   }
 
   // ------------------------------------------------------------ per frame
@@ -350,7 +364,7 @@ export class Hud {
     const partner = others.length ? (state.ready[others[0].id] ? `${esc(others[0].name)} is ready` : `Waiting for ${esc(others[0].name)}`) : '';
     const html = `<h3>Good morning! Day ${state.day}</h3><ul>${items.join('')}</ul>
       <div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready (click to undo)' : 'Ready to open'}</button>
-      <button class="btn ghost" data-act="office">Office: menu, orders, upgrades</button><span class="partner">${partner}</span></div>`;
+      <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button><span class="partner">${partner}</span></div>`;
     if (html !== this.lastMorning) { m.innerHTML = html; this.lastMorning = html; }
   }
 
