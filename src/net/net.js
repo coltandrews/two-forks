@@ -72,7 +72,7 @@ export class Net {
     this.code = code;
     this.selfId = mod.selfId;
     this.room = mod.joinRoom(cfg, 'tf-' + code);
-    for (const id of ['hello', 'welcome', 'slow', 'meta', 'fast', 'pose', 'key', 'cmd', 'ev']) {
+    for (const id of ['hello', 'welcome', 'slow', 'meta', 'fast', 'pose', 'key', 'cmd', 'ev', 'chat']) {
       this.send[id] = bindAction(this.room, id, (data, peerId) => this.emit(id, data, peerId));
     }
     onPeer(this.room, 'onPeerJoin', (peerId) => { this.peers.add(peerId); this.emit('join', peerId); });

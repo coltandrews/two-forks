@@ -116,6 +116,9 @@ export class Session {
       if (!this.partner || peerId !== this.partner.peerId || !d || typeof d.c !== 'string') return;
       this.sim.command(CLIENT_PID, d);
     });
+    n.on('chat', (d, peerId) => {
+      if (this.partner && peerId === this.partner.peerId && d && typeof d.text === 'string') this.fire('chat', CLIENT_PID, d.text);
+    });
   }
 
   sendSnapshots(force = false) {
@@ -194,6 +197,7 @@ export class Session {
     this.partner = { peerId: this.hostPeer };
     n.on('fast', (d, peerId) => { if (peerId === this.hostPeer && d) this.fast = d; });
     n.on('ev', (list, peerId) => { if (peerId === this.hostPeer && Array.isArray(list)) for (const e of list) this.fire('event', e); });
+    n.on('chat', (d, peerId) => { if (peerId === this.hostPeer && d && typeof d.text === 'string') this.fire('chat', HOST_PID, d.text); });
     n.on('leave', (peerId) => {
       if (peerId === this.hostPeer) { this.lost = true; this.fire('lost'); }
     });
@@ -222,6 +226,17 @@ export class Session {
     const area = p.area || 'restaurant', areaRev = p.areaRev || 0;
     if (this.role === 'client') this.net.to('key', { key, area, areaRev }, this.hostPeer);
     else this.sim.press(this.selfPid, key, area, areaRev);
+  }
+
+  /** True when a partner is connected to talk to. */
+  get canChat() { return !!(this.net && this.partner && !this.lost); }
+
+  /** Sends a chat line to the partner and shows it locally. Chat is not game state. */
+  chat(text) {
+    if (!this.canChat) return false;
+    this.net.to('chat', { text }, this.role === 'client' ? this.hostPeer : this.partner.peerId);
+    this.fire('chat', this.selfPid, text);
+    return true;
   }
 
   command(c) {

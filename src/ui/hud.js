@@ -64,7 +64,7 @@ export class Hud {
         <div class="hud-bl"><div class="rail" aria-label="Order tickets" tabindex="-1"></div><button class="keys-toggle" data-act="keys" aria-expanded="false">Keys <kbd>H</kbd></button><div class="keys" hidden>
           <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
           <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-          <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>U</kbd> hide HUD</span>
+          <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>Enter</kbd> chat (co-op)</span><span><kbd>U</kbd> hide HUD</span>
         </div></div>
       </div>
       <div class="hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div><div class="story-goal" hidden></div></div>

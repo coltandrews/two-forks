@@ -96,6 +96,7 @@ export function sfx(name) {
     case 'box': noise(0.09, 'lowpass', 700, 0.2); break;
     case 'fridge': tone(110, 0.25, 'sine', 0.08); noise(0.2, 'lowpass', 400, 0.05); break;
     case 'pour': { const n = noise(0.6, 'bandpass', 900, 0.12, 0, 2); n.f.frequency.linearRampToValueAtTime(1800, ctx.currentTime + 0.6); break; }
+    case 'chat': tone(990, 0.07, 'sine', 0.07); tone(1320, 0.09, 'sine', 0.06, 0.06); break;
     case 'door': tone(1318, 0.5, 'sine', 0.09); tone(1046, 0.6, 'sine', 0.08, 0.16); break;
     case 'greet': tone(660, 0.1, 'triangle', 0.08); tone(880, 0.12, 'triangle', 0.07, 0.08); break;
     case 'seat': noise(0.1, 'lowpass', 600, 0.12); break;

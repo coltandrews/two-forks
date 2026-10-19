@@ -15,6 +15,7 @@ import { Lobby, loadProfile, saveProfile, writeSave } from './ui/lobby.js';
 import { Session } from './net/session.js';
 import { makeCode } from './net/net.js';
 import { Input } from './input.js';
+import { ChatBox, cleanChat } from './ui/chat.js';
 import { sfx, unlockAudio, startMusic, setCrowd } from './audio.js';
 
 class App {
@@ -27,6 +28,7 @@ class App {
     this.office = new Office(this);
     this.lobby = new Lobby(this);
     this.input = new Input();
+    this.chat = new ChatBox(this.root, (text) => this.sendChat(text));
     this.profile = loadProfile();
     this.session = null;
     this.demo = newState({ cuisine: 'southern', name: 'Two Forks' });
@@ -108,6 +110,17 @@ class App {
     });
     s.on('lost', () => this.hud.toast('Lost connection to the host. Trying to reconnect…', 'bad', 6000));
     s.on('back', () => this.hud.toast('Reconnected!', 'good'));
+    s.on('chat', (pid, text) => {
+      const line = cleanChat(text);
+      if (!line) return;
+      this.overlay.say(pid, line);
+      if (pid !== this.selfPid) sfx('chat');
+    });
+  }
+
+  sendChat(text) {
+    if (!this.session || !this.session.chat(text)) this.hud.toast('Your partner is not connected.', 'warn');
+    this.focusGame();
   }
 
   enterGame() {
@@ -127,6 +140,7 @@ class App {
   }
 
   leave() {
+    this.chat.close();
     this.autosave();
     if (this.session) this.session.close();
     this.session = null;
@@ -238,9 +252,18 @@ class App {
       return true;
     });
     this.input.on('digit', (d) => { if (inGame()) this.hud.pickerKey(d); });
+    const openChat = () => {
+      if (!canAct() || !this.session.canChat) return;
+      for (const k of Object.keys(this.input.held)) this.input.held[k] = false;
+      // Next tick: the Enter that opened the box must not also submit it.
+      setTimeout(() => this.chat.show(), 0);
+    };
+    this.input.on('enter', openChat);
+    this.input.on('numpadenter', openChat);
     this.input.on('h', () => { if (inGame()) this.hud.toggleKeys(); });
     this.input.on('u', () => { if (inGame()) this.hud.toggleMinimal(); });
     this.input.on('esc', () => {
+      if (this.chat.open) { this.chat.close(); this.focusGame(); return; }
       if (this.hud.modalKind === 'options') { this.hud.closeModal(); return; }
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;

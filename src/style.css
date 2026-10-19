@@ -129,6 +129,15 @@ kbd {
 .bubble .mood.bad::before { background: var(--red); }
 .bubble .wp { position: absolute; left: -3px; bottom: -14px; height: 6px; background: var(--blue); border: 2px solid var(--ink); border-radius: 4px; }
 @keyframes bob { 50% { translate: 0 -4px; } }
+.bubble.say { max-width: 240px; white-space: normal; text-align: center; padding: 6px 12px 9px; font: 800 14px/1.25 var(--body); overflow-wrap: anywhere; z-index: 2; animation: sayIn 0.22s cubic-bezier(.3,1.6,.6,1); transition: opacity 0.4s; }
+.bubble.say.fading { opacity: 0; }
+@keyframes sayIn { from { scale: 0.6; opacity: 0; } }
+.chat-box { position: absolute; left: 50%; bottom: 96px; translate: -50% 0; z-index: 20; width: min(480px, calc(100% - 32px)); box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; background: #fff; color: var(--ink); border: var(--outline); border-radius: 14px; box-shadow: var(--pop); }
+.chat-box[hidden] { display: none; }
+.chat-label { font: 900 13px var(--body); text-transform: uppercase; letter-spacing: 0.06em; }
+.chat-box input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--ink); font: 700 15px var(--body); padding: 4px 0; }
+.chat-hint { font: 700 11px var(--body); opacity: 0.6; white-space: nowrap; }
+@media (max-width: 560px) { .chat-hint { display: none; } }
 .tag span {
   display: inline-block; padding: 1px 9px; border-radius: 99px; color: #fff; font: 13px/1.45 var(--display); letter-spacing: 0.03em;
   background: color-mix(in srgb, var(--c) 72%, #2a1b12); border: 2.5px solid var(--ink); box-shadow: 0 3px 0 var(--ink);

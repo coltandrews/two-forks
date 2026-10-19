@@ -4,6 +4,7 @@ import { CFG } from '../config.js';
 import { stepFor } from '../data/ingredients.js';
 import { HEAT_TYPES } from '../data/layout.js';
 import { playerArea, TRASH_CAPACITY, cookingMultiplier } from '../data/alley.js';
+import { CHAT_SECONDS } from './chat.js';
 
 const ICON = {
   menu: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2"/></svg>',
@@ -27,7 +28,11 @@ export class Overlay {
     this.els = new Map();
     this.floats = [];
     this.frame = 0;
+    this.said = new Map(); // pid -> { text, until } chat bubbles
   }
+
+  /** Shows a chat line over a chef for CHAT_SECONDS. A new line replaces the old one. */
+  say(pid, text) { this.said.set(pid, { text, until: performance.now() + CHAT_SECONDS * 1000 }); }
 
   el(key, cls) {
     let e = this.els.get(key);
@@ -159,6 +164,15 @@ export class Overlay {
       const col = p.look.apron ? p.look.apronColor : p.look.shirt;
       this.html(e, `<span style="--c:${col}">${esc(p.name)}</span>`);
       this.place(e, this.view.chefAnchor(pid));
+      const said = this.said.get(pid);
+      if (said) {
+        const left = said.until - performance.now();
+        if (left <= 0) { this.said.delete(pid); continue; }
+        const b = this.el('say:' + pid, 'bubble say');
+        this.html(b, `<span>${esc(said.text)}</span>`);
+        b.classList.toggle('fading', left < 400);
+        this.place(b, this.view.chefAnchor(pid), -30);
+      }
     }
     // Following parties show above their first guest.
     for (const party of state.parties) {
@@ -241,6 +255,7 @@ export class Overlay {
     this.els.clear();
     for (const f of this.floats) f.e.remove();
     this.floats = [];
+    this.said.clear();
   }
 }
 

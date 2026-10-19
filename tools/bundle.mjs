@@ -18,7 +18,8 @@ const seen = new Set();
 const externals = new Set();
 const modules = new Map();
 
-function modId(file) { return path.basename(file, '.js').replace(/\W/g, '_'); }
+// Named by path under src/, so data/alley.js and view/alley.js stay separate.
+function modId(file) { return path.relative(src, file).replace(/\.js$/, '').replace(/\W/g, '_'); }
 
 function load(file) {
   if (seen.has(file)) return;
@@ -61,9 +62,11 @@ const safe = (s) => s.replace(/<\/script/g, '<\\/script');
 
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, 'game.js'), bundle);
+// Replacer functions, not strings: game code contains "$'" and "$&", which a
+// replacement string would expand into copies of the page.
 const page = html
-  .replace('<link rel="stylesheet" href="./src/style.css">', `<style>\n${css}\n</style>`)
-  .replace('<script type="module" src="./src/main.js"></script>', `<script type="module">\n${safe(bundle)}\n</script>`);
+  .replace('<link rel="stylesheet" href="./src/style.css">', () => `<style>\n${css}\n</style>`)
+  .replace('<script type="module" src="./src/main.js"></script>', () => `<script type="module">\n${safe(bundle)}\n</script>`);
 fs.writeFileSync(path.join(out, 'two-forks.html'), page);
 
 const kb = (s) => (Buffer.byteLength(s) / 1024).toFixed(1) + ' KB';

@@ -5,7 +5,7 @@ const __m = {};
 __m.config = (() => {
 // Every tuning number in one place. Times are real seconds unless noted.
 
-const BUILD = 'tf-1.0.0';
+const BUILD = 'tf-1.3.0-chat';
 const APP_ID = 'two-forks-bistro-game-2026';
 
 const CFG = {
@@ -13,48 +13,54 @@ const CFG = {
   slowHz: 8,     // full game-state snapshots to the partner
   fastHz: 20,    // positions only
 
-  // A service covers 11:00 to 22:00 (660 game minutes) in 15 real minutes.
+  // A service covers 11:00 to 22:00 (660 game minutes) in 10 real minutes.
   serviceStart: 11 * 60,
   doorsLock: 21 * 60 + 30,
   serviceEnd: 22 * 60,
-  serviceRealSeconds: 15 * 60,
+  serviceRealSeconds: 10 * 60,
 
   move: { speed: 4.6, accel: 30, radius: 0.32, reach: 1.25 },
 
+  cookTimeMultiplier: 0.9,
   burn: { grill: 30, pan: 20, fryer: 15, oven: 40, pot: 0 },
   potOvercook: 60,
   overdoneQuality: 0.75,
-  coldAfter: 40,
-  coldAfterLamp: 90,
+  coldAfter: 75,
+  coldAfterLamp: 150,
   chopSpeedKnife: 1.6,
 
   work: { order: 2.0, pay: 1.5, wash: 1.8, unpack: 0.9 },
 
   party: {
     startMood: 80,
-    drain: 0.9,              // mood per second once patience runs out
-    queuePatience: 60,
-    browse: [18, 30],
-    orderPatience: 45,
-    drinkPatience: 60,
-    foodGrace: 75,           // plus 12 s per guest before waiting for food hurts
-    eat: [55, 80],
-    dessertEat: [30, 40],
-    payPatience: 40,
+    drain: 0.55,             // mood per second once patience runs out
+    queueDrain: 0.45,
+    queuePatience: 90,
+    browse: [14, 24],
+    orderPatience: 60,
+    drinkPatience: 75,
+    foodGrace: 80,           // plus 25 s per dish before waiting for food hurts
+    gracePerDish: 25,
+    eat: [50, 70],
+    dessertEat: [28, 38],
+    payPatience: 50,
     walkSpeed: 2.6,
+    radius: 0.34,
+    seatingTimeout: 20,
   },
 
   traffic: {
     perTable: 2.8,
     capPerTable: 2.7,
     solo: 0.6,
+    minGap: { solo: 34, duo: 16 },   // game minutes between arrivals at least
     weekday: [0.8, 0.85, 0.95, 1.0, 1.25, 1.3, 1.1], // Mon..Sun
     // Relative arrivals per game hour from 11:00 to 21:00.
     hourly: [1, 3, 2, 1, 0.4, 0.7, 1, 2, 2.2, 1.2, 0.3],
   },
 
   money: {
-    startCash: 3000,
+    startCash: 1500,
     rent: 120,
     loan: 40,
     utilities: 30,
@@ -87,7 +93,7 @@ return { BUILD, APP_ID, CFG, TICK, GAME_MIN_PER_SEC };
 })();
 
 // ---- src/data/layout.js ----
-__m.layout = (() => {
+__m.data_layout = (() => {
 // The starting restaurant, as a tile map (1 tile = 1 m). North (z = 0) is the
 // back wall; the camera looks north from the dining room side.
 //
@@ -117,6 +123,7 @@ const MAP = [
 ];
 
 const KITCHEN_MAX_Z = 4; // rows 1..4 are kitchen floor; 6..13 dining
+const LAYOUT_MIN_Z = 1;
 
 const CHAR_TYPES = {
   F: 'fridge', Z: 'freezer', P: 'pantry', c: 'counter', b: 'board', g: 'grill', p: 'pan', o: 'pot',
@@ -134,6 +141,47 @@ const DEFAULT_TABLES = [
   { seats: 2, x: 15, z: 11 },
 ];
 
+// Each cuisine starts with the same useful equipment and seat count, but the
+// floor plan is different. Station rows are [start x, z, map characters].
+// Storage stays by deliveries. Cooking lines face a clear back aisle; prep
+// benches face the service aisle. The pass separates kitchen and dining.
+const STARTING_LAYOUTS = {
+  southern: {
+    stations: [[1, 1, 'FZPcbbcggppoofvcsx'], [5, 3, 'wwwwcccr'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [4, 13, 'h']],
+    tables: DEFAULT_TABLES,
+  },
+  italian: {
+    // Dough prep beside the oven; pasta equipment and a separate plating bench.
+    stations: [[1, 1, 'FZPccbbvooppggfcsx'], [6, 3, 'rccwwwwc'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [4, 13, 'h']],
+    tables: [{ seats: 4, x: 3, z: 7 }, { seats: 4, x: 8, z: 7 }, { seats: 4, x: 13, z: 7 }, { seats: 2, x: 5, z: 11 }, { seats: 2, x: 10, z: 11 }, { seats: 2, x: 15, z: 11 }],
+  },
+  mexican: {
+    // One prep and filling bench opposite the grill and rice/bean cooking line.
+    stations: [[1, 1, 'FZPcccggppoofvccsx'], [4, 3, 'bbwwwwcr'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [3, 13, 'h']],
+    tables: [{ seats: 4, x: 3, z: 7 }, { seats: 4, x: 8, z: 8 }, { seats: 4, x: 13, z: 7 }, { seats: 2, x: 4, z: 12 }, { seats: 2, x: 11, z: 12 }, { seats: 2, x: 16, z: 11 }],
+  },
+  diner: {
+    // Two short work benches leave a wide central route to the griddle line.
+    stations: [[1, 1, 'FZPcccggppfvoo'], [17, 1, 'sx'], [3, 3, 'bcwwc'], [12, 3, 'rwwbc'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [3, 13, 'h']],
+    tables: [{ seats: 4, x: 5, z: 7 }, { seats: 4, x: 5, z: 11 }, { seats: 4, x: 10, z: 8 }, { seats: 2, x: 14, z: 7 }, { seats: 2, x: 14, z: 9 }, { seats: 2, x: 14, z: 11 }],
+  },
+  noodle: {
+    // Broth and noodle pots face the topping bench and bowl assembly counter.
+    stations: [[1, 1, 'FZPccccooppggfvsx'], [5, 3, 'bbwwwwcrc'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [8, 13, 'h']],
+    tables: [{ seats: 4, x: 4, z: 7 }, { seats: 4, x: 8, z: 8 }, { seats: 4, x: 12, z: 7 }, { seats: 2, x: 4, z: 12 }, { seats: 2, x: 10, z: 12 }, { seats: 2, x: 15, z: 11 }],
+  },
+};
+
+function startingObjects(cuisine) {
+  const plan = STARTING_LAYOUTS[cuisine] || STARTING_LAYOUTS.southern;
+  const objects = [];
+  for (const [startX, z, cells] of plan.stations) {
+    [...cells].forEach((char, dx) => objects.push({ type: CHAR_TYPES[char], x: startX + dx, z }));
+  }
+  for (const table of plan.tables) objects.push({ type: 'table', ...table });
+  return objects;
+}
+
 const TABLE_SIZE = { 2: { w: 3, h: 1 }, 4: { w: 2, h: 3 } };
 
 const FRONT_DOOR = { x: 2, z: 14 };
@@ -142,6 +190,40 @@ const QUEUE_SPOTS = [
   { x: 1.6, z: 11.1 }, { x: 2.5, z: 11.1 }, { x: 1.6, z: 10.2 }, { x: 2.5, z: 10.2 },
 ];
 const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }];
+
+const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
+const FLOOR_EXPANSION_WIDTH = 10;
+
+/** Saved dimensions keep furniture coordinates stable when the room grows. */
+function roomSize(state) {
+  const building = state.mode === 'story' && state.building;
+  return building ? { width: building.width, height: building.height } : { width: MAP[0].length, height: MAP.length };
+}
+
+function frontDoor(state) { return { x: FRONT_DOOR.x, z: roomSize(state).height - 1 }; }
+
+function spawnPoints(state) {
+  return state.mode === 'story' && state.building?.height === STORY_BUILDING.height
+    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }]
+    : SPAWN_POINTS;
+}
+
+function queueSpots(state) {
+  const offset = roomSize(state).height - MAP.length;
+  return QUEUE_SPOTS.map((spot) => ({ x: spot.x, z: spot.z + offset }));
+}
+
+function layoutTile(state, x, z) {
+  const { width, height } = roomSize(state);
+  if (x < 0 || z < 0 || x >= width || z >= height) return '#';
+  if (state.mode !== 'story') return MAP[z][x];
+  if (x === FRONT_DOOR.x && z === height - 1) return 'D';
+  if (x === 0 && z === 3) return 'B';
+  if (x === 0 || z === 0 || x === width - 1 || z === height - 1) return '#';
+  const divider = state.building?.divider || { from: 1, to: 12 };
+  if (z === 5 && (x < divider.from || x > divider.to)) return '#';
+  return '.';
+}
 
 /** Static station types that use a single item slot. */
 const SLOT_TYPES = new Set(['counter', 'board', 'grill', 'pan', 'pot', 'fryer', 'oven', 'pass']);
@@ -154,11 +236,49 @@ const STATION_NAMES = {
   sink: 'Sink', bin: 'Bin', pass: 'The pass', drinks: 'Drink station', host: 'Host stand', dock: 'Deliveries', table: 'Table',
 };
 
-return { MAP, KITCHEN_MAX_Z, CHAR_TYPES, DEFAULT_TABLES, TABLE_SIZE, FRONT_DOOR, QUEUE_SPOTS, SPAWN_POINTS, SLOT_TYPES, HEAT_TYPES, STORE_TYPES, STATION_NAMES };
+return { MAP, KITCHEN_MAX_Z, LAYOUT_MIN_Z, CHAR_TYPES, DEFAULT_TABLES, startingObjects, TABLE_SIZE, FRONT_DOOR, QUEUE_SPOTS, SPAWN_POINTS, STORY_BUILDING, FLOOR_EXPANSION_WIDTH, roomSize, frontDoor, spawnPoints, queueSpots, layoutTile, SLOT_TYPES, HEAT_TYPES, STORE_TYPES, STATION_NAMES };
+})();
+
+// ---- src/data/alley.js ----
+__m.data_alley = (() => {
+// The alley uses its own coordinates. Only the back door joins the two areas.
+const ALLEY_SIZE = { width: 12, height: 8 };
+const ALLEY_SPAWN = { x: 10.5, z: 3.5, rot: -Math.PI / 2 };
+const BACK_DOOR = { id: 'back-door', type: 'backdoor', x: 0, z: 3 };
+const ALLEY_OBJECTS = [
+  { id: 'alley-door', type: 'backdoor', x: 11, z: 3 },
+  { id: 'alley-dumpster', type: 'dumpster', x: 2, z: 1, w: 2, h: 1 },
+  { id: 'alley-smoke', type: 'smoking', x: 10, z: 5 },
+];
+const ALLEY_OBSTACLES = [
+  { type: 'truck', x: 8, z: 1, w: 3, h: 2 },
+  { type: 'crates', x: 1, z: 5, w: 1, h: 2 },
+];
+const TRASH_CAPACITY = 8;
+const SMOKE_SECONDS = 20;
+const SMOKE_BOOST_SECONDS = 300;
+
+function hasSmokeBoost(state, player) {
+  return Number.isFinite(player?.smokeBoostUntil) && player.smokeBoostUntil > (state.t || 0);
+}
+
+function movementMultiplier(state, player) { return hasSmokeBoost(state, player) ? 1.1 : 1; }
+
+function cookingMultiplier(state) {
+  return Object.values(state.players || {}).some((player) => hasSmokeBoost(state, player)) ? 1 / 0.8 : 1;
+}
+
+function playerArea(player) { return player?.area === 'alley' ? 'alley' : 'restaurant'; }
+
+function areaObjects(state, area = 'restaurant') {
+  return area === 'alley' ? ALLEY_OBJECTS : [...state.objects, BACK_DOOR];
+}
+
+return { ALLEY_SIZE, ALLEY_SPAWN, BACK_DOOR, ALLEY_OBJECTS, ALLEY_OBSTACLES, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, hasSmokeBoost, movementMultiplier, cookingMultiplier, playerArea, areaObjects };
 })();
 
 // ---- src/data/cuisines.js ----
-__m.cuisines = (() => {
+__m.data_cuisines = (() => {
 // The five restaurants you can open. A save's cuisine is fixed once chosen.
 // Dish components are [ingredientId, state]. Pizza toppings ride on the
 // dough and bake with it, so a pizza lists the baked dough plus its toppings.
@@ -242,7 +362,7 @@ const CUISINES = {
     id: 'mexican',
     name: 'Dos Tenedores Taquería',
     style: 'Taquería',
-    blurb: 'Tacos four ways, elote off the grill and churros with chocolate under papel picado.',
+    blurb: 'Tacos four ways, elote off the grill and churros with chocolate among bright tile accents.',
     palette: {
       wall: 0xf4e3c4, trim: 0x2a9a8e, floorA: 0xc87048, floorB: 0xb8623e, kitchenA: 0xf0e8dc, kitchenB: 0x7ac0b8,
       counter: 0x2a8a80, top: 0xf2ece0, accent: 0xe0407a, accent2: 0xf2c030, table: 0x8a5a34, cloth: null, chair: 0x2a8a80,
@@ -280,9 +400,9 @@ const CUISINES = {
     style: 'Classic diner',
     blurb: 'Burgers, pancakes all day, patty melts and pie under neon and chrome.',
     palette: {
-      wall: 0xf2ece0, trim: 0xc8282e, floorA: 0xf2ede4, floorB: 0x24262a, kitchenA: 0xe8eaec, kitchenB: 0xb8c0c8,
-      counter: 0xc8282e, top: 0xd8dde2, accent: 0xc8282e, accent2: 0x3ab0c8, table: 0xd8dde2, cloth: null, chair: 0xc8282e,
-      lamp: 0xfff0d0, ui: '#c8282e', uiDark: '#1e2228',
+      wall: 0xe1d9c9, trim: 0x5e7d78, floorA: 0xc9c2b4, floorB: 0xa5afa8, kitchenA: 0xd8d9cf, kitchenB: 0xbfc7c3,
+      counter: 0x557e7b, top: 0xc7ccca, accent: 0xa75f54, accent2: 0x789995, table: 0xcdd1cc, cloth: null, chair: 0xa75f54,
+      lamp: 0xe2c68d, ui: '#95564d', uiDark: '#344b49',
     },
     decor: 'diner',
     drinks: [
@@ -313,7 +433,7 @@ const CUISINES = {
     id: 'noodle',
     name: 'Two Chopsticks Noodle Bar',
     style: 'Noodle bar',
-    blurb: 'Ramen bowls, crispy gyoza and katsu curry under red paper lanterns.',
+    blurb: 'Ramen bowls, crispy gyoza and katsu curry with warm wood walls.',
     palette: {
       wall: 0xe8dcc6, trim: 0x3a2a22, floorA: 0x7a5a3e, floorB: 0x6a4c34, kitchenA: 0xe6e2da, kitchenB: 0xa8a29a,
       counter: 0x3a2a22, top: 0xd8c8a8, accent: 0xc8302a, accent2: 0x2a4a5a, table: 0x5a4030, cloth: null, chair: 0x2a1e18,
@@ -372,14 +492,15 @@ return { CUISINES, CUISINE_ORDER, BUILDER, PAIRS };
 })();
 
 // ---- src/data/ingredients.js ----
-__m.ingredients = (() => {
+__m.data_ingredients = (() => {
 // The full pantry. Each ingredient has a raw look and a list of steps:
 // { from, at, to, t, label, shape, color }. "at" is the station that performs
 // the step: board (hold Space), grill, pan, pot, fryer or oven (automatic).
 // kind is used by the dish builder: protein, veg, dairy, starch, sauce, sweet.
-
+const { CFG } = __m.config;
+const { HEAT_TYPES } = __m.data_layout;
 const L = (label, shape, color) => ({ label, shape, color });
-const step = (from, at, to, t, label, shape, color) => ({ from, at, to, t, label, shape, color });
+const step = (from, at, to, t, label, shape, color) => ({ from, at, to, t: HEAT_TYPES.has(at) ? Math.round(t * CFG.cookTimeMultiplier * 10) / 10 : t, label, shape, color });
 
 const ING = {
   beef_patty: { name: 'Beef patty', store: 'fridge', cost: 1.9, keep: 3, case: 20, kind: 'protein', look: L('Beef patty', 'patty', 0xc4574e),
@@ -608,290 +729,351 @@ function statesOf(ingId) {
 return { ING, STORES, stateInfo, stepFor, chainTime, statesOf };
 })();
 
-// ---- src/sim/state.js ----
-__m.state = (() => {
-// Creating a new restaurant, dish helpers, and save/load.
-const { BUILD, CFG } = __m.config;
-const { CUISINES } = __m.cuisines;
-const { ING } = __m.ingredients;
-const { MAP, CHAR_TYPES, DEFAULT_TABLES } = __m.layout;
-const SAVE_VERSION = 1;
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// ---- src/data/legacy-layouts.js ----
+__m.data_legacy_layouts = (() => {
+// Saved starter floors before version 5. Keep these separate from new layouts
+// so save repairs can identify unchanged furniture without moving custom rooms.
+const { CHAR_TYPES } = __m.data_layout;
+const LEGACY_LAYOUTS = {
+  southern: {
+    stations: [[1, 1, 'FZPcbbcggppoofvcsx'], [5, 3, 'wwwwcccr'], [1, 4, 'l'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [4, 13, 'h']],
+    tables: [{ seats: 4, x: 5, z: 7 }, { seats: 4, x: 9, z: 7 }, { seats: 4, x: 13, z: 7 }, { seats: 2, x: 6, z: 11 }, { seats: 2, x: 11, z: 11 }, { seats: 2, x: 15, z: 11 }],
+  },
+  italian: {
+    stations: [[1, 1, 'FZPlsxccbbvfopggcc'], [4, 3, 'kkkkkk'], [2, 4, 'wwwwc'], [14, 4, 'copr'], [12, 5, 'd'], [4, 13, 'h']],
+    tables: [{ seats: 4, x: 3, z: 7 }, { seats: 4, x: 8, z: 7 }, { seats: 4, x: 13, z: 7 }, { seats: 2, x: 5, z: 11 }, { seats: 2, x: 10, z: 11 }, { seats: 2, x: 15, z: 11 }],
+  },
+  mexican: {
+    stations: [[1, 1, 'lFZ'], [5, 1, 'ccsxbbggpp'], [16, 1, 'ofv'], [4, 3, 'w'], [7, 3, 'Pccrcco'], [15, 3, 'w'], [4, 4, 'w'], [15, 4, 'w'], [4, 5, 'kkkkkk'], [12, 5, 'd'], [3, 13, 'h']],
+    tables: [{ seats: 4, x: 3, z: 7 }, { seats: 4, x: 8, z: 8 }, { seats: 4, x: 13, z: 7 }, { seats: 2, x: 4, z: 12 }, { seats: 2, x: 11, z: 12 }, { seats: 2, x: 16, z: 11 }],
+  },
+  diner: {
+    stations: [[1, 1, 'FZPlsxccbbggppofvc'], [2, 3, 'wwccorw'], [13, 3, 'wc'], [4, 4, 'kkkkkk'], [12, 5, 'd'], [3, 13, 'h']],
+    tables: [{ seats: 4, x: 5, z: 7 }, { seats: 4, x: 5, z: 11 }, { seats: 4, x: 10, z: 8 }, { seats: 2, x: 14, z: 7 }, { seats: 2, x: 14, z: 9 }, { seats: 2, x: 14, z: 11 }],
+  },
+  noodle: {
+    stations: [[1, 1, 'FZ'], [4, 1, 'lsxcbbggppofv'], [18, 1, 'c'], [3, 3, 'w'], [7, 3, 'Pccorcc'], [17, 3, 'w'], [3, 4, 'w'], [6, 4, 'kkkk'], [13, 4, 'kk'], [17, 4, 'w'], [12, 5, 'd'], [8, 13, 'h']],
+    tables: [{ seats: 4, x: 4, z: 7 }, { seats: 4, x: 8, z: 8 }, { seats: 4, x: 12, z: 7 }, { seats: 2, x: 4, z: 12 }, { seats: 2, x: 10, z: 12 }, { seats: 2, x: 15, z: 11 }],
+  },
+};
 
-function nextId(state, prefix = 'o') {
-  state.seq = (state.seq || 0) + 1;
-  return prefix + state.seq;
-}
-
-function cuisineOf(state) { return CUISINES[state.cuisine]; }
-
-function allDishes(state) {
-  return [...cuisineOf(state).dishes, ...(state.custom || [])];
-}
-
-function dishById(state, id) {
-  return allDishes(state).find((d) => d.id === id) || null;
-}
-
-function drinkById(state, id) {
-  return cuisineOf(state).drinks.find((d) => d.id === id) || null;
-}
-
-function dishVeg(dish) {
-  return dish.comps.every(([ing]) => ING[ing] && ING[ing].veg);
-}
-
-/** Ingredient cost of one plate of a dish. */
-function dishCost(dish) {
-  let c = 0;
-  for (const [ing] of dish.comps) c += ING[ing] ? ING[ing].cost : 0;
-  return Math.round(c * 100) / 100;
-}
-
-/** Course bucket used for menu limits: sides count as starters. */
-function courseSlot(course) {
-  return course === 'main' ? 'main' : course === 'dessert' ? 'dessert' : 'starter';
-}
-
-function menuLimits(state) {
-  const extra = state.upgrades.menu_board ? CFG.menuBoardBonus : { main: 0, starter: 0, dessert: 0 };
-  return {
-    main: CFG.menuSlots.main + extra.main,
-    starter: CFG.menuSlots.starter + extra.starter,
-    dessert: CFG.menuSlots.dessert + extra.dessert,
-  };
-}
-
-function repLevel(points) {
-  const L = CFG.rep.levels;
-  let lv = 1;
-  for (let i = 0; i < L.length; i++) if (points >= L[i]) lv = i + 1;
-  return lv;
-}
-
-function nextLevelAt(level) {
-  const L = CFG.rep.levels;
-  return level < L.length ? L[level] : null;
-}
-
-/** Ingredients any dish on the current menu needs, plus all drinks' nothing. */
-function menuIngredients(state) {
-  const set = new Set();
-  for (const m of state.menu.dishes) {
-    if (!m.on) continue;
-    const d = dishById(state, m.id);
-    if (d) for (const [ing] of d.comps) set.add(ing);
-  }
-  return [...set];
-}
-
-function buildObjects(state) {
+function legacyStartingObjects(cuisine, version = 4) {
+  const plan = LEGACY_LAYOUTS[cuisine] || LEGACY_LAYOUTS.southern;
   const objects = [];
-  for (let z = 0; z < MAP.length; z++) {
-    for (let x = 0; x < MAP[z].length; x++) {
-      const t = CHAR_TYPES[MAP[z][x]];
-      if (!t) continue;
-      const o = { id: nextId(state), type: t, x, z };
-      initObject(o);
-      objects.push(o);
-    }
+  for (const [startX, z, cells] of plan.stations) {
+    [...cells].forEach((char, dx) => objects.push({ type: CHAR_TYPES[char], x: startX + dx, z }));
   }
-  for (const t of DEFAULT_TABLES) {
-    const o = { id: nextId(state), type: 'table', x: t.x, z: t.z, seats: t.seats };
-    initObject(o);
-    objects.push(o);
+  for (const table of plan.tables) objects.push({ type: 'table', ...table });
+  if (version < 4 && ['italian', 'mexican', 'diner'].includes(cuisine)) {
+    objects.find((o) => o.type === 'host').x = 18;
   }
   return objects;
 }
 
-function initObject(o) {
-  switch (o.type) {
-    case 'well': o.well = null; break;          // { ing, st, n, cost, day }
-    case 'rack': o.n = 0; break;
-    case 'sink': o.n = 0; o.wash = 0; break;
-    case 'dock': o.boxes = []; break;            // [{ ing, cases }]
-    case 'table': o.dirty = 0; o.party = null; o.num = 0; break;
-    case 'fridge': case 'freezer': case 'pantry': case 'host': case 'drinks': case 'bin': break;
-    default: o.slot = null;
+return { legacyStartingObjects };
+})();
+
+// ---- src/data/progression.js ----
+__m.data_progression = (() => {
+// Story rules are shared by the host, the office and the floor planner.
+const { CUISINES } = __m.data_cuisines;
+const { ING } = __m.data_ingredients;
+const { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } = __m.data_layout;
+const XP_LEVELS = [0, 120, 480, 800, 1200, 1650, 2200, 2800, 3500, 4200, 5000, 5800, 6600, 7400, 8200, 9000, 9800, 10600, 11400, 12200];
+const STARTERS = {
+  southern: ['classic_burger', 'grain_bowl', 'house_salad'],
+  italian: ['pomodoro', 'margherita', 'caprese'],
+  mexican: ['chicken_tacos', 'quesadilla', 'chips_salsa'],
+  diner: ['classic_burger', 'blt', 'side_salad'],
+  noodle: ['veggie_ramen', 'teriyaki_salmon', 'cucumber_salad'],
+};
+const AREAS = [
+  { id: 'main_room', name: 'Floor expansion 1', level: 4, price: 1500 },
+  { id: 'kitchen_bay', name: 'Floor expansion 2', level: 8, price: 1000 },
+  { id: 'dining_wing', name: 'Floor expansion 3', level: 14, price: 1500 },
+];
+const CHAPTERS = [
+  { id: 1, title: 'A small beginning', text: 'The landlord hands you $600 and the keys. Start with three tables. Serve your first regulars and save for your first floor expansion.', level: 4, price: 1500, goal: 'Serve 40 paying guests.', area: 'main_room' },
+  { id: 2, title: 'The regulars', text: 'The neighbors now know your name. Your regulars bring friends. Build a steady service and add another section of floor space.', level: 8, price: 1000, goal: 'Serve 120 paying guests.', area: 'kitchen_bay' },
+  { id: 3, title: 'A table for the critic', text: 'A local food critic wants to try your food. Expect a visit at the next service. Earn a good review and expand your floor again.', level: 14, price: 1500, goal: 'Earn a paid critic review of at least 4 stars.', area: 'dining_wing' },
+  { id: 4, title: 'Your own place', text: 'Your small counter has grown into a full restaurant. Show that your crew can run a full service. Then keep growing for as long as you like.', level: 20, price: 600, goal: 'Serve 20 paying guests in one day.' },
+];
+const LICENSES = [
+  { id: 'fryer_basics', name: 'Fryer basics', level: 2, price: 80, ingredients: ['fries', 'rings', 'chicken_thigh', 'churros', 'gyoza', 'tenders'] },
+  { id: 'pantry', name: 'Expanded pantry', level: 2, price: 80, ingredients: [] },
+  { id: 'produce', name: 'Market produce', level: 3, price: 100, ingredients: [] },
+  { id: 'dairy', name: 'Dairy', level: 3, price: 120, ingredients: ['cream', 'butter', 'cheddar', 'mozzarella', 'parmesan', 'queso', 'sour_cream', 'egg'] },
+  { id: 'desserts', name: 'Desserts', level: 4, price: 150, ingredients: ['banana', 'wafers', 'ice_cream', 'pie', 'tiramisu', 'tres_leches', 'mochi', 'choc', 'syrup'] },
+  { id: 'seafood', name: 'Seafood', level: 5, price: 300, ingredients: ['shrimp', 'salmon', 'fish'] },
+  { id: 'premium_meat', name: 'Premium meat', level: 8, price: 400, ingredients: ['ribeye', 'flank', 'pork', 'sausage', 'bacon', 'pepperoni', 'meatballs', 'chicken', 'beef_patty'] },
+  { id: 'bar', name: 'Bar', level: 10, price: 600, ingredients: [] },
+];
+const EQUIPMENT = [
+  { id: 'freezer', level: 2, price: 250 },
+  { id: 'fryer', level: 2, price: 400 },
+  { id: 'pan', level: 3, price: 450 },
+  { id: 'oven', level: 4, price: 1000 },
+];
+const FEATURES = [
+  { id: 'marketing', name: 'Marketing', level: 3, price: 0 },
+  { id: 'menu_report', name: 'Menu engineering report', level: 5, price: 0 },
+  { id: 'house_dish', name: 'House-dish creator', level: 6, price: 0 },
+];
+const isStory = (state) => state.mode === 'story';
+function isOwned(state, kind, id) {
+  if (!isStory(state)) return true;
+  if (kind === 'features') {
+    const feature = FEATURES.find((f) => f.id === id);
+    if (feature && !feature.price && state.level >= feature.level) return true;
   }
-  return o;
+  return !!state.owned?.[kind]?.[id];
 }
 
-function numberTables(state) {
-  const tables = state.objects.filter((o) => o.type === 'table');
-  tables.sort((a, b) => (a.z - b.z) || (a.x - b.x));
-  tables.forEach((t, i) => { t.num = i + 1; });
+function starterIngredients(cuisine) {
+  return [...new Set(CUISINES[cuisine].dishes.filter((d) => STARTERS[cuisine].includes(d.id)).flatMap((d) => d.comps.map(([i]) => i)))];
 }
-
-function newState({ cuisine, name }) {
-  const c = CUISINES[cuisine];
-  const state = {
-    v: SAVE_VERSION,
-    build: BUILD,
-    seq: 0,
-    cuisine,
-    name: (name || c.name).slice(0, 32),
-    created: Date.now(),
-    day: 1,
-    phase: 'morning',
-    clock: 8 * 60,
-    paused: false,
-    cash: CFG.money.startCash,
-    rep: { points: 0, level: 1, ratings: [] },
-    upgrades: {},
-    marketing: null,                 // { id, days, boost }
-    custom: [],
-    menu: { dishes: [], drinks: [] },
-    stock: {},                       // ing -> [{ n, cost, exp }]
-    orders: [],                      // [{ ing, cases, rush?, at? }] arriving next morning
-    objects: [],
-    players: {},
-    parties: [],
-    tickets: [],
-    ready: {},
-    today: null,
-    history: [],
-    reviews: [],                     // last few written reviews
-    lifetime: { guests: 0, revenue: 0, days: 0, bestDay: 0 },
-    unlocked: [],                    // dish ids announced as unlocked
-    tip: 0,                          // tutorial step
-  };
-  state.objects = buildObjects(state);
-  numberTables(state);
-  state.objects.find((o) => o.type === 'rack').n = CFG.plates;
-
-  for (const d of c.dishes) {
-    state.menu.dishes.push({ id: d.id, price: d.fair, on: d.level <= 1 });
+function ingredientLicense(id) {
+  const explicit = LICENSES.find((l) => l.ingredients.includes(id));
+  return explicit || LICENSES.find((l) => l.id === (ING[id]?.kind === 'veg' ? 'produce' : 'pantry'));
+}
+function ingredientAllowed(state, id) {
+  return !!ING[id] && (!isStory(state) || starterIngredients(state.cuisine).includes(id) || isOwned(state, 'licenses', ingredientLicense(id).id));
+}
+function requiredStations(dish) {
+  const result = new Set();
+  for (const [id, target] of dish.comps) {
+    if (ING[id]) result.add(ING[id].store);
+    let current = target;
+    const seen = new Set();
+    while (current !== 'raw' && !seen.has(current)) {
+      seen.add(current);
+      const step = ING[id]?.steps.find((s) => s.to === current);
+      if (!step) break;
+      result.add(step.at);
+      current = step.from;
+    }
   }
-  for (const d of c.drinks) state.menu.drinks.push({ id: d.id, price: d.price, on: true });
-  state.unlocked = c.dishes.filter((d) => d.level <= 1).map((d) => d.id);
-  state.today = freshToday();
-  return state;
+  return [...result];
 }
-
-function freshToday() {
-  return {
-    parties: 0, covers: 0, walkouts: 0, turnedAway: 0,
-    foodRev: 0, drinkRev: 0, cogsFood: 0, cogsDrink: 0,
-    waste: { binned: 0, spoiled: 0, cleanup: 0 },
-    rushSpend: 0, purchases: 0,
-    tips: {}, sold: {}, soldDrinks: {}, ratings: [], ticketTimes: [], cold: 0, burnt: 0,
-    dirtyLeft: 0, peakQueue: 0, repStart: 0,
-  };
+function recipeLevel(state, dish) {
+  if (STARTERS[state.cuisine].includes(dish.id)) return 1;
+  if (dish.custom) return 6;
+  return Math.min(20, 2 + (dish.level - 1) * 5);
 }
-
-/** Plain JSON copy for saving. Players and live guests are dropped. */
-function serialize(state) {
-  const s = JSON.parse(JSON.stringify(state));
-  s.players = {};
-  s.parties = [];
-  s.tickets = [];
-  s.ready = {};
-  for (const o of s.objects) {
-    if (o.type === 'table') { o.party = null; }
+function recipeRequirements(state, dish) {
+  if (!isStory(state)) return [];
+  const needs = [];
+  const level = recipeLevel(state, dish);
+  if (state.level < level) needs.push(`Chef Level ${level}`);
+  for (const [id] of dish.comps) if (!ingredientAllowed(state, id)) needs.push(`${ingredientLicense(id).name} license`);
+  for (const type of requiredStations(dish)) if (!state.objects.some((o) => o.type === type)) needs.push(STATION_NAMES[type]);
+  return [...new Set(needs)];
+}
+function startingDrinks(cuisine) {
+  const drinks = CUISINES[cuisine].drinks;
+  return cuisine === 'southern' ? ['sweet_tea', 'soda'] : drinks.filter((d) => !['beer', 'wine', 'margarita', 'sake'].includes(d.id)).slice(0, 2).map((d) => d.id);
+}
+function drinkRequirements(state, drink) {
+  if (!isStory(state) || startingDrinks(state.cuisine).includes(drink.id)) return [];
+  if (['beer', 'wine', 'margarita', 'sake'].includes(drink.id)) return isOwned(state, 'licenses', 'bar') ? [] : ['Bar license'];
+  return state.level >= 3 ? [] : ['Chef Level 3'];
+}
+function storyObjects(cuisine) {
+  const stations = new Set(['board', 'grill', 'pot']);
+  for (const d of CUISINES[cuisine].dishes.filter((d) => STARTERS[cuisine].includes(d.id))) {
+    for (const type of requiredStations(d)) if (!['fridge', 'pantry'].includes(type)) stations.add(type);
   }
-  return s;
+  const types = ['fridge', 'pantry', 'board', 'grill', 'pot', ...[...stations].filter((s) => !['board', 'grill', 'pot'].includes(s)), 'sink', 'rack', 'bin'];
+  const objects = types.map((type, i) => ({ type, x: i + 1, z: 1 }));
+  objects.push({ type: 'counter', x: 5, z: 3 }, { type: 'counter', x: 6, z: 3 }, { type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 10, z: 5 }, { type: 'host', x: 4, z: 10 });
+  for (const [x, z] of [[4, 7], [8, 7], [6, 9]]) objects.push({ type: 'table', seats: 2, x, z });
+  return objects;
 }
-
-function deserialize(obj) {
-  if (!obj || typeof obj !== 'object' || !obj.cuisine || !CUISINES[obj.cuisine]) throw new Error('Not a Two Forks save');
-  const s = obj;
-  s.players = {};
-  s.parties = [];
-  s.tickets = [];
-  s.ready = {};
-  s.paused = false;
-  if (s.phase === 'service' || s.phase === 'closing') {
-    // A save made mid-service resumes at the start of that morning.
-    s.phase = 'morning';
-    s.clock = 8 * 60;
-    s.today = freshToday();
+function chapterInfo(state) {
+  const c = CHAPTERS[(state.chapter || 1) - 1];
+  if (!isStory(state) || !c) return null;
+  const stats = state.storyStats || {};
+  const met = c.id === 1 ? stats.paidGuests >= 40 : c.id === 2 ? stats.paidGuests >= 120 : c.id === 3 ? stats.criticPassed : stats.bestPaidDay >= 20;
+  const reason = state.level < c.level ? `Reach Chef Level ${c.level}.` : !met ? c.goal : state.cash < c.price ? `Save $${c.price}.` : '';
+  return { ...c, ready: !reason, reason };
+}
+function unlockList(state) {
+  if (!isStory(state)) return [];
+  const rows = [
+    ...LICENSES.map((l) => ({ ...l, kind: 'licenses', desc: l.id === 'bar' ? 'Add beer, wine and cocktails to your menu.' : 'Order this ingredient group from the supplier.' })),
+    ...EQUIPMENT.map((e) => ({ ...e, name: STATION_NAMES[e.id], kind: 'stations', desc: 'Adds one station to your kitchen.' })),
+    ...AREAS.map((a) => ({ ...a, kind: 'areas', desc: `Add ${FLOOR_EXPANSION_WIDTH} × ${roomSize(state).height - 2} floor cells. The outside wall moves and your furniture stays in place.` })),
+    ...FEATURES.map((f) => ({ ...f, kind: 'features', desc: 'Available at this Chef Level.' })),
+    ...CUISINES[state.cuisine].dishes.map((d) => ({ id: d.id, name: d.name, level: recipeLevel(state, d), price: 0, kind: 'recipes', desc: recipeRequirements(state, d).join(' · ') || 'Ready for your menu.' })),
+  ];
+  return rows.map((r) => {
+    const owned = r.kind === 'recipes' ? state.level >= r.level : r.kind === 'stations' ? state.objects.some((o) => o.type === r.id) : isOwned(state, r.kind, r.id);
+    let reason = owned ? 'Owned' : state.level < r.level ? `Chef Level ${r.level}` : state.cash < r.price ? 'Not enough cash' : '';
+    if (r.kind === 'areas' && !owned) {
+      const chapter = chapterInfo(state);
+      reason = chapter?.area === r.id ? chapter.reason : 'Complete the earlier chapter.';
+    }
+    return { ...r, owned, can: !reason, reason };
+  });
+}
+function upgradeRequirements(state, u) {
+  if (!isStory(state)) return [];
+  const levels = { knife: 2, counter: 2, well: 3, board: 3, pot: 4, lamp: 4, grill: 7, burner: 5, fryer: 7, oven: 8, fridge_temp: 5, dishwasher: 10, table2: 4, table4: 4, menu_board: 3, decor1: 3, decor2: 6, decor3: 12 };
+  const needs = [];
+  if (state.level < levels[u.id]) needs.push(`Chef Level ${levels[u.id]}`);
+  if (u.station && !state.objects.some((o) => o.type === u.station) && ['fryer', 'oven', 'pan'].includes(u.station)) needs.push(`Buy the first ${STATION_NAMES[u.station].toLowerCase()} in Unlocks`);
+  if (u.table) {
+    if (!isOwned(state, 'areas', 'main_room')) needs.push('First floor expansion');
+    const limit = isOwned(state, 'areas', 'dining_wing') ? 9 : 6;
+    if (state.objects.filter((o) => o.type === 'table').length >= limit) needs.push(`Table limit: ${limit}`);
   }
-  s.build = BUILD;
-  return s;
+  return needs;
 }
+function storyRent(state) { return 40 + (isOwned(state, 'areas', 'main_room') ? 40 : 0) + (isOwned(state, 'areas', 'kitchen_bay') ? 20 : 0) + (isOwned(state, 'areas', 'dining_wing') ? 20 : 0); }
 
-async function encodeSave(state) {
-  const json = JSON.stringify(serialize(state));
-  if (typeof CompressionStream !== 'undefined') {
-    const cs = new CompressionStream('gzip');
-    const stream = new Blob([json]).stream().pipeThrough(cs);
-    const buf = new Uint8Array(await new Response(stream).arrayBuffer());
-    let bin = '';
-    for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
-    return 'TF1.' + btoa(bin);
+return { XP_LEVELS, STARTERS, AREAS, CHAPTERS, LICENSES, isStory, isOwned, starterIngredients, ingredientLicense, ingredientAllowed, requiredStations, recipeLevel, recipeRequirements, startingDrinks, drinkRequirements, storyObjects, chapterInfo, unlockList, upgradeRequirements, storyRent };
+})();
+
+// ---- src/sim/progression.js ----
+__m.sim_progression = (() => {
+const { XP_LEVELS, isStory } = __m.data_progression;
+function awardXP(state, amount, label) {
+  if (!isStory(state) || !Number.isFinite(amount) || amount <= 0) return;
+  amount = Math.floor(amount);
+  state.xp += amount;
+  state.level = XP_LEVELS.reduce((level, at, i) => state.xp >= at ? i + 1 : level, 1);
+  state.prestige = Math.floor(Math.max(0, state.xp - XP_LEVELS[19]) / 2000);
+  const lines = state.today.xpLines || (state.today.xpLines = []);
+  const line = lines.find((l) => l.label === label);
+  if (line) line.amount += amount; else lines.push({ label, amount });
+  const report = state.report;
+  if (state.phase === 'office' && report?.day === state.day && report.progression) {
+    report.progression.xp = lines.reduce((total, row) => total + row.amount, 0);
+    report.progression.lines = lines.map((row) => ({ ...row }));
+    report.progression.level = state.level;
   }
-  return 'TF0.' + btoa(unescape(encodeURIComponent(json)));
 }
 
-async function decodeSave(code) {
-  code = code.trim();
-  if (code.startsWith('TF1.')) {
-    const bin = atob(code.slice(4));
-    const buf = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-    const ds = new DecompressionStream('gzip');
-    const stream = new Blob([buf]).stream().pipeThrough(ds);
-    const text = await new Response(stream).text();
-    return deserialize(JSON.parse(text));
+function creditWork(state, pid, kind, amount = 1) {
+  if (!isStory(state) || !state.players[pid]) return;
+  const all = state.today.contributions || (state.today.contributions = {});
+  const row = all[pid] || (all[pid] = { id: pid, name: state.players[pid].name, plated: 0, served: 0, bused: 0 });
+  row[kind] += amount;
+}
+
+function paidProgress(state, party) {
+  if (!isStory(state) || party.xpPaid) return;
+  party.xpPaid = true;
+  const served = party.items.filter((x) => x.served && x.price > 0);
+  if (!served.length) return;
+  const guests = new Set(served.map((x) => x.guest)).size;
+  const count = Math.min(party.size, guests);
+  state.today.paidGuests = (state.today.paidGuests || 0) + count;
+  state.storyStats.paidGuests += count;
+  awardXP(state, count * 10, 'Paying guests');
+  let quality = 0;
+  for (const line of served) {
+    const points = Math.max(0, Math.min(5, Math.round((line.q ?? 1) * 3) + (!line.cold ? 1 : 0) + (!line.late ? 1 : 0)));
+    quality += points;
+    if (!line.cold) state.today.hotPaid = (state.today.hotPaid || 0) + 1;
+    if (line.course === 'dessert') state.today.dessertsPaid = (state.today.dessertsPaid || 0) + 1;
   }
-  if (code.startsWith('TF0.')) return deserialize(JSON.parse(decodeURIComponent(escape(atob(code.slice(4))))));
-  return deserialize(JSON.parse(code));
+  awardXP(state, quality, 'Plate quality');
+  updateGoal(state);
 }
 
-return { SAVE_VERSION, WEEKDAYS, nextId, cuisineOf, allDishes, dishById, drinkById, dishVeg, dishCost, courseSlot, menuLimits, repLevel, nextLevelAt, menuIngredients, initObject, numberTables, newState, freshToday, serialize, deserialize, encodeSave, decodeSave };
+function dailyGoal(state) {
+  if (!isStory(state)) return null;
+  const target = state.chapter >= 3 ? 16 : state.chapter >= 2 ? 12 : 8;
+  const choices = [
+    { id: 'guests', label: `Serve ${target} paying guests`, target, xp: 40 + (state.chapter - 1) * 10 },
+    { id: 'hot', label: `Serve ${target} hot plates that guests pay for`, target, xp: 60 },
+    { id: 'walkouts', label: 'Serve 6 paying guests with no walkouts', target: 6, xp: 80 },
+  ];
+  return { ...choices[(state.day - 1) % choices.length], progress: 0, done: false };
+}
+function updateGoal(state) {
+  if (!isStory(state) || !state.goal) return;
+  const g = state.goal, t = state.today;
+  g.progress = g.id === 'hot' ? t.hotPaid || 0 : t.paidGuests || 0;
+}
+function finishProgress(state) {
+  if (!isStory(state)) return null;
+  updateGoal(state);
+  const goal = state.goal;
+  if (goal && !goal.done && goal.progress >= goal.target && (goal.id !== 'walkouts' || state.today.walkouts === 0)) {
+    goal.done = true;
+    awardXP(state, goal.xp, 'Daily goal');
+  }
+  state.storyStats.bestPaidDay = Math.max(state.storyStats.bestPaidDay, state.today.paidGuests || 0);
+  state.debtDays = state.cash < 0 ? (state.debtDays || 0) + 1 : 0;
+  let relief = 0;
+  if (state.debtDays >= 3) {
+    // A working-capital loan is recorded as debt, never as sales or profit.
+    relief = Math.round((100 - state.cash) * 100) / 100;
+    state.debt = Math.round((state.debt + relief) * 100) / 100;
+    state.cash = 100;
+    state.debtDays = 0;
+  }
+  return { xp: (state.today.xpLines || []).reduce((n, l) => n + l.amount, 0), lines: (state.today.xpLines || []).map((l) => ({ ...l })), level: state.level, goal: goal ? { ...goal } : null, debtDays: state.debtDays, debt: state.debt, relief };
+}
+
+return { awardXP, creditWork, paidProgress, dailyGoal, updateGoal, finishProgress };
 })();
 
 // ---- src/sim/world.js ----
-__m.world = (() => {
+__m.sim_world = (() => {
 // Tile grid, collision, pathfinding and placement rules. Pure functions over
 // the game state; no rendering here.
-const { MAP, TABLE_SIZE } = __m.layout;
-const W = MAP[0].length;
-const H = MAP.length;
-
-function baseTile(x, z) {
-  if (x < 0 || z < 0 || x >= W || z >= H) return '#';
-  return MAP[z][x];
-}
-
+const { TABLE_SIZE, roomSize, layoutTile, frontDoor } = __m.data_layout;
+const { ALLEY_SIZE, ALLEY_OBSTACLES, BACK_DOOR, areaObjects } = __m.data_alley;
 function isWallChar(c) { return c === '#' || c === 'B'; }
+
+function isWallTile(state, x, z) { return isWallChar(layoutTile(state, x, z)); }
 
 function footprint(o) {
   if (o.type === 'table') {
     const s = TABLE_SIZE[o.seats];
     return { x: o.x, z: o.z, w: s.w, h: s.h };
   }
-  return { x: o.x, z: o.z, w: 1, h: 1 };
+  return { x: o.x, z: o.z, w: o.w || 1, h: o.h || 1 };
 }
 
 /** Builds the blocked grid and the tile -> object lookup. */
-function buildGrid(state) {
+function buildGrid(state, area = 'restaurant') {
+  const alley = area === 'alley';
+  const { width: W, height: H } = alley ? ALLEY_SIZE : roomSize(state);
   const blocked = new Uint8Array(W * H);
   const owner = new Array(W * H).fill(null);
   for (let z = 0; z < H; z++) {
-    for (let x = 0; x < W; x++) if (isWallChar(MAP[z][x])) blocked[z * W + x] = 1;
+    for (let x = 0; x < W; x++) {
+      if (alley ? x === 0 || z === 0 || x === W - 1 || z === H - 1 : isWallTile(state, x, z)) blocked[z * W + x] = 1;
+    }
   }
-  for (const o of state.objects) {
+  for (const o of [...areaObjects(state, area), ...(alley ? ALLEY_OBSTACLES : [])]) {
     const f = footprint(o);
     for (let dz = 0; dz < f.h; dz++) {
       for (let dx = 0; dx < f.w; dx++) {
-        const i = (f.z + dz) * W + (f.x + dx);
+        const x = f.x + dx, z = f.z + dz;
+        if (x < 0 || z < 0 || x >= W || z >= H) continue;
+        const i = z * W + x;
         blocked[i] = 1;
-        owner[i] = o.id;
+        owner[i] = o.id || null;
       }
     }
   }
-  return { blocked, owner };
+  return { width: W, height: H, blocked, owner, area: alley ? 'alley' : 'restaurant' };
 }
 
 function walkable(grid, x, z) {
+  const { width: W, height: H } = grid;
   if (x < 0 || z < 0 || x >= W || z >= H) return false;
   return !grid.blocked[z * W + x];
 }
 
 /** Pushes a circle out of blocked tiles. Mutates and returns pos. */
 function collide(grid, pos, r) {
+  const { width: W, height: H } = grid;
   for (let iter = 0; iter < 2; iter++) {
     const x0 = Math.floor(pos.x - r - 1), x1 = Math.floor(pos.x + r + 1);
     const z0 = Math.floor(pos.z - r - 1), z1 = Math.floor(pos.z + r + 1);
@@ -925,7 +1107,9 @@ function collide(grid, pos, r) {
 
 /** 4-way BFS between tiles. Returns tile centers after the start, or null. */
 function findPath(grid, sx, sz, tx, tz) {
+  const { width: W, height: H } = grid;
   sx = Math.floor(sx); sz = Math.floor(sz); tx = Math.floor(tx); tz = Math.floor(tz);
+  if ([sx, sz, tx, tz].some((n) => !Number.isFinite(n)) || sx < 0 || sx >= W || tx < 0 || tx >= W || sz < 0 || sz >= H || tz < 0 || tz >= H) return null;
   if (sx === tx && sz === tz) return [];
   const prev = new Int32Array(W * H).fill(-2);
   const start = sz * W + sx, goal = tz * W + tx;
@@ -989,8 +1173,21 @@ function approachTile(grid, tx, tz, px = tx, pz = tz) {
  * Checks a layout: every walkable tile connected to the front door, and every
  * object usable from at least one walkable neighbor.
  */
-function validateLayout(state, door) {
+function validateLayout(state, door = frontDoor(state)) {
+  const { width: W, height: H } = roomSize(state);
+  const occupied = new Set();
+  for (const o of state.objects) {
+    const f = footprint(o);
+    if (!Number.isInteger(f.x) || !Number.isInteger(f.z)) return { ok: false, reason: 'Place objects on whole floor cells.' };
+    for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) {
+      const x = f.x + dx, z = f.z + dz, key = z * W + x;
+      if (x < 1 || z < 1 || x >= W - 1 || z >= H - 1 || isWallTile(state, x, z)) return { ok: false, reason: 'Place objects inside the current walls.' };
+      if (occupied.has(key)) return { ok: false, reason: 'Objects cannot share the same floor cell.' };
+      occupied.add(key);
+    }
+  }
   const grid = buildGrid(state);
+  if (!walkable(grid, BACK_DOOR.x + 1, BACK_DOOR.z)) return { ok: false, reason: 'Keep the back door clear.' };
   const seen = new Uint8Array(W * H);
   const q = [door.z * W + door.x];
   seen[q[0]] = 1;
@@ -1029,36 +1226,356 @@ function validateLayout(state, door) {
 
 /** Whether a footprint fits on plain floor in the given rows. */
 function fits(state, f, zMin, zMax, ignoreId = null) {
-  const grid = buildGrid({ objects: state.objects.filter((o) => o.id !== ignoreId) });
+  const grid = buildGrid({ ...state, objects: state.objects.filter((o) => o.id !== ignoreId) });
   for (let dz = 0; dz < f.h; dz++) {
     for (let dx = 0; dx < f.w; dx++) {
       const x = f.x + dx, z = f.z + dz;
       if (z < zMin || z > zMax) return false;
       if (!walkable(grid, x, z)) return false;
-      const c = baseTile(x, z);
+      const c = layoutTile(state, x, z);
       if (c === 'D') return false;
     }
   }
   return true;
 }
 
-return { W, H, baseTile, isWallChar, footprint, buildGrid, walkable, collide, findPath, seatsOf, tableCenter, approachTile, validateLayout, fits };
+return { isWallChar, isWallTile, footprint, buildGrid, walkable, collide, findPath, seatsOf, tableCenter, approachTile, validateLayout, fits };
+})();
+
+// ---- src/sim/state.js ----
+__m.sim_state = (() => {
+// Creating a new restaurant, dish helpers, and save/load.
+const { BUILD, CFG } = __m.config;
+const { CUISINES } = __m.data_cuisines;
+const { ING } = __m.data_ingredients;
+const { startingObjects, STORY_BUILDING } = __m.data_layout;
+const { legacyStartingObjects } = __m.data_legacy_layouts;
+const { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } = __m.data_progression;
+const { dailyGoal } = __m.sim_progression;
+const { TRASH_CAPACITY } = __m.data_alley;
+const { footprint, validateLayout } = __m.sim_world;
+const SAVE_VERSION = 5;
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function nextId(state, prefix = 'o') {
+  state.seq = (state.seq || 0) + 1;
+  return prefix + state.seq;
+}
+
+function cuisineOf(state) { return CUISINES[state.cuisine]; }
+
+function allDishes(state) {
+  return [...cuisineOf(state).dishes, ...(state.custom || [])];
+}
+
+function dishById(state, id) {
+  return allDishes(state).find((d) => d.id === id) || null;
+}
+
+function drinkById(state, id) {
+  return cuisineOf(state).drinks.find((d) => d.id === id) || null;
+}
+
+function dishVeg(dish) {
+  return dish.comps.every(([ing]) => ING[ing] && ING[ing].veg);
+}
+
+/** Ingredient cost of one plate of a dish. */
+function dishCost(dish) {
+  let c = 0;
+  for (const [ing] of dish.comps) c += ING[ing] ? ING[ing].cost : 0;
+  return Math.round(c * 100) / 100;
+}
+
+/** Course bucket used for menu limits: sides count as starters. */
+function courseSlot(course) {
+  return course === 'main' ? 'main' : course === 'dessert' ? 'dessert' : 'starter';
+}
+
+function menuLimits(state) {
+  const base = isStory(state) && !state.owned.areas.main_room ? { main: 2, starter: 1, dessert: state.level >= 4 ? 1 : 0 } : CFG.menuSlots;
+  const extra = state.upgrades.menu_board ? CFG.menuBoardBonus : { main: 0, starter: 0, dessert: 0 };
+  return {
+    main: base.main + extra.main,
+    starter: base.starter + extra.starter,
+    dessert: base.dessert + extra.dessert,
+  };
+}
+
+function repLevel(points) {
+  const L = CFG.rep.levels;
+  let lv = 1;
+  for (let i = 0; i < L.length; i++) if (points >= L[i]) lv = i + 1;
+  return lv;
+}
+
+function nextLevelAt(level) {
+  const L = CFG.rep.levels;
+  return level < L.length ? L[level] : null;
+}
+
+/** Ingredients any dish on the current menu needs, plus all drinks' nothing. */
+function menuIngredients(state) {
+  const set = new Set();
+  for (const m of state.menu.dishes) {
+    if (!m.on) continue;
+    const d = dishById(state, m.id);
+    if (d) for (const [ing] of d.comps) set.add(ing);
+  }
+  return [...set];
+}
+
+function buildObjects(state) {
+  return (isStory(state) ? storyObjects(state.cuisine) : startingObjects(state.cuisine)).map((spec) => initObject({ id: nextId(state), ...spec }));
+}
+
+function initObject(o) {
+  switch (o.type) {
+    case 'well': o.well = null; break;          // { ing, st, n, cost, day }
+    case 'rack': o.n = 0; break;
+    case 'sink': o.n = 0; o.wash = 0; break;
+    case 'dock': o.boxes = []; break;            // [{ ing, cases }]
+    case 'table': o.dirty = 0; o.party = null; o.num = 0; break;
+    case 'bin': o.trash = 0; break;
+    case 'fridge': case 'freezer': case 'pantry': case 'host': case 'drinks': break;
+    default: o.slot = null;
+  }
+  return o;
+}
+
+function numberTables(state) {
+  const tables = state.objects.filter((o) => o.type === 'table');
+  tables.sort((a, b) => (a.z - b.z) || (a.x - b.x));
+  tables.forEach((t, i) => { t.num = i + 1; });
+}
+
+function newState({ cuisine, name, mode = 'arcade', cash = 3000 }) {
+  const c = CUISINES[cuisine];
+  const state = {
+    v: SAVE_VERSION,
+    build: BUILD,
+    seq: 0,
+    cuisine,
+    name: (name || c.name).slice(0, 32),
+    created: Date.now(),
+    day: 1,
+    phase: 'morning',
+    clock: 8 * 60,
+    paused: false,
+    mode: mode === 'story' ? 'story' : 'arcade',
+    cash: mode === 'story' ? 600 : [1500, 3000, 5000].includes(cash) ? cash : 3000,
+    rep: { points: 0, level: 1, ratings: [] },
+    upgrades: {},
+    marketing: null,                 // { id, days, boost }
+    custom: [],
+    menu: { dishes: [], drinks: [] },
+    stock: {},                       // ing -> [{ n, cost, exp }]
+    orders: [],                      // [{ ing, cases, rush?, at? }] arriving next morning
+    objects: [],
+    players: {},
+    parties: [],
+    tickets: [],
+    ready: {},
+    today: null,
+    history: [],
+    reviews: [],                     // last few written reviews
+    lifetime: { guests: 0, revenue: 0, days: 0, bestDay: 0 },
+    unlocked: [],                    // dish ids announced as unlocked
+    tip: 0,                          // tutorial step
+  };
+  if (isStory(state)) state.building = { ...STORY_BUILDING, divider: { ...STORY_BUILDING.divider } };
+  state.objects = buildObjects(state);
+  if (isStory(state)) {
+    Object.assign(state, { xp: 0, level: 1, prestige: 0, owned: { licenses: {}, stations: {}, areas: {}, features: {} }, chapter: 1, storyStats: { paidGuests: 0, bestPaidDay: 0, criticPassed: false }, debt: 600, debtDays: 0 });
+    for (const o of state.objects) if (o.type !== 'table') state.owned.stations[o.type] = true;
+    state.goal = dailyGoal(state);
+  }
+  numberTables(state);
+  state.objects.find((o) => o.type === 'rack').n = CFG.plates;
+
+  for (const d of c.dishes) {
+    state.menu.dishes.push({ id: d.id, price: d.fair, on: isStory(state) ? STARTERS[cuisine].includes(d.id) : d.level <= 1 });
+  }
+  for (const d of c.drinks) state.menu.drinks.push({ id: d.id, price: d.price, on: !isStory(state) || startingDrinks(cuisine).includes(d.id) });
+  state.unlocked = c.dishes.filter((d) => d.level <= 1).map((d) => d.id);
+  state.today = freshToday();
+  return state;
+}
+
+function freshToday() {
+  return {
+    parties: 0, covers: 0, walkouts: 0, turnedAway: 0,
+    foodRev: 0, drinkRev: 0, cogsFood: 0, cogsDrink: 0,
+    waste: { binned: 0, spoiled: 0, cleanup: 0 },
+    rushSpend: 0, purchases: 0,
+    tips: {}, sold: {}, soldDrinks: {}, ratings: [], ticketTimes: [], cold: 0, burnt: 0,
+    dirtyLeft: 0, peakQueue: 0, repStart: 0,
+    paidGuests: 0, hotPaid: 0, dessertsPaid: 0, xpLines: [], contributions: {},
+  };
+}
+
+/** Routine waste fills the bin. A full bin must be emptied before discards. */
+function addTrash(state, units) {
+  const bin = state.objects.find((o) => o.type === 'bin');
+  if (!bin || !Number.isFinite(units) || units <= 0) return;
+  if ((bin.trash || 0) < TRASH_CAPACITY) bin.trash = Math.min(TRASH_CAPACITY, (bin.trash || 0) + Math.ceil(units));
+}
+
+/** Preserve carried bags when a chef leaves or a save removes live players. */
+function returnTrashBag(state, bag) {
+  const bin = state.objects.find((o) => o.type === 'bin');
+  if (!bin || bag?.k !== 'trash') return;
+  const units = Number.isFinite(bag.n) && bag.n > 0 ? Math.min(TRASH_CAPACITY, Math.ceil(bag.n)) : TRASH_CAPACITY;
+  bin.trash = (bin.trash || 0) + units;
+}
+
+/** Plain JSON copy for saving. Players and live guests are dropped. */
+function serialize(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  for (const p of Object.values(s.players || {})) if (p.hand?.k === 'trash') returnTrashBag(s, p.hand);
+  s.players = {};
+  s.parties = [];
+  s.tickets = [];
+  s.ready = {};
+  delete s.pendingPurchase;
+  for (const o of s.objects) {
+    if (o.type === 'table') { o.party = null; }
+  }
+  return s;
+}
+
+function layoutSignature(objects) {
+  return JSON.stringify(objects.map((o) => {
+    const f = footprint(o);
+    return [o.type, f.x, f.z, f.w, f.h, o.seats || 0];
+  }).sort());
+}
+
+/** Repair only unchanged starter floors; old saves do not record furniture moves. */
+function repairStartingHost(state) {
+  if (!['italian', 'mexican', 'diner'].includes(state.cuisine)) return;
+  if (layoutSignature(state.objects) !== layoutSignature(legacyStartingObjects(state.cuisine, 3))) return;
+  const host = state.objects.find((o) => o.type === 'host');
+  const target = legacyStartingObjects(state.cuisine).find((o) => o.type === 'host');
+  host.x = target.x; host.z = target.z;
+  if (!validateLayout(state).ok) { host.x = 18; host.z = 13; }
+}
+
+/** Update unchanged kitchen furniture while keeping custom dining layouts. */
+function repairStartingKitchen(state) {
+  const isKitchen = (o) => o.type !== 'table' && o.type !== 'host';
+  const oldKitchen = legacyStartingObjects(state.cuisine).filter(isKitchen);
+  const kitchen = state.objects.filter(isKitchen);
+  if (layoutSignature(kitchen) !== layoutSignature(oldKitchen)) return;
+
+  const targets = new Map();
+  for (const o of startingObjects(state.cuisine).filter(isKitchen)) {
+    if (!targets.has(o.type)) targets.set(o.type, []);
+    targets.get(o.type).push(o);
+  }
+  const moves = new Map();
+  for (const old of oldKitchen) {
+    const target = targets.get(old.type)?.shift();
+    if (!target) return;
+    const object = kitchen.find((o) => o.type === old.type && o.x === old.x && o.z === old.z);
+    moves.set(object, { x: target.x, z: target.z });
+  }
+  if ([...targets.values()].some((objects) => objects.length)) return;
+  const objects = state.objects.map((o) => moves.has(o) ? { ...o, ...moves.get(o) } : o);
+  if (!validateLayout({ ...state, objects }).ok) return;
+  for (const [object, position] of moves) Object.assign(object, position);
+}
+
+function deserialize(obj) {
+  if (!obj || typeof obj !== 'object' || !obj.cuisine || !CUISINES[obj.cuisine]) throw new Error('Not a Two Forks save');
+  const s = obj;
+  s.mode = s.mode === 'story' ? 'story' : 'arcade';
+  if ((s.v || 0) < 4 && s.mode === 'arcade') repairStartingHost(s);
+  if ((s.v || 0) < 5 && s.mode === 'arcade') repairStartingKitchen(s);
+  s.v = SAVE_VERSION;
+  delete s.pendingPurchase;
+  for (const o of s.objects) if (o.type === 'bin') {
+    const units = Number(o.trash);
+    o.trash = Number.isFinite(units) ? Math.max(0, Math.ceil(units)) : 0;
+  }
+  for (const p of Object.values(s.players || {})) if (p.hand?.k === 'trash') returnTrashBag(s, p.hand);
+  if (isStory(s)) {
+    // Old saves keep the original footprint and all furniture coordinates.
+    s.building ||= { width: 20, height: 15, divider: { from: 1, to: 12 } };
+    const b = s.building;
+    if (!Number.isInteger(b.width) || b.width < 14 || b.width > 64 || !Number.isInteger(b.height) || b.height < 12 || b.height > 24 || !Number.isInteger(b.divider?.from) || !Number.isInteger(b.divider?.to) || b.divider.from < 1 || b.divider.to < b.divider.from || b.divider.to >= b.width - 1) throw new Error('Invalid restaurant floor dimensions');
+    s.xp = Math.max(0, Number(s.xp) || 0);
+    s.level = XP_LEVELS.reduce((level, at, i) => s.xp >= at ? i + 1 : level, 1);
+    s.prestige = Math.floor(Math.max(0, s.xp - XP_LEVELS[19]) / 2000);
+    s.owned = s.owned || {};
+    for (const kind of ['licenses', 'stations', 'areas', 'features']) s.owned[kind] ||= {};
+    s.chapter = Math.max(1, Math.min(5, Number(s.chapter) || 1));
+    s.storyStats ||= { paidGuests: 0, bestPaidDay: 0, criticPassed: false };
+    s.debt = Math.max(0, Number(s.debt) || 0);
+    s.debtDays = Math.max(0, Number(s.debtDays) || 0);
+  }
+  s.players = {};
+  s.parties = [];
+  s.tickets = [];
+  s.ready = {};
+  s.paused = false;
+  if (s.phase === 'service' || s.phase === 'closing') {
+    // A save made mid-service resumes at the start of that morning.
+    s.phase = 'morning';
+    s.clock = 8 * 60;
+    s.today = freshToday();
+  }
+  if (isStory(s) && (!s.goal || s.phase === 'morning')) s.goal = dailyGoal(s);
+  s.build = BUILD;
+  return s;
+}
+
+async function encodeSave(state) {
+  const json = JSON.stringify(serialize(state));
+  if (typeof CompressionStream !== 'undefined') {
+    const cs = new CompressionStream('gzip');
+    const stream = new Blob([json]).stream().pipeThrough(cs);
+    const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+    return 'TF1.' + btoa(bin);
+  }
+  return 'TF0.' + btoa(unescape(encodeURIComponent(json)));
+}
+
+async function decodeSave(code) {
+  code = code.trim();
+  if (code.startsWith('TF1.')) {
+    const bin = atob(code.slice(4));
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    const ds = new DecompressionStream('gzip');
+    const stream = new Blob([buf]).stream().pipeThrough(ds);
+    const text = await new Response(stream).text();
+    return deserialize(JSON.parse(text));
+  }
+  if (code.startsWith('TF0.')) return deserialize(JSON.parse(decodeURIComponent(escape(atob(code.slice(4))))));
+  return deserialize(JSON.parse(code));
+}
+
+return { SAVE_VERSION, WEEKDAYS, nextId, cuisineOf, allDishes, dishById, drinkById, dishVeg, dishCost, courseSlot, menuLimits, repLevel, nextLevelAt, menuIngredients, initObject, numberTables, newState, freshToday, addTrash, returnTrashBag, serialize, deserialize, encodeSave, decodeSave };
 })();
 
 // ---- src/sim/items.js ----
-__m.items = (() => {
+__m.sim_items = (() => {
 // Things that can be held, placed on stations or plated.
 //   ingredient  { k:'ing', ing, st, cost, n?, t, over, q, heat, top? }
 //   plate       { k:'plate', items: [ingredient...] }
 //   drink       { k:'drink', id, cost }
 //   box         { k:'box', ing }            one supplier case
 //   dirty       { k:'dirty', n }            a stack of dirty plates
+//   trash       { k:'trash', n }            a sealed bag of bin waste
 // heat is -1 for food that was never cooked, otherwise seconds since it left
 // the heat. top holds pizza toppings riding on raw dough.
 const { CFG } = __m.config;
-const { ING, stateInfo } = __m.ingredients;
-const { HEAT_TYPES } = __m.layout;
-const { dishById, drinkById } = __m.state;
+const { ING, stateInfo } = __m.data_ingredients;
+const { HEAT_TYPES } = __m.data_layout;
+const { dishById, drinkById } = __m.sim_state;
 const PLATE_MAX = 6;
 
 function ingItem(ing, st, cost) {
@@ -1106,6 +1623,7 @@ function itemLabel(state, it) {
     case 'drink': { const d = drinkById(state, it.id); return d ? d.name : 'Drink'; }
     case 'box': return `Case of ${ING[it.ing].name.toLowerCase()}`;
     case 'dirty': return it.n > 1 ? `${it.n} dirty plates` : 'Dirty plate';
+    case 'trash': return 'Trash bag';
   }
   return '';
 }
@@ -1183,6 +1701,7 @@ function plateQuality(plate) {
 /** True if an item may sit on a station of this type. */
 function stationAccepts(type, it) {
   if (!it) return false;
+  if (it.k === 'trash') return false;
   if (type === 'counter' || type === 'pass') return true;
   if (it.k !== 'ing' || it.st === 'burnt') return false;
   if (type === 'board') return ING[it.ing].steps.some((s) => s.from === it.st && s.at === 'board') && !it.top;
@@ -1205,6 +1724,7 @@ function itemSig(it) {
     case 'drink': return 'd:' + it.id;
     case 'box': return 'b:' + it.ing;
     case 'dirty': return 'x:' + it.n;
+    case 'trash': return 'trash:' + it.n;
   }
   return '?';
 }
@@ -1213,7 +1733,7 @@ return { PLATE_MAX, ingItem, cloneItem, takePortion, isContainer, canTop, toppab
 })();
 
 // ---- src/data/upgrades.js ----
-__m.upgrades = (() => {
+__m.data_upgrades = (() => {
 // Things to buy in the Office. Stations are placed automatically in free
 // kitchen space and can be moved in the layout editor.
 
@@ -1234,7 +1754,7 @@ const UPGRADES = [
   { id: 'table4', name: 'Extra 4-top table', price: 400, max: 3, table: 4, desc: 'Seats four more guests per turn.', group: 'Dining room' },
   { id: 'menu_board', name: 'Bigger menu board', price: 300, max: 1, desc: 'Two more mains and one more starter on the menu.', group: 'Dining room' },
   { id: 'decor1', name: 'Plants and art', price: 250, max: 1, desc: 'Guests start 4 points happier.', group: 'Dining room', decor: 1 },
-  { id: 'decor2', name: 'Lighting and music', price: 600, max: 1, desc: 'Guests start another 4 points happier.', group: 'Dining room', decor: 2, needs: 'decor1' },
+  { id: 'decor2', name: 'Music system', price: 600, max: 1, desc: 'Guests start another 4 points happier.', group: 'Dining room', decor: 2, needs: 'decor1' },
   { id: 'decor3', name: 'Full renovation', price: 1200, max: 1, desc: 'Guests start another 4 points happier and tip a bit more.', group: 'Dining room', decor: 3, needs: 'decor2' },
 ];
 
@@ -1247,16 +1767,18 @@ return { UPGRADES, MARKETING };
 })();
 
 // ---- src/sim/economy.js ----
-__m.economy = (() => {
+__m.sim_economy = (() => {
 // Stock, supplier orders, forecasting, upgrades, layout changes, custom
 // dishes and the end-of-day P&L.
+const { isStory, isOwned, ingredientAllowed, recipeRequirements, drinkRequirements, upgradeRequirements, unlockList, chapterInfo, CHAPTERS, storyRent } = __m.data_progression;
+const { awardXP, finishProgress } = __m.sim_progression;
 const { CFG } = __m.config;
-const { ING, statesOf } = __m.ingredients;
-const { UPGRADES, MARKETING } = __m.upgrades;
-const { BUILDER, PAIRS } = __m.cuisines;
-const { KITCHEN_MAX_Z, FRONT_DOOR, QUEUE_SPOTS, HEAT_TYPES, SPAWN_POINTS } = __m.layout;
-const { allDishes, dishById, dishCost, cuisineOf, nextId, initObject, numberTables, courseSlot, menuLimits, drinkById } = __m.state;
-const { validateLayout, fits, footprint } = __m.world;
+const { ING, statesOf } = __m.data_ingredients;
+const { UPGRADES, MARKETING } = __m.data_upgrades;
+const { BUILDER, PAIRS } = __m.data_cuisines;
+const { KITCHEN_MAX_Z, LAYOUT_MIN_Z, HEAT_TYPES, roomSize, frontDoor, queueSpots, spawnPoints, FLOOR_EXPANSION_WIDTH } = __m.data_layout;
+const { allDishes, dishById, dishCost, cuisineOf, nextId, initObject, numberTables, courseSlot, menuLimits, drinkById } = __m.sim_state;
+const { validateLayout, fits, footprint } = __m.sim_world;
 const round2 = (v) => Math.round(v * 100) / 100;
 
 // ---------------------------------------------------------------- stock
@@ -1345,7 +1867,9 @@ function canSpend(state, amount) {
 }
 
 function placeOrder(state, ing, cases, rush = false, now = 0) {
-  if (!ING[ing] || cases <= 0) return { ok: false, reason: 'Nothing to order.' };
+  if (!ING[ing] || !Number.isInteger(cases) || cases <= 0 || cases > 50) return { ok: false, reason: 'Nothing to order.' };
+  if (!ingredientAllowed(state, ing)) return { ok: false, reason: 'Buy the ingredient license in Unlocks first.' };
+  if (isStory(state) && !state.objects.some((o) => o.type === ING[ing].store)) return { ok: false, reason: 'Buy the required storage first.' };
   const price = casePrice(ing, rush) * cases;
   if (!canSpend(state, price)) return { ok: false, reason: 'Not enough cash for that order.' };
   state.cash = round2(state.cash - price);
@@ -1401,7 +1925,7 @@ function menuItemsOn(state, course) {
   return state.menu.dishes.filter((m) => {
     if (!m.on) return false;
     const d = dishById(state, m.id);
-    return d && (!course || courseSlot(d.course) === course) && d.level <= state.rep.level;
+    return d && (!course || courseSlot(d.course) === course) && recipeRequirements(state, d).length === 0;
   });
 }
 
@@ -1482,22 +2006,23 @@ function applyAutofill(state, players = 2) {
 const KITCHEN_TYPES = new Set(['fridge', 'freezer', 'pantry', 'counter', 'board', 'grill', 'pan', 'pot', 'fryer', 'oven', 'well', 'rack', 'sink', 'bin', 'dock']);
 const DINING_TYPES = new Set(['table', 'host']);
 
-function zoneOf(type) {
+function zoneOf(type, state) {
   if (KITCHEN_TYPES.has(type)) return [1, KITCHEN_MAX_Z];
-  if (DINING_TYPES.has(type)) return [6, 13];
+  if (DINING_TYPES.has(type)) return [6, roomSize(state).height - 2];
   return null;
 }
 
-function protectedTile(x, z) {
-  if (SPAWN_POINTS.some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
-  if (QUEUE_SPOTS.some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
-  if (x === FRONT_DOOR.x && z === FRONT_DOOR.z - 1) return true;
+function protectedTile(state, x, z) {
+  const door = frontDoor(state);
+  if (spawnPoints(state).some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
+  if (queueSpots(state).some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
+  if (x === door.x && z === door.z - 1) return true;
   return false;
 }
 
 function footprintFree(state, f, zone, ignoreId) {
   if (!fits(state, f, zone[0], zone[1], ignoreId)) return false;
-  for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) if (protectedTile(f.x + dx, f.z + dz)) return false;
+  for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) if (protectedTile(state, f.x + dx, f.z + dz)) return false;
   return true;
 }
 
@@ -1511,28 +2036,37 @@ function tableSpacingOk(state, f, ignoreId) {
   return true;
 }
 
-function tryMove(state, id, x, z) {
+function placementStatus(state, id, x, z) {
   const o = state.objects.find((q) => q.id === id);
   if (!o) return { ok: false, reason: 'Nothing there.' };
-  const zone = zoneOf(o.type);
-  if (!zone) return { ok: false, reason: 'That one is built in.' };
   if (o.type === 'table' && (o.party || o.dirty)) return { ok: false, reason: 'Clear the table first.' };
   const f = { ...footprint(o), x, z };
-  if (!footprintFree(state, f, zone, id)) return { ok: false, reason: "It doesn't fit there." };
+  if (!Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'Choose a whole floor cell.' };
+  const fullFloor = [LAYOUT_MIN_Z, roomSize(state).height - 2];
+  if (!footprintFree(state, f, fullFloor, id)) return { ok: false, reason: "It doesn't fit there." };
   if (o.type === 'table' && !tableSpacingOk(state, f, id)) return { ok: false, reason: 'Tables need a walkway around them.' };
   const ox = o.x, oz = o.z;
   o.x = x; o.z = z;
-  const v = validateLayout(state, FRONT_DOOR);
-  if (!v.ok) { o.x = ox; o.z = oz; return v; }
+  const result = validateLayout(state, frontDoor(state));
+  o.x = ox; o.z = oz;
+  return result;
+}
+
+function tryMove(state, id, x, z) {
+  const result = placementStatus(state, id, x, z);
+  if (!result.ok) return result;
+  const o = state.objects.find((q) => q.id === id);
+  o.x = x; o.z = z;
   if (o.type === 'table') numberTables(state);
   return { ok: true };
 }
 
 function placeNew(state, o) {
-  const zone = zoneOf(o.type);
+  const zone = zoneOf(o.type, state);
+  const size = roomSize(state);
   const cands = [];
   for (let z = zone[0]; z <= zone[1]; z++) {
-    for (let x = 1; x < 19; x++) cands.push({ x, z });
+    for (let x = 1; x < size.width - 1; x++) cands.push({ x, z });
   }
   if (o.type === 'table') {
     cands.sort((a, b) => (Math.abs(a.z - 9) - Math.abs(b.z - 9)) || (Math.abs(a.x - 10) - Math.abs(b.x - 10)));
@@ -1547,7 +2081,7 @@ function placeNew(state, o) {
     if (!footprintFree(state, f, zone, o.id)) continue;
     if (o.type === 'table' && !tableSpacingOk(state, f, o.id)) continue;
     o.x = c.x; o.z = c.z;
-    if (validateLayout(state, FRONT_DOOR).ok) {
+    if (validateLayout(state, frontDoor(state)).ok) {
       if (o.type === 'table') numberTables(state);
       return true;
     }
@@ -1560,6 +2094,8 @@ function placeNew(state, o) {
 
 function upgradeStatus(state, u) {
   const n = state.upgrades[u.id] || 0;
+  const needs = upgradeRequirements(state, u);
+  if (needs.length) return { can: false, reason: needs.join(' · ') };
   if (n >= u.max) return { can: false, reason: 'Owned' };
   if (u.needs && !state.upgrades[u.needs]) return { can: false, reason: 'Needs ' + UPGRADES.find((x) => x.id === u.needs).name };
   if (state.cash < u.price) return { can: false, reason: 'Not enough cash' };
@@ -1577,6 +2113,7 @@ function buyUpgrade(state, id) {
     initObject(o);
     if (!placeNew(state, o)) return { ok: false, reason: 'No room. Move things around in the layout editor first.' };
   }
+  if (isStory(state) && u.station) state.owned.stations[u.station] = true;
   state.upgrades[id] = (state.upgrades[id] || 0) + 1;
   state.cash = round2(state.cash - u.price);
   state.spentUpgrades = round2((state.spentUpgrades || 0) + u.price);
@@ -1584,6 +2121,7 @@ function buyUpgrade(state, id) {
 }
 
 function buyMarketing(state, id) {
+  if (!isOwned(state, 'features', 'marketing')) return { ok: false, reason: 'Marketing opens at Chef Level 3.' };
   const m = MARKETING.find((x) => x.id === id);
   if (!m) return { ok: false };
   if (state.marketing && state.marketing.days > 0) return { ok: false, reason: 'A campaign is already running.' };
@@ -1599,7 +2137,7 @@ function buyMarketing(state, id) {
 function setPrice(state, id, price, drink = false) {
   const list = drink ? state.menu.drinks : state.menu.dishes;
   const m = list.find((x) => x.id === id);
-  if (!m) return false;
+  if (!m || !Number.isFinite(price)) return false;
   m.price = Math.max(1, Math.min(99, Math.round(price * 2) / 2));
   return true;
 }
@@ -1608,9 +2146,12 @@ function toggleDish(state, id, on, drink = false) {
   const list = drink ? state.menu.drinks : state.menu.dishes;
   const m = list.find((x) => x.id === id);
   if (!m) return { ok: false };
-  if (!drink && on) {
+  if (on) {
+    const needs = drink ? drinkRequirements(state, drinkById(state, id)) : recipeRequirements(state, dishById(state, id));
+    if (needs.length) return { ok: false, reason: 'Needs ' + needs.join(', ') + '.' };
+  }
+  if (!drink && on && !m.on) {
     const d = dishById(state, id);
-    if (d.level > state.rep.level) return { ok: false, reason: `Unlocks at reputation level ${d.level}.` };
     const slot = courseSlot(d.course);
     const lim = menuLimits(state)[slot];
     const used = state.menu.dishes.filter((x) => x.on && courseSlot(dishById(state, x.id).course) === slot).length;
@@ -1636,6 +2177,8 @@ function rateCustom(comps) {
 }
 
 function createDish(state, spec) {
+  if (!isOwned(state, 'features', 'house_dish')) return { ok: false, reason: 'The house-dish creator opens at Chef Level 6.' };
+  if (!spec || !Array.isArray(spec.comps)) return { ok: false, reason: 'Choose the dish ingredients.' };
   const tpl = BUILDER[spec.tpl];
   if (!tpl) return { ok: false, reason: 'Pick a dish type.' };
   const comps = (spec.comps || []).filter((c) => ING[c[0]] && statesOf(c[0]).includes(c[1]) && c[1] !== 'burnt');
@@ -1649,6 +2192,8 @@ function createDish(state, spec) {
   const name = String(spec.name || '').trim().slice(0, 28) || 'House special';
   const all = allDishes(state);
   if (all.some((d) => d.comps.length === comps.length && sameComps(d.comps, comps))) return { ok: false, reason: 'That dish is already on the list.' };
+  const needs = recipeRequirements(state, { id: '', level: 1, custom: true, comps });
+  if (needs.length) return { ok: false, reason: 'Needs ' + needs.join(', ') + '.' };
   const r = rateCustom(comps);
   const id = 'c' + nextId(state, '');
   const dish = { id, name, course, tpl: spec.tpl, comps, fair: r.fair, appeal: r.appeal, level: 1, custom: true };
@@ -1678,9 +2223,9 @@ function fixedCosts(state) {
   const t = state.today;
   const revenue = t.foodRev + t.drinkRev;
   return {
-    rent: M.rent,
-    loan: M.loan,
-    utilities: round2(M.utilities + heat * M.utilityPerStation + (state.upgrades.dishwasher ? 4 : 0)),
+    rent: isStory(state) ? storyRent(state) : M.rent,
+    loan: isStory(state) ? Math.min(state.debt || 0, state.cash < 0 ? 0 : 10) : M.loan,
+    utilities: round2((isStory(state) ? 10 : M.utilities) + heat * M.utilityPerStation + (state.upgrades.dishwasher ? 4 : 0)),
     cardFees: round2(revenue * M.cardFee),
     supplies: round2(t.covers * M.suppliesPerGuest),
     cleaning: round2(t.dirtyLeft * M.cleaningPerPlate),
@@ -1734,6 +2279,8 @@ function closeBooks(state, extra = {}) {
   const gross = round2(revenue - cogs);
   const net = round2(gross - waste - fixedTotal);
   state.cash = round2(state.cash - fixedTotal);
+  if (isStory(state)) state.debt = round2(Math.max(0, state.debt - fixed.loan));
+  const progression = finishProgress(state);
   const ratings = t.ratings;
   const avg = ratings.length ? ratings.reduce((s, x) => s + x, 0) / ratings.length : 0;
   const ticket = t.ticketTimes.length ? t.ticketTimes.reduce((s, x) => s + x, 0) / t.ticketTimes.length : 0;
@@ -1751,6 +2298,7 @@ function closeBooks(state, extra = {}) {
     tips: { ...t.tips }, cold: t.cold, burnt: t.burnt,
     repGain: state.rep.points - t.repStart, repPoints: state.rep.points, level: state.rep.level,
     menu: menuEngineering(state),
+    ...(progression ? { progression, crew: Object.values(t.contributions || {}).map((c) => ({ ...c })) } : {}),
     drinks: Object.entries(t.soldDrinks).map(([id, n]) => ({ id, name: (drinkById(state, id) || { name: id }).name, n })),
     ...extra,
   };
@@ -1767,19 +2315,200 @@ function closeBooks(state, extra = {}) {
   return report;
 }
 
-return { stockCount, shelfLife, addLot, takeStock, returnStock, availableUnits, spoil, casePrice, canSpend, placeOrder, cancelOrder, pendingCases, deliverOrders, avgRating, menuItemsOn, priceIndex, expectedParties, forecastDishes, autofillPlan, applyAutofill, zoneOf, tryMove, upgradeStatus, buyUpgrade, buyMarketing, setPrice, toggleDish, rateCustom, createDish, deleteDish, fixedCosts, menuEngineering, classTip, closeBooks };
+/** Apply a Story unlock after all shared approvals have been checked. */
+function buyUnlock(state, kind, id) {
+  const row = unlockList(state).find((u) => u.kind === kind && u.id === id);
+  if (!row || !row.can) return { ok: false, reason: row?.reason || 'Unknown unlock.' };
+  if (kind === 'areas') return completeChapter(state);
+  if (kind === 'recipes' || kind === 'features') return { ok: false, reason: 'This opens automatically at its Chef Level.' };
+  if (kind === 'stations') {
+    const o = initObject({ id: nextId(state), type: id, x: 0, z: 0 });
+    if (!placeNew(state, o)) return { ok: false, reason: 'No room. Move equipment in the floor planner first.' };
+  }
+  state.owned[kind][id] = true;
+  state.cash = round2(state.cash - row.price);
+  state.spentUpgrades = round2((state.spentUpgrades || 0) + row.price);
+  return { ok: true, layout: kind === 'stations' };
+}
+function completeChapter(state) {
+  const chapter = chapterInfo(state);
+  if (!chapter || !chapter.ready) return { ok: false, reason: chapter?.reason || 'The story is complete.' };
+  state.cash = round2(state.cash - chapter.price);
+  state.spentUpgrades = round2((state.spentUpgrades || 0) + chapter.price);
+  if (chapter.area) {
+    state.owned.areas[chapter.area] = true;
+    state.building.width += FLOOR_EXPANSION_WIDTH;
+  }
+  state.chapter++;
+  state.chapterDay = state.day;
+  awardXP(state, 150, 'Chapter goal');
+  const next = CHAPTERS[state.chapter - 1];
+  return { ok: true, layout: !!chapter.area, chapter: next ? { chapter: next.id, title: next.title, text: next.text } : { chapter: 5, title: 'A place worth keeping', text: 'The final review is in: a small counter has become a restaurant the town trusts. The story is complete. Keep serving, redesign the room, and earn prestige stars.' } };
+}
+
+return { stockCount, shelfLife, addLot, takeStock, returnStock, availableUnits, spoil, casePrice, canSpend, placeOrder, cancelOrder, pendingCases, deliverOrders, avgRating, menuItemsOn, priceIndex, expectedParties, forecastDishes, autofillPlan, applyAutofill, zoneOf, placementStatus, tryMove, upgradeStatus, buyUpgrade, buyMarketing, setPrice, toggleDish, rateCustom, createDish, deleteDish, fixedCosts, menuEngineering, classTip, closeBooks, buyUnlock, completeChapter };
+})();
+
+// ---- src/sim/crowd.js ----
+__m.sim_crowd = (() => {
+// Guest movement uses the same floor grid as chefs, with space for each person.
+const { CFG } = __m.config;
+const { findPath, seatsOf, walkable } = __m.sim_world;
+const SEATED = new Set(['browsing', 'ordering', 'waitingFood', 'eating', 'dessertReady', 'dessertWait', 'dessertEat', 'paying']);
+const TURNS = [0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.6, -1.6];
+
+function clearFloor(grid, x, z, radius) {
+  for (let iz = Math.floor(z - radius); iz <= Math.floor(z + radius); iz++) {
+    for (let ix = Math.floor(x - radius); ix <= Math.floor(x + radius); ix++) {
+      if (walkable(grid, ix, iz)) continue;
+      const dx = x - Math.max(ix, Math.min(x, ix + 1));
+      const dz = z - Math.max(iz, Math.min(z, iz + 1));
+      if (dx * dx + dz * dz < radius * radius - 1e-8) return false;
+    }
+  }
+  return true;
+}
+
+function clearLine(grid, a, b, radius) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.2));
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    if (!clearFloor(grid, a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, radius)) return false;
+  }
+  return true;
+}
+
+function distanceToSegment(a, b, p) {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
+  return Math.hypot(p.x - a.x - dx * t, p.z - a.z - dz * t);
+}
+
+function guestGrid(sim, party, guest) {
+  if (!['seating', 'leaving'].includes(party.state)) return sim.grid;
+  const table = sim.state.objects.find((o) => o.id === party.table);
+  const seat = table && seatsOf(table)[guest.seat];
+  if (!seat) return sim.grid;
+  // Only this guest may cross their chair tile to sit down or get up.
+  const blocked = sim.grid.blocked.slice();
+  blocked[seat.tile[1] * sim.grid.width + seat.tile[0]] = 0;
+  return { ...sim.grid, blocked };
+}
+
+function targetOf(actor, actors) {
+  const g = actor.g, radius = CFG.party.radius;
+  while (g.path.length && Math.hypot(g.path[0].x - g.x, g.path[0].z - g.z) < 0.06) g.path.shift();
+  // Do not force everyone through the same tile center on open floor.
+  while (g.path.length > 1 && clearLine(actor.grid, g, g.path[1], radius)
+    && actors.every((other) => other === actor || other.g.exited || distanceToSegment(g, g.path[1], other.g) >= radius * 2)) g.path.shift();
+  if (g.path.length) return g.path[0];
+  if (g.tx == null) return null;
+  if (Math.hypot(g.tx - g.x, g.tz - g.z) < 0.04) {
+    g.tx = null; g.tz = null;
+    return null;
+  }
+  return { x: g.tx, z: g.tz };
+}
+
+function reroute(actor, actors) {
+  const g = actor.g;
+  if (g.tx == null) return;
+  const blocked = actor.grid.blocked.slice();
+  const others = actors.filter((other) => other !== actor && !other.g.exited);
+  for (const other of others) {
+    const x = Math.floor(other.g.x), z = Math.floor(other.g.z);
+    blocked[z * actor.grid.width + x] = 1;
+  }
+  const grid = { ...actor.grid, blocked }, radius = CFG.party.radius;
+  const clear = (point) => clearLine(actor.grid, g, point, radius)
+    && others.every((other) => distanceToSegment(g, point, other.g) >= radius * 2 - 1e-6);
+  let best = null, cost = Infinity;
+  // A guest can share a tile with someone at its far edge. Choose an escape
+  // from the actual body position before asking tile pathfinding for a route.
+  for (let z = Math.floor(g.z) - 1; z <= Math.floor(g.z) + 1; z++) {
+    for (let x = Math.floor(g.x) - 1; x <= Math.floor(g.x) + 1; x++) {
+      const start = { x: x + 0.5, z: z + 0.5 };
+      if (!walkable(grid, x, z) || !clear(start)) continue;
+      const path = findPath(grid, start.x, start.z, g.tx, g.tz);
+      if (!path) continue;
+      const distance = Math.hypot(start.x - g.x, start.z - g.z) + path.length;
+      if (distance < cost) { cost = distance; best = [start, ...path]; }
+    }
+  }
+  if (best) g.path = best;
+}
+
+function move(actor, actors, dt) {
+  const g = actor.g, motion = actor.motion, radius = CFG.party.radius;
+  const target = targetOf(actor, actors);
+  if (!target) return;
+  const dx = target.x - g.x, dz = target.z - g.z, distance = Math.hypot(dx, dz);
+  const step = Math.min(distance, CFG.party.walkSpeed * dt);
+  const angle = Math.atan2(dx, dz);
+  let best = null, bestScore = -Infinity;
+  const neighbors = actors.filter((other) => other !== actor && !other.g.exited && Math.hypot(other.g.x - g.x, other.g.z - g.z) < 2);
+  const blocker = neighbors.find((other) => other.g.id < g.id && (other.g.x - g.x) * dx + (other.g.z - g.z) * dz > 0 && Math.hypot(other.g.x - g.x, other.g.z - g.z) < radius * 2 + 0.3);
+  const yielding = motion.stuck > 0.45 && blocker && !blocker.fixed;
+  for (const turn of yielding ? [1.6, -1.6, 2.2, -2.2, Math.PI] : TURNS) {
+    const a = angle + turn;
+    const next = { x: g.x + Math.sin(a) * step, z: g.z + Math.cos(a) * step };
+    if (!clearFloor(actor.grid, next.x, next.z, radius)) continue;
+    if (neighbors.some((other) => distanceToSegment(g, next, other.g) < radius * 2 - 1e-6)) continue;
+    let score = distance - Math.hypot(target.x - next.x, target.z - next.z);
+    // Pass on the right. A small bias prevents head-on pairs choosing the same side.
+    score -= Math.abs(turn) * step * 0.04 + (turn < 0 ? step * 0.02 : 0);
+    if (yielding) score = Math.hypot(next.x - blocker.g.x, next.z - blocker.g.z) - Math.hypot(g.x - blocker.g.x, g.z - blocker.g.z);
+    if (score > bestScore) { bestScore = score; best = next; }
+  }
+  if (best) {
+    const progress = distance - Math.hypot(target.x - best.x, target.z - best.z);
+    g.rot = Math.atan2(best.x - g.x, best.z - g.z);
+    g.x = best.x; g.z = best.z; g.moving = true;
+    motion.stuck = progress > step * 0.2 ? 0 : motion.stuck + dt;
+  } else motion.stuck += dt;
+  motion.repath -= dt;
+  const blockedRoute = neighbors.some((other) => distanceToSegment(g, target, other.g) < radius * 2);
+  if ((motion.stuck > 0.25 || blockedRoute) && motion.repath <= 0) {
+    reroute(actor, actors);
+    motion.repath = 0.5;
+  }
+}
+
+function moveGuests(sim, dt) {
+  const actors = [];
+  for (const party of sim.state.parties) for (const g of party.guests) {
+    g.moving = false;
+    if (g.exited || party.gone) continue;
+    if (!sim.guestMotion.has(g.id)) sim.guestMotion.set(g.id, { stuck: 0, repath: 0 });
+    actors.push({ g, party, fixed: SEATED.has(party.state), grid: guestGrid(sim, party, g), motion: sim.guestMotion.get(g.id) });
+  }
+  const live = new Set(actors.map(({ g }) => g.id));
+  for (const id of sim.guestMotion.keys()) if (!live.has(id)) sim.guestMotion.delete(id);
+  // Small steps stop guests crossing through each other during a long frame.
+  const steps = Math.max(1, Math.ceil(dt / (1 / 30))), step = dt / steps;
+  for (let i = 0; i < steps; i++) for (const actor of actors) {
+    if (actor.fixed || actor.g.exited) continue;
+    move(actor, actors, step);
+    if (actor.party.state === 'leaving' && !targetOf(actor, actors)) actor.g.exited = true;
+  }
+}
+
+return { moveGuests };
 })();
 
 // ---- src/sim/guests.js ----
-__m.guests = (() => {
+__m.sim_guests = (() => {
 // Parties: arrival, the queue, seating, ordering, eating, paying, reviews.
+const { isStory, drinkRequirements } = __m.data_progression;
+const { awardXP, paidProgress, creditWork } = __m.sim_progression;
 const { CFG } = __m.config;
-const { QUEUE_SPOTS, FRONT_DOOR } = __m.layout;
-const { ING } = __m.ingredients;
-const { dishById, drinkById, dishVeg, courseSlot, repLevel, nextId } = __m.state;
-const { findPath, seatsOf, walkable } = __m.world;
-const { availableUnits, menuItemsOn } = __m.economy;
-const { matchDish, plateQuality, itemCost } = __m.items;
+const { queueSpots, frontDoor } = __m.data_layout;
+const { ING } = __m.data_ingredients;
+const { dishById, drinkById, dishVeg, courseSlot, repLevel, nextId } = __m.sim_state;
+const { findPath, seatsOf, walkable } = __m.sim_world;
+const { availableUnits, menuItemsOn } = __m.sim_economy;
+const { moveGuests } = __m.sim_crowd;
+const { matchDish, plateQuality, itemCost } = __m.sim_items;
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1805,32 +2534,73 @@ function goTo(sim, g, x, z) {
   g.tx = x; g.tz = z;
 }
 
-function moveGuest(g, dt, speed) {
-  let budget = speed * dt;
-  while (budget > 0) {
-    let target = g.path.length ? g.path[0] : (g.tx != null ? { x: g.tx, z: g.tz } : null);
-    if (!target) break;
-    const dx = target.x - g.x, dz = target.z - g.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 1e-3) {
-      if (g.path.length) g.path.shift(); else { g.tx = null; g.tz = null; }
-      continue;
-    }
-    const step = Math.min(d, budget);
-    g.x += (dx / d) * step;
-    g.z += (dz / d) * step;
-    g.rot = Math.atan2(dx, dz);
-    budget -= step;
-    g.moving = true;
-    if (step >= d) {
-      if (g.path.length) g.path.shift(); else { g.tx = null; g.tz = null; }
-    }
-  }
-}
-
 function arrived(g) { return !g.path.length && g.tx == null; }
 
 // ------------------------------------------------------------ spawning
+
+const GUEST_SPACING = 0.8;
+
+function guestPointClear(sim, point) {
+  const r = CFG.party.radius;
+  for (let z = Math.floor(point.z - r); z <= Math.floor(point.z + r); z++) {
+    for (let x = Math.floor(point.x - r); x <= Math.floor(point.x + r); x++) {
+      if (walkable(sim.grid, x, z)) continue;
+      const dx = point.x - clamp(point.x, x, x + 1), dz = point.z - clamp(point.z, z, z + 1);
+      if (dx * dx + dz * dz < r * r) return false;
+    }
+  }
+  return true;
+}
+
+/** Reachable tile centers keep the queue clear of moved furniture. */
+function reachableFloorSpots(grid, door) {
+  const width = grid.width;
+  const todo = [{ x: door.x, z: door.z }], seen = new Set([door.z * width + door.x]), spots = [];
+  for (let i = 0; i < todo.length; i++) {
+    const tile = todo[i];
+    if (walkable(grid, tile.x, tile.z)) spots.push({ x: tile.x + 0.5, z: tile.z + 0.5 });
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = tile.x + dx, z = tile.z + dz, key = z * width + x;
+      if (seen.has(key) || !walkable(grid, x, z)) continue;
+      seen.add(key);
+      todo.push({ x, z });
+    }
+  }
+  return spots;
+}
+
+function guestFloorSpots(sim) { return reachableFloorSpots(sim.grid, frontDoor(sim.state)); }
+
+function queuePositions(sim) {
+  const door = frontDoor(sim.state), anchors = queueSpots(sim.state);
+  const score = (point) => Math.min(...anchors.map((s) => (s.x - point.x) ** 2 + (s.z - point.z) ** 2));
+  const floor = guestFloorSpots(sim);
+  const candidates = floor
+    .filter((s) => s.z >= 6 && s.z < door.z && Math.floor(s.x) !== door.x)
+    .sort((a, b) => score(a) - score(b) || b.z - a.z || a.x - b.x);
+  const grid = { ...sim.grid, blocked: sim.grid.blocked.slice() }, spots = [];
+  const cell = (point) => Math.floor(point.z) * grid.width + Math.floor(point.x);
+  const hasApproach = (point, reachable) => [-1, 1, -grid.width, grid.width].some((offset) => reachable.has(cell(point) + offset));
+  const chairs = sim.state.objects.filter((o) => o.type === 'table').flatMap(seatsOf);
+  for (const point of candidates) {
+    grid.blocked[cell(point)] = 1;
+    const reachable = new Set(reachableFloorSpots(grid, door).map(cell));
+    // A waiting guest must not cut a route through the room or block access
+    // to another queue cell or a chair, including seats along the front wall.
+    if (reachable.size !== floor.length - spots.length - 1 || !hasApproach(point, reachable)
+      || spots.some((spot) => !hasApproach(spot, reachable)) || chairs.some((chair) => !hasApproach(chair, reachable))) {
+      grid.blocked[cell(point)] = 0;
+      continue;
+    }
+    spots.push(point);
+    if (spots.length === CFG.queueMax * 4) break;
+  }
+  return spots;
+}
+
+function spacedFrom(point, others) {
+  return others.every((other) => Math.hypot(point.x - other.x, point.z - other.z) >= GUEST_SPACING - 1e-6);
+}
 
 function rollSize(maxSeats) {
   const r = Math.random();
@@ -1840,11 +2610,27 @@ function rollSize(maxSeats) {
 
 function spawnParty(sim, opts = {}) {
   const S = sim.state;
+  const door = frontDoor(S);
   const waiting = S.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
   if (waiting.length >= CFG.queueMax) { S.today.turnedAway++; return null; }
   const maxSeats = Math.max(...S.objects.filter((o) => o.type === 'table').map((t) => t.seats), 2);
-  const critic = opts.critic ?? (S.day >= 3 && Math.random() < 0.035);
+  const critic = opts.critic ?? (isStory(S) ? S.chapter === 3 && !S.storyStats.criticPassed && !S.today.criticVisited : S.day >= 3 && Math.random() < 0.035);
   const size = critic ? 1 : opts.size || rollSize(maxSeats);
+  const queue = queuePositions(sim);
+  const occupied = S.parties.flatMap((p) => p.guests.filter((g) => !g.exited));
+  const spawn = [];
+  const entrance = { x: door.x + 0.5, z: door.z + 0.5 };
+  const candidates = [entrance, ...queue].sort((a, b) => Math.hypot(a.x - entrance.x, a.z - entrance.z) - Math.hypot(b.x - entrance.x, b.z - entrance.z));
+  for (const point of candidates) {
+    if (!guestPointClear(sim, point) || !spacedFrom(point, occupied) || !spacedFrom(point, spawn)) continue;
+    spawn.push(point);
+    if (spawn.length === size) break;
+  }
+  if (queue.length < waiting.reduce((n, p) => n + p.guests.length, 0) + size || spawn.length < size) {
+    S.today.turnedAway++;
+    return null;
+  }
+  if (critic && isStory(S)) S.today.criticVisited = true;
   const r = Math.random();
   const kind = critic ? 'critic' : r < 0.3 ? 'budget' : r < 0.8 ? 'regular' : 'foodie';
   const decor = (S.upgrades.decor1 ? 4 : 0) + (S.upgrades.decor2 ? 4 : 0) + (S.upgrades.decor3 ? 4 : 0);
@@ -1856,7 +2642,7 @@ function spawnParty(sim, opts = {}) {
   };
   for (let i = 0; i < size; i++) {
     party.guests.push({
-      id: party.id + 'g' + i, x: FRONT_DOOR.x + 0.5 + rand(-0.2, 0.2), z: FRONT_DOOR.z + 0.4, rot: Math.PI,
+      id: party.id + 'g' + i, x: spawn[i].x, z: spawn[i].z, rot: Math.PI,
       path: [], tx: null, tz: null, seat: -1, look: guestLook(critic && i === 0), veg: Math.random() < 0.12,
       eating: false,
     });
@@ -1865,21 +2651,47 @@ function spawnParty(sim, opts = {}) {
   S.today.parties++;
   S.today.covers += size;
   assignQueue(sim);
-  sim.emit({ type: 'sfx', name: 'door', x: FRONT_DOOR.x, z: FRONT_DOOR.z });
+  sim.emit({ type: 'sfx', name: 'door', x: door.x, z: door.z });
   if (critic) sim.emit({ type: 'toast', text: 'A food critic just walked in. Make it count.', kind: 'warn' });
   return party;
 }
 
-/** Gives every waiting party a queue spot in arrival order. */
+/** Keep guests near their current positions and leave a passage from the door. */
 function assignQueue(sim) {
+  const spots = queuePositions(sim);
   const q = sim.state.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
+  const guests = q.flatMap((p) => p.guests.filter((g) => !g.exited));
+  const pending = [...guests], targets = new Map();
+  // Assign the closest guest/cell pairs first. A guest already in a good cell
+  // keeps it instead of crossing the queue when another party arrives.
+  while (pending.length && spots.length) {
+    let bestGuest = -1, bestSpot = -1, distance = Infinity;
+    for (let i = 0; i < pending.length; i++) for (let j = 0; j < spots.length; j++) {
+      const guest = pending[i], point = spots[j];
+      if (!spacedFrom(point, guests.filter((other) => other !== guest))) continue;
+      const d = (guest.x - point.x) ** 2 + (guest.z - point.z) ** 2;
+      if (d < distance) { distance = d; bestGuest = i; bestSpot = j; }
+    }
+    if (bestGuest < 0) break;
+    targets.set(pending[bestGuest], spots[bestSpot]);
+    pending.splice(bestGuest, 1);
+    spots.splice(bestSpot, 1);
+  }
   q.forEach((p, i) => {
-    if (p.spot === i) return;
     p.spot = i;
-    const s = QUEUE_SPOTS[Math.min(i, QUEUE_SPOTS.length - 1)];
-    p.guests.forEach((g, k) => {
-      const ox = ((k % 2) - 0.5) * 0.36, oz = (k >> 1) * 0.3 - 0.15;
-      goTo(sim, g, s.x + ox, s.z + oz);
+    p.guests.forEach((g) => {
+      const s = targets.get(g);
+      if (!s) { g.path = []; g.tx = null; g.tz = null; return; }
+      if (g.tx !== s.x || g.tz !== s.z) {
+        goTo(sim, g, s.x, s.z);
+        const blocked = sim.grid.blocked.slice();
+        for (const party of sim.state.parties) for (const other of party.guests) {
+          if (other === g || other.exited) continue;
+          blocked[Math.floor(other.z) * sim.grid.width + Math.floor(other.x)] = 1;
+        }
+        const path = findPath({ ...sim.grid, blocked }, g.x, g.z, s.x, s.z);
+        if (path) g.path = path;
+      }
     });
   });
   sim.state.today.peakQueue = Math.max(sim.state.today.peakQueue, q.length);
@@ -1968,7 +2780,7 @@ function orderable(state, slot) {
 }
 
 function pickDrink(state) {
-  const on = state.menu.drinks.filter((d) => d.on);
+  const on = state.menu.drinks.filter((d) => d.on && !drinkRequirements(state, drinkById(state, d.id)).length);
   if (!on.length) return null;
   const w = on.map((m) => { const d = drinkById(state, m.id); return Math.pow(d.price / m.price, 1.6); });
   let r = Math.random() * w.reduce((s, x) => s + x, 0);
@@ -2017,7 +2829,7 @@ function takeOrder(sim, party, pid) {
   party.server = pid;
   S.ticketSeq = (S.ticketSeq || 0) + 1;
   party.ticket = S.ticketSeq;
-  party.grace = CFG.party.foodGrace + 12 * party.size;
+  party.grace = CFG.party.foodGrace + CFG.party.gracePerDish * items.length;
   sim.emit({ type: 'sfx', name: 'ticket' });
   sim.emit({ type: 'ticket', party: party.id });
 }
@@ -2038,7 +2850,7 @@ function takeDessertOrder(sim, party) {
   party.t = 0;
   party.workP = 0;
   party.dessertAt = sim.time;
-  party.grace = 60 + 10 * items.length;
+  party.grace = 60 + CFG.party.gracePerDish * items.length;
   S.ticketSeq = (S.ticketSeq || 0) + 1;
   party.ticket = S.ticketSeq;
   sim.emit({ type: 'sfx', name: 'ticket' });
@@ -2082,6 +2894,7 @@ function serveTo(sim, pid, table, item, dry) {
     if (!d) return dry ? { blocked: p.drinks.some((x) => !x.served) ? "They didn't order that drink" : 'No drinks needed here' } : null;
     if (dry) return 'Serve ' + drinkById(S, item.id).name.toLowerCase();
     d.served = true;
+    creditWork(S, pid, 'served');
     S.today.cogsDrink = round2(S.today.cogsDrink + (item.cost || 0));
     S.today.soldDrinks[item.id] = (S.today.soldDrinks[item.id] || 0) + 1;
     p.mood = Math.min(100, p.mood + 3);
@@ -2101,6 +2914,10 @@ function serveTo(sim, pid, table, item, dry) {
   line.served = true;
   line.q = q;
   line.cold = cold;
+  line.late = p.t > p.grace;
+  line.course = dish.course;
+  creditWork(S, pid, 'served');
+  creditWork(S, item.platedBy || pid, 'plated');
   const cost = itemCost(item);
   S.today.cogsFood = round2(S.today.cogsFood + cost);
   const sold = S.today.sold[id] || (S.today.sold[id] = { n: 0, rev: 0, cost: 0 });
@@ -2112,6 +2929,7 @@ function serveTo(sim, pid, table, item, dry) {
   table.served = table.served || [];
   table.served.push({ dish: id, tpl: dish.tpl, seat: guestSeat(p, line.guest) });
   sim.emit({ type: 'sfx', name: 'serve', x: table.x + 1, z: table.z + 1 });
+  sim.emit({ type: 'served', x: table.x + (table.seats === 4 ? 1 : 1.5), z: table.z + (table.seats === 4 ? 1.5 : 0.5), cold, great: q > 0.95 && !cold });
   if (!p.items.some((x) => !x.served)) {
     const waited = sim.time - (p.state === 'dessertWait' ? p.dessertAt : p.orderedAt);
     S.today.ticketTimes.push(waited);
@@ -2164,6 +2982,8 @@ function clearPlates(sim, party) {
 }
 
 function pay(sim, party, pid) {
+  if (party.settled) return;
+  party.settled = true;
   const S = sim.state;
   const food = party.items.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
   const drinks = party.drinks.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
@@ -2183,6 +3003,7 @@ function pay(sim, party, pid) {
     S.tipJar = S.tipJar || {};
     S.tipJar[who] = round2((S.tipJar[who] || 0) + tip);
   }
+  paidProgress(S, party);
   party.paid = bill;
   party.tip = tip;
   sim.emit({ type: 'sfx', name: 'cash' });
@@ -2209,7 +3030,8 @@ function leave(sim, party, paid) {
   party.state = 'leaving';
   party.t = 0;
   party.leader = null;
-  party.guests.forEach((g) => { g.eating = false; goTo(sim, g, FRONT_DOOR.x + 0.5, FRONT_DOOR.z + 0.5); });
+  const door = frontDoor(S);
+  party.guests.forEach((g) => { g.eating = false; goTo(sim, g, door.x + 0.5, door.z + 0.5); });
   assignQueue(sim);
 }
 
@@ -2231,6 +3053,8 @@ const LINES = {
 };
 
 function review(sim, party, paid) {
+  if (party.reviewed) return;
+  party.reviewed = true;
   const S = sim.state;
   const served = party.items.filter((x) => x.served);
   const q = served.length ? served.reduce((s, x) => s + (x.q ?? 1), 0) / served.length : 0.5;
@@ -2269,15 +3093,18 @@ function review(sim, party, paid) {
   S.rep.ratings.push(stars);
   if (S.rep.ratings.length > CFG.rep.window) S.rep.ratings.shift();
   S.today.ratings.push(stars);
+  if (isStory(S) && paid && party.items.some((x) => x.served && x.price > 0)) {
+    awardXP(S, stars === 5 ? 30 : stars === 4 ? 15 : 0, 'Guest reviews');
+    if (party.kind === 'critic' && stars >= 4) S.storyStats.criticPassed = true;
+  }
   const r = { day: S.day, stars, text, name: party.name, critic: party.kind === 'critic', size: party.size };
+  const rt = S.objects.find((o) => o.id === party.table);
+  const at = rt ? { x: rt.x + (rt.seats === 4 ? 1 : 1.5), z: rt.z + (rt.seats === 4 ? 1.5 : 0.5) } : queueSpots(S)[0];
   S.reviews.unshift(r);
   if (S.reviews.length > 30) S.reviews.pop();
-  sim.emit({ type: 'review', review: r });
+  sim.emit({ type: 'review', review: r, x: at.x, z: at.z });
   const lv = repLevel(S.rep.points);
-  if (lv > S.rep.level) {
-    S.rep.level = lv;
-    sim.onLevelUp(lv);
-  }
+  S.rep.level = lv;
 }
 
 // ------------------------------------------------------------ per tick
@@ -2285,7 +3112,6 @@ function review(sim, party, paid) {
 function updateParties(sim, dt) {
   const S = sim.state;
   const P = CFG.party;
-  const speed = P.walkSpeed;
   for (const p of S.parties) {
     p.t += dt;
     const drain = (rate = 1) => { p.mood -= P.drain * rate * dt; };
@@ -2295,7 +3121,7 @@ function updateParties(sim, dt) {
         break;
       case 'waiting': {
         const waited = sim.time - p.arrivedAt;
-        if (waited > P.queuePatience) drain(1);
+        if (waited > P.queuePatience) p.mood -= P.queueDrain * dt;
         if (p.mood <= 0) { p.queued = waited; S.today.walkouts++; review(sim, p, false); sendHome(sim, p); sim.emit({ type: 'toast', text: 'A party gave up waiting for a table.', kind: 'bad' }); }
         break;
       }
@@ -2307,18 +3133,25 @@ function updateParties(sim, dt) {
         if (p.retarget <= 0) {
           p.retarget = 0.35;
           const fx = Math.sin(pl.rot), fz = Math.cos(pl.rot);
-          p.guests.forEach((g, i) => {
-            const back = 0.85 + i * 0.5;
-            let tx = pl.x - fx * back, tz = pl.z - fz * back;
-            const tix = Math.floor(tx), tiz = Math.floor(tz);
-            if (!walkable(sim.grid, tix, tiz)) { tx = pl.x; tz = pl.z; }
-            if (Math.hypot(tx - g.x, tz - g.z) > 0.5) goTo(sim, g, tx, tz);
+          const floor = guestFloorSpots(sim), reserved = [{ x: pl.x, z: pl.z }];
+          p.guests.filter((g) => !g.exited).forEach((g, i) => {
+            const back = 0.95 + i * 0.85;
+            const desired = { x: pl.x - fx * back, z: pl.z - fz * back };
+            const score = (point) => (point.x - desired.x) ** 2 + (point.z - desired.z) ** 2
+              + Math.max(0, (point.x - pl.x) * fx + (point.z - pl.z) * fz) * 2;
+            const candidates = [desired, ...floor].sort((a, b) => score(a) - score(b));
+            const target = candidates.find((point) => guestPointClear(sim, point) && spacedFrom(point, reserved)
+              && findPath(sim.grid, g.x, g.z, point.x, point.z) !== null);
+            if (!target) { reserved.push(g); return; }
+            reserved.push(target);
+            if (Math.hypot(target.x - g.x, target.z - g.z) > 0.15) goTo(sim, g, target.x, target.z);
+            else { g.path = []; g.tx = null; g.tz = null; }
           });
         }
         break;
       }
       case 'seating':
-        if (p.guests.every(arrived) || p.t > 10) {
+        if (p.guests.every(arrived) || p.t > P.seatingTimeout) {
           const t = S.objects.find((o) => o.id === p.table);
           if (t) {
             const seats = seatsOf(t);
@@ -2371,11 +3204,8 @@ function updateParties(sim, dt) {
         if (p.guests.every(arrived) || p.t > 20) p.gone = true;
         break;
     }
-    for (const g of p.guests) {
-      g.moving = false;
-      if (p.state !== 'browsing' && p.state !== 'ordering' && !['waitingFood', 'eating', 'dessertReady', 'dessertWait', 'dessertEat', 'paying'].includes(p.state)) moveGuest(g, dt, speed);
-    }
   }
+  moveGuests(sim, dt);
   const before = S.parties.length;
   S.parties = S.parties.filter((p) => !p.gone);
   if (S.parties.length !== before) assignQueue(sim);
@@ -2386,29 +3216,42 @@ function compRemaining(p) {
 }
 
 function sendHome(sim, p) {
+  const door = frontDoor(sim.state);
   p.state = 'leaving';
   p.t = 0;
-  p.guests.forEach((g) => goTo(sim, g, FRONT_DOOR.x + 0.5, FRONT_DOOR.z + 0.5));
+  p.guests.forEach((g) => goTo(sim, g, door.x + 0.5, door.z + 0.5));
   assignQueue(sim);
 }
 
-function spawnRate(sim) {
-  const S = sim.state;
-  if (S.phase !== 'service' || S.clock >= CFG.doorsLock) return 0;
-  const hour = Math.floor((S.clock - CFG.serviceStart) / 60);
-  const H = CFG.traffic.hourly;
-  const w = H[Math.max(0, Math.min(H.length - 1, hour))];
-  const sumW = H.reduce((s, x) => s + x, 0);
-  const realPerHour = CFG.serviceRealSeconds / ((CFG.serviceEnd - CFG.serviceStart) / 60);
-  // Expected parties this hour, spread over the real seconds of the hour.
-  return (S.today.expected * (w / sumW)) / realPerHour;
+/** Arrival times (game minutes) for today, spread by the hourly curve with a minimum gap. */
+function buildSchedule(expected, players) {
+  const T = CFG.traffic;
+  const n = Math.max(3, Math.round(expected + (Math.random() - 0.5) * 2));
+  const H = T.hourly;
+  const hours = (CFG.doorsLock - CFG.serviceStart) / 60;
+  const w = H.map((x, i) => x * Math.max(0, Math.min(1, hours - i)));
+  const sum = w.reduce((s, x) => s + x, 0);
+  const at = (u) => {
+    let acc = 0;
+    for (let i = 0; i < w.length; i++) {
+      if (acc + w[i] >= u * sum) return CFG.serviceStart + (i + (u * sum - acc) / w[i]) * 60;
+      acc += w[i];
+    }
+    return CFG.doorsLock - 1;
+  };
+  const gap = players <= 1 ? T.minGap.solo : T.minGap.duo;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(at((i + 0.15 + Math.random() * 0.7) / n));
+  out.sort((a, b) => a - b);
+  for (let i = 1; i < out.length; i++) if (out[i] - out[i - 1] < gap) out[i] = out[i - 1] + gap * (0.85 + Math.random() * 0.3);
+  return out.filter((t) => t < CFG.doorsLock).map((t) => Math.round(t * 10) / 10);
 }
 
-return { guestLook, spawnParty, waitingParty, followingParty, greet, canSeat, seatAt, orderable, takeOrder, tableNum, tableWork, serveTo, compItem, leave, updateParties, sendHome, spawnRate };
+return { guestLook, spawnParty, waitingParty, followingParty, greet, canSeat, seatAt, orderable, takeOrder, tableNum, tableWork, serveTo, compItem, pay, leave, updateParties, sendHome, buildSchedule };
 })();
 
 // ---- src/sim/kitchen.js ----
-__m.kitchen = (() => {
+__m.sim_kitchen = (() => {
 // Everything a chef can do with E (grab / place / serve), Space (chop, wash,
 // take orders, settle bills) and Q (grab another of the last thing taken
 // from a store), plus the stations cooking on their own.
@@ -2416,14 +3259,17 @@ __m.kitchen = (() => {
 // Each action runs in two modes: dry (returns the prompt text, changes
 // nothing) and live (does it). The HUD prompt and the real action can never
 // disagree because they are the same code.
+const { ingredientAllowed, drinkRequirements } = __m.data_progression;
+const { creditWork } = __m.sim_progression;
 const { CFG } = __m.config;
-const { ING, stateInfo, stepFor } = __m.ingredients;
-const { HEAT_TYPES, STORE_TYPES, STATION_NAMES } = __m.layout;
-const { W, H } = __m.world;
-const { drinkById } = __m.state;
-const { ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts, stationCapacity, PLATE_MAX } = __m.items;
-const { addLot, stockCount, takeStock, returnStock, shelfLife } = __m.economy;
-const { greet, followingParty, seatAt, serveTo, tableWork, waitingParty } = __m.guests;
+const { ING, stateInfo, stepFor } = __m.data_ingredients;
+const { HEAT_TYPES, STORE_TYPES, STATION_NAMES } = __m.data_layout;
+const { ALLEY_SPAWN, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, cookingMultiplier, playerArea, areaObjects } = __m.data_alley;
+const { drinkById, addTrash, returnTrashBag } = __m.sim_state;
+const { buildGrid, walkable } = __m.sim_world;
+const { ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts, stationCapacity, PLATE_MAX } = __m.sim_items;
+const { addLot, stockCount, takeStock, returnStock, shelfLife } = __m.sim_economy;
+const { greet, followingParty, seatAt, serveTo, tableWork, waitingParty } = __m.sim_guests;
 const round2 = (v) => Math.round(v * 100) / 100;
 const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 
@@ -2431,6 +3277,9 @@ function objById(state, id) { return state.objects.find((o) => o.id === id) || n
 
 /** The object a chef is facing within reach, preferring what is straight ahead. */
 function findTarget(state, grid, p) {
+  const area = playerArea(p);
+  if (grid.area !== area) grid = buildGrid(state, area);
+  const { width: W, height: H } = grid;
   const fx = Math.sin(p.rot), fz = Math.cos(p.rot);
   const reach = CFG.move.reach;
   let best = null, bs = Infinity;
@@ -2447,12 +3296,13 @@ function findTarget(state, grid, p) {
       const ccx = x + 0.5 - p.x, ccz = z + 0.5 - p.z;
       const cd = Math.hypot(ccx, ccz) || 1;
       const dot = (ccx * fx + ccz * fz) / cd;
-      if (dot < 0.15) continue;
+      // Prefer what is in front; fall back to anything right next to us.
+      if (dot < 0.15 && d > 0.75) continue;
       const s = d - dot * 0.9;
       if (s < bs) { bs = s; best = id; }
     }
   }
-  return best ? objById(state, best) : null;
+  return best ? areaObjects(state, area).find((o) => o.id === best) || null : null;
 }
 
 function rack(state) { return state.objects.find((o) => o.type === 'rack'); }
@@ -2474,6 +3324,35 @@ function waste(ctx, it, why = 'binned') {
   if (c > 0) ctx.state.today.waste[why] = round2(ctx.state.today.waste[why] + c);
   if (it && it.k === 'ing' && it.st === 'burnt') ctx.state.today.burnt++;
   if (it && it.k === 'plate') for (const x of it.items) if (x.st === 'burnt') ctx.state.today.burnt++;
+  addTrash(ctx.state, trashUnits(it));
+}
+
+function trashUnits(it) {
+  if (!it) return 0;
+  if (it.k === 'ing') return it.n || 1;
+  if (it.k === 'plate') return it.items.reduce((n, item) => n + trashUnits(item), 0);
+  if (it.k === 'drink' || it.k === 'box') return 1;
+  return 0;
+}
+
+function changeArea(ctx, p) {
+  const area = playerArea(p) === 'alley' ? 'restaurant' : 'alley';
+  let spawn = ALLEY_SPAWN;
+  if (area === 'restaurant') {
+    const grid = ctx.grid;
+    let best = null, distance = Infinity;
+    // Old saves can have furniture in front of the back door.
+    for (let z = 1; z < grid.height - 1; z++) for (let x = 1; x < grid.width - 1; x++) {
+      if (!walkable(grid, x, z)) continue;
+      const d = (x - BACK_DOOR.x - 1) ** 2 + (z - BACK_DOOR.z) ** 2;
+      if (d < distance) { distance = d; best = { x: x + 0.5, z: z + 0.5, rot: Math.PI / 2 }; }
+    }
+    if (!best) return null;
+    spawn = best;
+  }
+  Object.assign(p, spawn, { area, areaRev: (p.areaRev || 0) + 1, space: false, working: null });
+  ctx.emit({ type: 'areaChanged', to: p.id, area, areaRev: p.areaRev });
+  return 'ok';
 }
 
 function sfx(ctx, name, o) { ctx.emit({ type: 'sfx', name, x: o ? o.x + 0.5 : undefined, z: o ? o.z + 0.5 : undefined }); }
@@ -2493,6 +3372,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (dry) return `Plate ${lc(ingName(s))}`;
     const { one, left } = takePortion(s);
     addToPlate(h, one);
+    h.platedBy = p.id;
     setSurface(left);
     sfx(ctx, 'plate');
     return 'ok';
@@ -2502,6 +3382,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (plateFull(s)) return dry ? { blocked: 'Plate is full' } : null;
     if (dry) return `Add ${lc(ingName(h))} to plate`;
     addToPlate(s, h);
+    s.platedBy = p.id;
     p.hand = null;
     sfx(ctx, 'plate');
     return 'ok';
@@ -2529,6 +3410,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
     if (plateFull(h)) return dry ? { blocked: 'Plate is full' } : null;
     if (dry) return `Plate ${lc(itemLabel(ctx.state, s))}`;
     addToPlate(h, s);
+    h.platedBy = p.id;
     setSurface(null);
     sfx(ctx, 'plate');
     return 'ok';
@@ -2539,7 +3421,7 @@ function combine(ctx, p, surfaceItem, setSurface, dry) {
 function giveTo(ctx, p, it) {
   const h = p.hand;
   if (!h) { p.hand = it; return true; }
-  if (h.k === 'plate' && !plateFull(h)) { addToPlate(h, it); return true; }
+  if (h.k === 'plate' && !plateFull(h)) { addToPlate(h, it); h.platedBy = p.id; return true; }
   if (canTop(h) && toppable(it)) { h.top = h.top || []; h.top.push({ ing: it.ing, st: it.st, cost: it.cost }); return true; }
   return false;
 }
@@ -2556,11 +3438,43 @@ function actE(ctx, pid, dry, target) {
   const p = S.players[pid];
   if (!p) return null;
   const o = target !== undefined ? target : findTarget(S, ctx.grid, p);
+  if (p.smoking && (!o || o.type === 'smoking')) {
+    if (dry) return 'Put out cigarette';
+    p.smoking = null;
+    return 'ok';
+  }
   if (!o) {
     return null;
   }
   const h = p.hand;
   const t = o.type;
+  const area = playerArea(p);
+  if (!areaObjects(S, area).some((item) => item.id === o.id)) return null;
+
+  if (t === 'backdoor') {
+    if (area === 'restaurant' && followingParty(S, pid)) return dry ? { blocked: 'Seat your guests first' } : null;
+    if (dry) return area === 'alley' ? 'Enter restaurant' : 'Go outside';
+    return changeArea(ctx, p);
+  }
+  if (area === 'alley') {
+    if (t === 'dumpster') {
+      if (h?.k !== 'trash') return dry ? { blocked: h ? 'Only trash bags go here' : 'No trash bag'} : null;
+      if (dry) return 'Dispose of trash bag';
+      p.hand = null;
+      ctx.emit({ type: 'sfx', name: 'bin', x: o.x + 0.5, z: o.z + 0.5, area: 'alley' });
+      return 'ok';
+    }
+    if (t === 'smoking') {
+      if (h) return dry ? { blocked: 'Put down what you are carrying' } : null;
+      if (dry) return 'Smoke';
+      p.smoking = { left: SMOKE_SECONDS, x: p.x, z: p.z };
+      p.smokeBoostUntil = (S.t || 0) + SMOKE_BOOST_SECONDS;
+      p.space = false;
+      return 'ok';
+    }
+    return null;
+  }
+  if (h?.k === 'trash' && t !== 'bin') return dry ? { blocked: 'Take the trash bag to the alley dumpster' } : null;
 
   if (STORE_TYPES.has(t)) {
     if (h && h.k === 'box') {
@@ -2568,6 +3482,7 @@ function actE(ctx, pid, dry, target) {
       if (d.store !== t) return dry ? { blocked: `That case goes in the ${name(d.store).toLowerCase()}` } : null;
       if (dry) return `Unpack ${d.case} × ${d.name.toLowerCase()}`;
       addLot(S, h.ing, d.case, d.cost);
+      addTrash(S, 1);
       p.hand = null;
       sfx(ctx, 'unpack', o);
       ctx.emit({ type: 'float', text: `+${d.case} ${d.name.toLowerCase()}`, x: o.x + 0.5, z: o.z + 0.5, to: pid });
@@ -2709,6 +3624,7 @@ function actE(ctx, pid, dry, target) {
       if (plateFull(h)) return dry ? { blocked: 'Plate is full' } : null;
       if (dry) return `Plate ${lc(stateInfo(w.ing, w.st).label)} (${w.n} left)`;
       addToPlate(h, wellPortion(o));
+      h.platedBy = p.id;
       sfx(ctx, 'plate', o);
       return 'ok';
     }
@@ -2755,16 +3671,30 @@ function actE(ctx, pid, dry, target) {
   }
 
   if (t === 'bin') {
-    if (!h) return null;
+    if (!h) {
+      if ((o.trash || 0) < TRASH_CAPACITY) return dry ? { blocked: `Bin ${(o.trash || 0)}/${TRASH_CAPACITY}` } : null;
+      if (dry) return 'Take out trash bag';
+      p.hand = { k: 'trash', n: TRASH_CAPACITY };
+      o.trash -= TRASH_CAPACITY;
+      sfx(ctx, 'pick', o);
+      return 'ok';
+    }
+    if (h.k === 'trash') {
+      if (dry) return 'Return trash bag';
+      returnTrashBag(S, h);
+      p.hand = null;
+      return 'ok';
+    }
+    if (h.k === 'dirty') return dry ? { blocked: 'Dirty plates go to the sink' } : null;
+    if (h.k === 'plate' && !h.items.length) return dry ? { blocked: 'Put clean plates back on the rack' } : null;
+    if ((o.trash || 0) >= TRASH_CAPACITY) return dry ? { blocked: 'Bin full. Take the bag out first.' } : null;
     if (h.k === 'plate') {
-      if (!h.items.length) return dry ? { blocked: 'Put clean plates back on the rack' } : null;
       if (dry) return 'Scrape the plate into the bin';
       waste(ctx, h);
       h.items = [];
       sfx(ctx, 'bin', o);
       return 'ok';
     }
-    if (h.k === 'dirty') return dry ? { blocked: 'Dirty plates go to the sink' } : null;
     if (dry) return `Throw away ${lc(itemLabel(S, h))}`;
     waste(ctx, h);
     p.hand = null;
@@ -2816,6 +3746,8 @@ function actE(ctx, pid, dry, target) {
     if (o.dirty > 0 && (!h || h.k === 'dirty')) {
       if (h && h.n + o.dirty > 8) return dry ? { blocked: 'Too many plates to carry' } : null;
       if (dry) return `Clear ${o.dirty} dirty plate${o.dirty > 1 ? 's' : ''}`;
+      creditWork(S, pid, 'bused', o.dirty);
+      addTrash(S, o.dirty);
       if (h) h.n += o.dirty; else p.hand = { k: 'dirty', n: o.dirty };
       o.dirty = 0;
       sfx(ctx, 'plateclink', o);
@@ -2848,7 +3780,7 @@ function wellPortion(o) {
 function actSpace(ctx, pid, dt, dry, target) {
   const S = ctx.state;
   const p = S.players[pid];
-  if (!p) return null;
+  if (!p || playerArea(p) !== 'restaurant' || p.hand?.k === 'trash') return null;
   const o = target !== undefined ? target : findTarget(S, ctx.grid, p);
   if (!o) return null;
   if (o.type === 'board' && o.slot && o.slot.k === 'ing') {
@@ -2856,7 +3788,7 @@ function actSpace(ctx, pid, dt, dry, target) {
     if (!step) return null;
     if (dry) return `Hold to ${chopVerb(step)}`;
     const speed = S.upgrades.knife ? CFG.chopSpeedKnife : 1;
-    o.slot.t += dt * speed;
+    o.slot.t += dt * speed * cookingMultiplier(S);
     p.working = o.id;
     if (o.slot.t >= step.t) {
       o.slot.st = step.to;
@@ -2918,10 +3850,11 @@ function near(ctx, p, o) {
 }
 
 function takeFromStore(ctx, pid, objId, ing) {
+  if (!ingredientAllowed(ctx.state, ing)) return;
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
-  if (!p || !o || !STORE_TYPES.has(o.type) || !near(ctx, p, o)) return false;
+  if (!p || playerArea(p) !== 'restaurant' || !o || !STORE_TYPES.has(o.type) || !near(ctx, p, o)) return false;
   if (!ING[ing] || ING[ing].store !== o.type) return false;
   if (!canReceive(p)) return false;
   const cost = takeStock(S, ing);
@@ -2935,10 +3868,12 @@ function takeFromStore(ctx, pid, objId, ing) {
 }
 
 function takeDrink(ctx, pid, objId, id) {
+  const drink = drinkById(ctx.state, id);
+  if (!drink || drinkRequirements(ctx.state, drink).length) return;
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
-  if (!p || !o || o.type !== 'drinks' || !near(ctx, p, o) || p.hand) return false;
+  if (!p || playerArea(p) !== 'restaurant' || !o || o.type !== 'drinks' || !near(ctx, p, o) || p.hand) return false;
   const d = drinkById(S, id);
   const m = S.menu.drinks.find((x) => x.id === id);
   if (!d || !m || !m.on) return false;
@@ -2952,7 +3887,7 @@ function takeDrink(ctx, pid, objId, id) {
 function actQ(ctx, pid, dry) {
   const S = ctx.state;
   const p = S.players[pid];
-  if (!p) return null;
+  if (!p || playerArea(p) !== 'restaurant' || p.hand?.k === 'trash') return null;
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
   const last = p.last && p.last[o.type];
@@ -2977,7 +3912,7 @@ function describe(ctx, pid) {
   const p = S.players[pid];
   if (!p) return null;
   const o = findTarget(S, ctx.grid, p);
-  const e = o ? actE(ctx, pid, true, o) : null;
+  const e = o || p.smoking ? actE(ctx, pid, true, o) : null;
   const sp = o ? actSpace(ctx, pid, 0, true, o) : null;
   const q = o ? actQ(ctx, pid, true) : null;
   return { target: o ? o.id : null, type: o ? o.type : null, e, space: sp, q };
@@ -2988,6 +3923,7 @@ function describe(ctx, pid) {
 function tickStations(ctx, dt) {
   const S = ctx.state;
   const lampMult = S.upgrades.lamp ? CFG.coldAfter / CFG.coldAfterLamp : 1;
+  const cookSpeed = cookingMultiplier(S);
   for (const o of S.objects) {
     const it = o.slot;
     if (!it) continue;
@@ -2996,7 +3932,7 @@ function tickStations(ctx, dt) {
       const step = stepFor(it.ing, it.st, o.type);
       it.heat = 0;
       if (step) {
-        it.t += dt;
+        it.t += dt * cookSpeed;
         if (it.t >= step.t) {
           it.st = step.to;
           it.t = 0;
@@ -3038,6 +3974,7 @@ function dropHeld(ctx, pid) {
   if (!p || !p.hand) return;
   const h = p.hand;
   p.hand = null;
+  if (h.k === 'trash') { returnTrashBag(S, h); return; }
   if (h.k === 'box') { S.objects.find((o) => o.type === 'dock').boxes.push({ ing: h.ing }); return; }
   if (h.k === 'dirty') { S.objects.find((o) => o.type === 'sink').n += h.n; return; }
   if (h.k === 'plate' && !h.items.length) { rack(S).n += 1; return; }
@@ -3057,20 +3994,23 @@ function cleanup(ctx) {
     if (o.slot) {
       const it = o.slot;
       wasted += itemCost(it);
+      if (it.k !== 'box') addTrash(S, trashUnits(it));
       if (it.k === 'plate') r.n += 1;
       if (it.k === 'dirty') dirty += it.n;
       if (it.k === 'box') { S.objects.find((q) => q.type === 'dock').boxes.push({ ing: it.ing }); wasted -= itemCost(it); }
       o.slot = null;
     }
-    if (o.type === 'table') { dirty += o.dirty || 0; o.dirty = 0; o.plates = 0; o.served = []; o.party = null; }
+    if (o.type === 'table') { addTrash(S, o.dirty || 0); dirty += o.dirty || 0; o.dirty = 0; o.plates = 0; o.served = []; o.party = null; }
     if (o.type === 'sink') { dirty += o.n; o.n = 0; o.wash = 0; }
   }
   for (const p of Object.values(S.players)) {
     if (!p.hand) continue;
     const h = p.hand;
-    if (h.k === 'box') S.objects.find((q) => q.type === 'dock').boxes.push({ ing: h.ing });
+    if (h.k === 'trash') returnTrashBag(S, h);
+    else if (h.k === 'box') S.objects.find((q) => q.type === 'dock').boxes.push({ ing: h.ing });
     else {
       wasted += itemCost(h);
+      addTrash(S, trashUnits(h));
       if (h.k === 'plate') r.n += 1;
       if (h.k === 'dirty') dirty += h.n;
     }
@@ -3090,7 +4030,7 @@ return { objById, findTarget, actE, actSpace, storeList, takeFromStore, takeDrin
 })();
 
 // ---- src/view/shape.js ----
-__m.shape = (() => {
+__m.view_shape = (() => {
 // Code-built low-poly geometry. Every model is vertex-colored and shares one
 // flat-shaded material, so the whole restaurant renders in few draw calls.
 
@@ -3114,7 +4054,7 @@ function hash3(x, y, z) {
 
 /** Collects colored, transformed parts and merges them into one geometry. */
 class Shape {
-  constructor() { this.parts = []; }
+  constructor(shaded = true) { this.parts = []; this.shaded = shaded; }
 
   add(geo, color, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
     const g = geo.index ? geo.toNonIndexed() : geo;
@@ -3123,9 +4063,24 @@ class Shape {
     _m.compose(_p.set(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(sx, sy, sz));
     g.applyMatrix4(_m);
     _c.set(color);
-    const n = g.attributes.position.count;
+    const pos = g.attributes.position;
+    const normal = g.attributes.normal;
+    const n = pos.count;
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < n; i++) {
+      minY = Math.min(minY, pos.getY(i));
+      maxY = Math.max(maxY, pos.getY(i));
+    }
+    const height = Math.max(0.001, maxY - minY);
     const col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b; }
+    for (let i = 0; i < n; i++) {
+      const rise = (pos.getY(i) - minY) / height;
+      const face = Math.max(0, normal.getY(i)) * 0.045 + normal.getX(i) * -0.018 + normal.getZ(i) * 0.012;
+      const k = this.shaded ? THREE.MathUtils.clamp(0.92 + rise * 0.075 + face, 0.84, 1.06) : 1;
+      col[i * 3] = Math.min(1, _c.r * k);
+      col[i * 3 + 1] = Math.min(1, _c.g * k);
+      col[i * 3 + 2] = Math.min(1, _c.b * k);
+    }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     if (g.attributes.uv) g.deleteAttribute('uv');
     this.parts.push(g);
@@ -3216,11 +4171,11 @@ return { MAT, Shape, mergeGeometries, meshOf, shade, mix };
 })();
 
 // ---- src/view/models.js ----
-__m.models = (() => {
+__m.view_models = (() => {
 // Stations, tables and characters. Each builder returns a THREE.Group whose
 // origin is the tile center at floor level, facing +Z (toward its front).
 
-const { Shape, MAT, meshOf, shade } = __m.shape;
+const { Shape, MAT, meshOf, shade, mix } = __m.view_shape;
 const COUNTER_H = 0.92;
 const STEEL = 0xc8cdd2, STEEL_D = 0x8e959c, DARK = 0x2c2a2a, WOOD = 0x9a6a3e, WOOD_D = 0x6e4a2c;
 
@@ -3285,7 +4240,7 @@ function stationModel(type, pal) {
       s.box(0.86, 0.06, 0.8, DARK, 0, COUNTER_H + 0.03, 0);
       for (let i = 0; i < 7; i++) s.box(0.04, 0.025, 0.74, 0x4a4442, -0.33 + i * 0.11, COUNTER_H + 0.07, 0);
       s.box(0.9, 0.18, 0.08, STEEL, 0, COUNTER_H + 0.09, -0.42);
-      const glow = new Shape();
+      const glow = new Shape(false);
       for (let i = 0; i < 6; i++) glow.box(0.05, 0.01, 0.7, 0xff6a20, -0.275 + i * 0.11, COUNTER_H + 0.062, 0);
       dyn.glow = glowMesh(glow);
       g.add(dyn.glow);
@@ -3300,7 +4255,7 @@ function stationModel(type, pal) {
       s.cyl(0.22, 0.22, 0.01, 12, 0x4a4644, 0, COUNTER_H + 0.11, 0);
       s.box(0.05, 0.03, 0.35, 0x2a2828, 0.0, COUNTER_H + 0.1, 0.4, 0.15);
       for (const k of [-1, 1]) s.cyl(0.04, 0.04, 0.05, 6, DARK, k * 0.3, COUNTER_H - 0.2, 0.47, Math.PI / 2);
-      const flame = new Shape();
+      const flame = new Shape(false);
       for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; flame.cone(0.03, 0.06, 4, 0x4ab0ff, Math.cos(a) * 0.17, COUNTER_H + 0.06, Math.sin(a) * 0.17); }
       dyn.glow = glowMesh(flame);
       g.add(dyn.glow);
@@ -3310,12 +4265,11 @@ function stationModel(type, pal) {
     case 'pot': {
       counterBase(s, pal);
       s.box(0.86, 0.04, 0.8, DARK, 0, COUNTER_H + 0.02, 0);
-      s.add(new THREE.CylinderGeometry(0.27, 0.25, 0.36, 12, 1, true), STEEL, 0, COUNTER_H + 0.22, 0);
-      s.add(new THREE.CylinderGeometry(0.26, 0.24, 0.36, 12, 1, true), STEEL_D, 0, COUNTER_H + 0.22, 0, Math.PI);
-      s.cyl(0.25, 0.25, 0.02, 12, STEEL_D, 0, COUNTER_H + 0.05, 0);
-      s.torus(0.27, 0.015, STEEL, 0, COUNTER_H + 0.4, 0);
+      // One closed shell joins the base, outside wall, rim and inside wall.
+      const profile = [[0, 0.04], [0.27, 0.04], [0.27, 0.4], [0.235, 0.4], [0.235, 0.08], [0, 0.08]];
+      s.add(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), 16), STEEL, 0, COUNTER_H, 0);
       for (const k of [-1, 1]) s.box(0.1, 0.03, 0.04, DARK, k * 0.32, COUNTER_H + 0.34, 0);
-      const flame = new Shape();
+      const flame = new Shape(false);
       for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; flame.cone(0.03, 0.06, 4, 0x4ab0ff, Math.cos(a) * 0.2, COUNTER_H + 0.06, Math.sin(a) * 0.2); }
       dyn.glow = glowMesh(flame);
       g.add(dyn.glow);
@@ -3350,7 +4304,7 @@ function stationModel(type, pal) {
       s.box(1.0, 0.06, 1.0, STEEL_D, 0, 1.0, 0);
       s.box(1.0, 0.5, 0.12, DARK, 0, 1.28, -0.44);
       for (let i = 0; i < 3; i++) s.cyl(0.035, 0.035, 0.03, 8, STEEL, -0.25 + i * 0.25, 1.3, -0.37, Math.PI / 2);
-      const win = new Shape();
+      const win = new Shape(false);
       win.box(0.55, 0.3, 0.01, 0xff9a40, 0, 0.44, 0.49);
       dyn.glow = glowMesh(win);
       g.add(dyn.glow);
@@ -3424,16 +4378,34 @@ function stationModel(type, pal) {
 
 // ------------------------------------------------------------------ tables
 
-function tableModel(seats, pal, cloth) {
+function tableModel(seats, pal, cloth, cuisine = 'southern') {
   const g = new THREE.Group();
   const s = new Shape();
   const tH = 0.76;
   const chair = (x, z, face) => {
     const c = new Shape();
+    const leg = cuisine === 'diner' ? 0xaeb8bd : shade(pal.chair, 0.75);
     c.box(0.42, 0.06, 0.42, pal.chair, 0, 0.46, 0);
-    for (const a of [-1, 1]) for (const b of [-1, 1]) c.box(0.05, 0.46, 0.05, shade(pal.chair, 0.75), a * 0.17, 0.23, b * 0.17);
-    c.box(0.42, 0.5, 0.05, pal.chair, 0, 0.75, -0.19);
-    c.box(0.36, 0.06, 0.06, shade(pal.chair, 1.2), 0, 0.98, -0.19);
+    for (const a of [-1, 1]) for (const b of [-1, 1]) c.box(0.045, 0.46, 0.045, leg, a * 0.17, 0.23, b * 0.17);
+    if (cuisine === 'southern') {
+      for (const px of [-0.12, 0, 0.12]) c.cyl(0.025, 0.025, 0.42, 6, shade(pal.chair, 0.9), px, 0.75, -0.19);
+      c.box(0.4, 0.065, 0.06, shade(pal.chair, 1.16), 0, 0.98, -0.19);
+    } else if (cuisine === 'italian') {
+      c.box(0.055, 0.48, 0.055, pal.chair, -0.1, 0.76, -0.19, 0, 0, -0.43);
+      c.box(0.055, 0.48, 0.055, pal.chair, 0.1, 0.76, -0.19, 0, 0, 0.43);
+      c.box(0.4, 0.055, 0.06, shade(pal.chair, 1.14), 0, 0.99, -0.19);
+    } else if (cuisine === 'mexican') {
+      c.box(0.4, 0.46, 0.05, pal.chair, 0, 0.76, -0.19);
+      c.box(0.32, 0.1, 0.025, pal.accent2, 0, 0.78, -0.225);
+      c.box(0.4, 0.055, 0.06, shade(pal.chair, 1.12), 0, 0.99, -0.19);
+    } else if (cuisine === 'diner') {
+      c.sphere(0.23, pal.chair, 0, 0.78, -0.19, 1, 1.18, 0.24, 8);
+      c.box(0.38, 0.04, 0.04, 0xe8eef0, 0, 0.99, -0.19);
+    } else {
+      for (const px of [-0.12, 0.12]) c.box(0.055, 0.45, 0.055, pal.chair, px, 0.76, -0.19);
+      c.box(0.4, 0.07, 0.06, shade(pal.chair, 1.15), 0, 0.98, -0.19);
+      c.box(0.34, 0.04, 0.055, pal.accent2, 0, 0.73, -0.19);
+    }
     s.merge(c, x, 0, z, face);
   };
   if (seats === 4) {
@@ -3450,12 +4422,32 @@ function tableModel(seats, pal, cloth) {
     s.cyl(0.3, 0.3, 0.04, 8, shade(pal.table, 0.7), 1.5, 0.02, 0.5);
     chair(0.42, 0.5, Math.PI / 2); chair(2.58, 0.5, -Math.PI / 2);
   }
-  // Salt, pepper and a small vase.
   const cx = seats === 4 ? 1 : 1.5, cz = seats === 4 ? 1.5 : 0.5;
-  s.cyl(0.025, 0.025, 0.08, 6, 0xf4f0e8, cx - 0.06, tH + 0.08, cz);
-  s.cyl(0.025, 0.025, 0.08, 6, 0x3a3634, cx + 0.0, tH + 0.08, cz);
-  s.cyl(0.035, 0.03, 0.12, 6, pal.accent2, cx + 0.08, tH + 0.1, cz);
-  s.sphere(0.04, pal.accent, cx + 0.08, tH + 0.19, cz);
+  // Small place settings improve table readability without competing with served food.
+  const settings = seats === 4
+    ? [[0.55, 1.14], [1.45, 1.14], [0.55, 1.86], [1.45, 1.86]]
+    : [[1.12, 0.5], [1.88, 0.5]];
+  for (const [px, pz] of settings) s.box(0.14, 0.012, 0.075, shade(pal.accent2, 1.05), px, tH + 0.045, pz);
+  s.cyl(0.025, 0.025, 0.08, 6, 0xf4f0e8, cx - 0.07, tH + 0.08, cz);
+  s.cyl(0.025, 0.025, 0.08, 6, 0x3a3634, cx, tH + 0.08, cz);
+  if (cuisine === 'southern') {
+    s.cyl(0.045, 0.035, 0.13, 7, pal.accent2, cx + 0.09, tH + 0.11, cz);
+    for (const dx of [-0.04, 0, 0.04]) { s.cyl(0.008, 0.008, 0.11, 5, 0x48743a, cx + 0.09 + dx, tH + 0.21, cz); s.sphere(0.035, dx ? pal.accent : 0xf3d66f, cx + 0.09 + dx, tH + 0.28, cz, 1, 0.75, 1, 6); }
+  } else if (cuisine === 'italian') {
+    s.cyl(0.035, 0.055, 0.2, 8, 0x486a3c, cx + 0.1, tH + 0.14, cz);
+    s.cyl(0.018, 0.025, 0.08, 7, 0xd9c49a, cx + 0.1, tH + 0.28, cz);
+  } else if (cuisine === 'mexican') {
+    s.cyl(0.075, 0.06, 0.08, 8, 0xc46a3a, cx + 0.1, tH + 0.08, cz);
+    s.cyl(0.035, 0.045, 0.18, 7, 0x3f8b43, cx + 0.1, tH + 0.2, cz);
+    s.cyl(0.018, 0.025, 0.09, 6, 0x4c9a4a, cx + 0.15, tH + 0.2, cz, 0, 0, 0.65);
+  } else if (cuisine === 'diner') {
+    s.box(0.13, 0.2, 0.09, 0xb9c4c8, cx + 0.1, tH + 0.13, cz);
+    s.box(0.09, 0.045, 0.095, 0xf4f0e8, cx + 0.1, tH + 0.24, cz);
+    s.box(0.08, 0.025, 0.1, pal.accent, cx + 0.1, tH + 0.18, cz);
+  } else {
+    s.cyl(0.055, 0.045, 0.13, 8, pal.accent2, cx + 0.1, tH + 0.1, cz);
+    for (const dx of [-0.025, 0, 0.025]) s.box(0.012, 0.25, 0.012, dx ? 0x8a4e2c : 0xb86a32, cx + 0.1 + dx, tH + 0.28, cz, 0, 0, dx * 5);
+  }
   g.add(meshOf(s));
   g.userData.top = tH + (cloth ? 0.045 : 0.03);
   return g;
@@ -3484,7 +4476,9 @@ function makePerson(look, chef) {
     pivot.position.set(side * 0.11, 0.78 * H, 0);
     const s = new Shape();
     s.box(0.16, 0.7 * H, 0.19, pants, 0, -0.35 * H, 0);
-    s.box(0.18, 0.1, 0.27, chef ? 0x1e1e22 : 0x3a2a20, 0, -0.73 * H, 0.03);
+    const shoe = chef ? 0x1e1e22 : 0x3a2a20;
+    s.box(0.18, 0.1, 0.29, shoe, 0, -0.73 * H, 0.045);
+    s.box(0.19, 0.025, 0.31, shade(shoe, 0.72), 0, -0.785 * H, 0.05);
     pivot.add(mk(s));
     body.add(pivot);
     legs.push(pivot);
@@ -3493,6 +4487,8 @@ function makePerson(look, chef) {
   const t = new Shape();
   const top = 0.78 * H;
   t.box(0.44, 0.56, 0.26, shirt, 0, top + 0.3, 0);
+  t.sphere(0.12, shirt, -0.235, top + 0.5, 0, 0.8, 0.75, 1, 6);
+  t.sphere(0.12, shirt, 0.235, top + 0.5, 0, 0.8, 0.75, 1, 6);
   if (chef) {
     // Double-breasted buttons.
     for (const y of [0.16, 0.3, 0.44]) for (const x of [-0.07, 0.07]) t.box(0.03, 0.03, 0.02, shade(shirt, 0.7), x, top + y, 0.135);
@@ -3504,13 +4500,18 @@ function makePerson(look, chef) {
       t.box(0.46, 0.05, 0.28, shade(ac, 0.85), 0, top + 0.18, 0);
       t.box(0.12, 0.08, 0.01, shade(ac, 0.8), 0.08, top + 0.0, 0.152);
     }
+    t.cone(0.065, 0.1, 3, look.apron ? hex(look.apronColor) : mix(shirt, 0xb83a32, 0.65), 0, top + 0.5, 0.16, Math.PI / 2);
   } else {
+    t.box(0.46, 0.045, 0.28, shade(shirt, 0.72), 0, top + 0.04, 0);
     t.box(0.18, 0.12, 0.02, shade(shirt, 1.2), 0, top + 0.52, 0.13);
     if (look.critic) t.box(0.08, 0.1, 0.02, 0xf4f0e8, 0.12, top + 0.38, 0.135);
   }
   // Head.
   const hy = top + 0.78;
   t.box(0.27, 0.28, 0.26, skin, 0, hy, 0);
+  t.sphere(0.045, skin, -0.15, hy, 0, 0.45, 1, 0.75, 6);
+  t.sphere(0.045, skin, 0.15, hy, 0, 0.45, 1, 0.75, 6);
+  t.box(0.035, 0.045, 0.03, shade(skin, 0.94), 0, hy - 0.015, 0.145);
   t.box(0.035, 0.035, 0.02, 0x2a2020, -0.065, hy + 0.02, 0.135);
   t.box(0.035, 0.035, 0.02, 0x2a2020, 0.065, hy + 0.02, 0.135);
   t.box(0.08, 0.02, 0.02, shade(skin, 0.75), 0, hy - 0.07, 0.132);
@@ -3589,48 +4590,55 @@ return { COUNTER_H, stationModel, tableModel, makePerson, animatePerson };
 })();
 
 // ---- src/view/room.js ----
-__m.room = (() => {
-// The building shell: floors, walls, windows, the name sign, lights and the
+__m.view_room = (() => {
+// The building shell: floors, walls, windows, the name sign and the
 // cuisine's decor. Rebuilt when the layout or decor upgrades change.
 
-const { Shape, MAT, meshOf, shade, mix } = __m.shape;
-const { MAP, KITCHEN_MAX_Z } = __m.layout;
-const W = MAP[0].length, H = MAP.length;
+const { Shape, MAT, meshOf, shade, mix } = __m.view_shape;
+const { KITCHEN_MAX_Z, roomSize, layoutTile, frontDoor } = __m.data_layout;
 const WALL_H = 2.8, DIVIDER_H = 1.05, FRONT_H = 0.45;
-
-function isWall(x, z) { const c = MAP[z] && MAP[z][x]; return c === '#' || c === 'B'; }
 
 function nameSign(name, style, pal) {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 192;
   const g = c.getContext('2d');
-  g.fillStyle = pal.uiDark;
-  g.fillRect(0, 0, 1024, 192);
-  g.strokeStyle = pal.ui;
-  g.lineWidth = 10;
-  g.strokeRect(14, 14, 996, 164);
-  g.fillStyle = '#fbf3e4';
+  const r = 28;
+  const rr = (x, y, w, h, rad) => { g.beginPath(); g.moveTo(x + rad, y); g.arcTo(x + w, y, x + w, y + h, rad); g.arcTo(x + w, y + h, x, y + h, rad); g.arcTo(x, y + h, x, y, rad); g.arcTo(x, y, x + w, y, rad); g.closePath(); };
+  g.fillStyle = '#2a1b12';
+  rr(0, 0, 1024, 192, r); g.fill();
+  g.fillStyle = '#7a4a2a';
+  rr(10, 10, 1004, 172, r - 8); g.fill();
+  g.fillStyle = '#8f5a33';
+  for (let i = 0; i < 4; i++) g.fillRect(18, 24 + i * 40, 988, 3);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  let size = 92;
-  g.font = `${size}px Gloock, Georgia, serif`;
-  while (g.measureText(name).width > 900 && size > 40) { size -= 4; g.font = `${size}px Gloock, Georgia, serif`; }
-  g.fillText(name, 512, 88);
-  g.font = '28px "Courier Prime", monospace';
-  g.fillStyle = pal.ui;
-  g.fillText(style.toUpperCase() + '  ·  EST. TODAY', 512, 152);
+  let size = 104;
+  const font = (n) => `${n}px "Lilita One", "Arial Rounded MT Bold", sans-serif`;
+  g.font = font(size);
+  while (g.measureText(name).width > 900 && size > 40) { size -= 4; g.font = font(size); }
+  g.lineJoin = 'round';
+  g.lineWidth = 16;
+  g.strokeStyle = '#2a1b12';
+  g.strokeText(name, 512, 84);
+  g.fillStyle = '#ffc83c';
+  g.fillText(name, 512, 80);
+  g.font = font(30);
+  g.fillStyle = '#ffe8c4';
+  g.fillText(style.toUpperCase() + '  ★  EST. TODAY', 512, 154);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.98), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.98), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false, transparent: true }));
   return m;
 }
 
-function buildRoom(cuisine, name, upgrades) {
+function buildRoom(cuisine, name, upgrades, state) {
   const pal = cuisine.palette;
+  const { width: W, height: H } = roomSize(state);
   const root = new THREE.Group();
   const s = new Shape();
-  const glow = new Shape();
+  const glow = new Shape(false);
+  const isWall = (x, z) => ['#', 'B'].includes(layoutTile(state, x, z));
 
   // Floors.
   for (let z = 0; z < H; z++) {
@@ -3651,8 +4659,9 @@ function buildRoom(cuisine, name, upgrades) {
   }
   if (upgrades.decor3) {
     // Renovation: a big rug under the tables.
-    s.box(13, 0.012, 6.2, mix(pal.accent, 0x2a2a2a, 0.35), 10.5, 0.006, 9.6);
-    s.box(12.4, 0.014, 5.6, mix(pal.accent2, 0xf0e6d0, 0.4), 10.5, 0.008, 9.6);
+    const width = W - 7, depth = H - 8.8, centerZ = (6 + H - 1) / 2;
+    s.box(width, 0.012, depth, mix(pal.accent, 0x2a2a2a, 0.35), W / 2 + 0.5, 0.006, centerZ);
+    s.box(width - 0.6, 0.014, depth - 0.6, mix(pal.accent2, 0xf0e6d0, 0.4), W / 2 + 0.5, 0.008, centerZ);
   }
 
   // Walls.
@@ -3661,7 +4670,7 @@ function buildRoom(cuisine, name, upgrades) {
     for (let x = 0; x < W; x++) {
       if (!isWall(x, z)) continue;
       const cx = x + 0.5, cz = z + 0.5;
-      if (MAP[z][x] === 'B') {
+      if (layoutTile(state, x, z) === 'B') {
         // Back door: frame and a door slab.
         s.box(1, WALL_H, 1, wallC, cx, WALL_H / 2, cz);
         s.box(0.06, 2.1, 0.9, 0x7a5a3a, cx + 0.5, 1.05, cz);
@@ -3675,7 +4684,7 @@ function buildRoom(cuisine, name, upgrades) {
         s.box(1.02, 0.06, 1.04, trimC, cx, FRONT_H + 0.03, cz);
         continue;
       }
-      if (z === 5) {
+      if (z === 5 && x > 0 && x < W - 1) {
         s.box(1, DIVIDER_H, 1, wallC, cx, DIVIDER_H / 2, cz);
         s.box(1.02, 0.06, 1.04, trimC, cx, DIVIDER_H + 0.03, cz);
         s.box(1.0, 0.3, 0.02, shade(wallC, 0.85), cx, 0.15, cz + 0.51);
@@ -3697,50 +4706,78 @@ function buildRoom(cuisine, name, upgrades) {
   // Subway tile bands on the kitchen back wall.
   for (let i = 0; i < 8; i++) {
     const y = 0.95 + i * 0.16;
-    s.box(18, 0.012, 0.01, shade(pal.kitchenA, 0.86), 10, y, 1.005);
+    s.box(W - 2, 0.012, 0.01, shade(pal.kitchenA, 0.86), W / 2, y, 1.005);
   }
-  // Shelf with pans above the back stations.
-  s.box(10, 0.05, 0.3, 0x8a8f94, 10, 2.35, 1.15);
-  for (let i = 0; i < 7; i++) {
-    const x = 5.5 + i * 1.4;
-    if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
-    else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+  // Short shelves keep their scale on both sides of the name sign.
+  for (const [left, right] of [[1.5, W / 2 - 3.1], [W / 2 + 3.1, W - 1.5]]) {
+    const span = right - left;
+    const count = Math.max(1, Math.ceil(span / 5));
+    const width = Math.min(4.2, span / count - 0.15);
+    for (let shelf = 0; shelf < count; shelf++) {
+      const cx = left + (shelf + 0.5) * span / count;
+      s.box(width, 0.05, 0.3, 0x8a8f94, cx, 2.35, 1.15);
+      const pans = Math.max(1, Math.floor(width / 1.1));
+      for (let i = 0; i < pans; i++) {
+        const x = cx + (i - (pans - 1) / 2) * 1.1;
+        if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
+        else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+      }
+    }
   }
-  // Fluorescent strips (glow).
-  glow.box(4, 0.05, 0.08, 0xfffbf0, 5, 2.7, 1.1);
-  glow.box(4, 0.05, 0.08, 0xfffbf0, 14, 2.7, 1.1);
 
   // Windows on the dining side walls.
-  const winGeo = new Shape();
-  for (const z of [7.5, 10.5]) {
+  const winGeo = new Shape(false);
+  const outside = new Shape(false);
+  for (const z of [6 + (H - 7) * 0.1875, 6 + (H - 7) * 0.5625]) {
     for (const x of [0.5 + 0.52, W - 0.5 - 0.52]) {
+      const face = x < W / 2 ? 1 : -1;
+      const front = x + face * 0.018;
       winGeo.box(0.02, 1.0, 1.5, 0xbfe0f0, x, 1.55, z);
+      outside.box(0.025, 0.24, 1.46, 0x667875, front, 1.17, z);
+      outside.box(0.03, 0.42, 0.34, 0x536565, front, 1.31, z - 0.48);
+      outside.box(0.03, 0.3, 0.42, 0x5e6f6d, front, 1.25, z - 0.08);
+      outside.box(0.03, 0.5, 0.3, 0x4b5d5d, front, 1.35, z + 0.33);
+      outside.sphere(0.18, 0x476455, front, 1.48, z + 0.56, 0.1, 1.25, 1, 6);
       s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z - 0.79);
       s.box(0.06, 1.12, 0.08, trimC, x, 1.55, z + 0.79);
+      s.box(0.06, 1.04, 0.045, trimC, x + face * 0.012, 1.55, z);
+      s.box(0.065, 0.045, 1.58, trimC, x + face * 0.012, 1.55, z);
       s.box(0.06, 0.08, 1.66, trimC, x, 2.07, z);
       s.box(0.12, 0.06, 1.7, trimC, x, 1.02, z);
     }
   }
   const winMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-  const windows = new THREE.Mesh(winGeo.build(), winMat);
-  root.add(windows);
+  const outsideMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  root.add(new THREE.Mesh(winGeo.build(), winMat), new THREE.Mesh(outside.build(), outsideMat));
 
   // Front door gap: mat and an OPEN sign.
-  s.box(1.0, 0.012, 0.7, 0x5a3a2a, 2.5, 0.006, 13.6);
-  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 1.95, 0.75, 14.5);
-  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 3.05, 0.75, 14.5);
+  const door = frontDoor(state);
+  s.box(1.0, 0.012, 0.7, 0x5a3a2a, door.x + 0.5, 0.006, door.z - 0.4);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, door.x - 0.05, 0.75, door.z + 0.5);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, door.x + 1.05, 0.75, door.z + 0.5);
 
   // Cuisine decor and upgrades.
-  decor(s, glow, cuisine, pal, upgrades);
+  decor(s, glow, cuisine, pal, upgrades, W, H);
 
   root.add(meshOf(s, MAT.solid, false, true));
   if (glow.parts.length) root.add(new THREE.Mesh(glow.build(), MAT.glow));
 
   const sign = nameSign(name, cuisine.style, pal);
-  sign.position.set(10, 2.25, 1.02);
+  sign.position.set(W / 2, 2.3, 1.03);
   root.add(sign);
 
-  return { root, winMat, pal };
+  return { root, winMat, outsideMat };
+}
+
+/** The shell owns its geometry and window/sign materials. */
+function disposeRoom(room) {
+  room.root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.geometry.dispose();
+    if (obj.material === MAT.solid || obj.material === MAT.glow) return;
+    if (obj.material.map) obj.material.map.dispose();
+    obj.material.dispose();
+  });
 }
 
 function frame(s, x, y, z, w, h, c, face) {
@@ -3758,54 +4795,43 @@ function plant(s, x, z, big = 1) {
   }
 }
 
-function decor(s, glow, cuisine, pal, up) {
+function decor(s, glow, cuisine, pal, up, W, H) {
   const id = cuisine.id;
   const L = 1.02, R = W - 1.02;
-  // Art on dining walls between windows.
-  frame(s, L, 1.7, 9.0, 0.9, 0.7, pal.accent, 1);
-  frame(s, R, 1.7, 9.0, 0.9, 0.7, pal.accent2, -1);
+  // Move accents with the walls; keep each primitive at its original scale.
+  const Z = (z) => 6 + (z - 6) * (H - 7) / 8;
+  frame(s, L, 1.7, Z(9), 0.9, 0.7, pal.accent, 1);
+  frame(s, R, 1.7, Z(9), 0.9, 0.7, pal.accent2, -1);
   if (id === 'southern') {
-    for (const z of [6.4, 12.6]) { plant(s, 1.4, z, 0.9); }
-    for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, x, 2.55, 9.6); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, x, 2.25, 9.6); }
-    s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, 12.4);
+    for (const z of [6.4, 12.6]) plant(s, 1.4, Z(z), 0.9);
+    s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, Z(12.4));
   } else if (id === 'italian') {
-    for (let i = 0; i < 18; i++) { const t = i / 17; glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * 17, 2.6 - Math.sin(t * Math.PI) * 0.35, 6.4); }
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, 12.0 + j * 0.15, 0, 0, Math.PI / 2);
-    s.box(0.04, 1.3, 0.6, 0x6a4a2a, R + 0.0, 1.35, 12.15);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, Z(12.15) + (j - 1) * 0.15, 0, 0, Math.PI / 2);
+    s.box(0.04, 1.3, 0.6, 0x6a4a2a, R, 1.35, Z(12.15));
+    for (const z of [6.7, 11.8]) { s.box(0.045, 1.15, 0.66, 0x6d4a31, L, 1.5, Z(z)); s.torus(0.32, 0.035, pal.accent, L + 0.025, 2.05, Z(z), 0, Math.PI / 2, 0, Math.PI, 12); }
   } else if (id === 'mexican') {
     const colors = [0xe0407a, 0xf2c030, 0x2a9a8e, 0xf07830, 0x8a4ac8];
-    for (const zz of [7.0, 10.0, 12.6]) for (let i = 0; i < 16; i++) s.box(0.5, 0.36, 0.01, colors[i % 5], 2 + i * 1.05, 2.45, zz, 0, 0, 0);
-    plant(s, 1.4, 6.4, 0.8);
-    s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, 12.8);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 0.18, 0.3, colors[i % 5], x, 0.72, Z(6.3 + i * 0.5));
+    plant(s, 1.4, Z(6.4), 0.8);
+    s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, Z(12.8));
   } else if (id === 'diner') {
-    glow.box(0.04, 0.5, 2.0, 0xff3a4a, R - 0.03, 2.2, 12.0);
-    glow.box(0.04, 0.06, 2.2, 0x3ad0f0, R - 0.035, 1.9, 12.0);
-    s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, 6.4);
-    glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1.0, 6.66);
+    glow.box(0.04, 0.5, Math.min(2, H - 9), mix(pal.accent, pal.wall, 0.25), R - 0.03, 2.2, Z(12));
+    glow.box(0.04, 0.06, Math.min(2.2, H - 8.8), mix(pal.accent2, pal.wall, 0.25), R - 0.035, 1.9, Z(12));
+    s.box(0.7, 1.4, 0.5, pal.accent, R - 0.4, 0.7, Z(6.4));
+    glow.box(0.5, 0.4, 0.02, mix(pal.lamp, pal.wall, 0.3), R - 0.4, 1, Z(6.4) + 0.26);
+    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1 * (H - 7) / 8, pal.top, x, 0.8, Z(9.7)); s.box(0.052, 0.035, 7.1 * (H - 7) / 8, pal.accent, x, 0.88, Z(9.7)); }
   } else if (id === 'noodle') {
-    for (const [x, z] of [[4, 8.5], [10, 8.5], [16, 8.5], [7, 11.5], [13, 11.5]]) {
-      s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, x, 2.6, z);
-      glow.sphere(0.2, 0xff5a3a, x, 2.25, z, 1, 1.25, 1, 8);
-      s.cyl(0.12, 0.12, 0.04, 8, 0x2a1e18, x, 2.5, z);
-    }
-    // Noren curtain over the kitchen opening.
-    for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, 10.25 + i * 0.5, 2.0, 5.5);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, Z(6.3 + i * 0.52));
+    for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, Z(z)); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, Z(z)); }
   }
   if (up.decor1) {
-    plant(s, 18.3, 6.5, 1.1);
-    plant(s, 18.3, 12.8, 1.0);
-    frame(s, L, 1.6, 12.2, 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
+    plant(s, W - 1.7, Z(6.5), 1.1);
+    plant(s, W - 1.7, Z(12.8), 1);
+    frame(s, L, 1.6, Z(12.2), 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
   }
   if (up.decor2) {
-    for (const x of [5, 9, 13, 17]) {
-      s.cyl(0.004, 0.004, 0.45, 3, 0x2a2a2a, x, 2.6, 11.2);
-      glow.cone(0.16, 0.14, 8, 0xffd890, x, 2.32, 11.2);
-    }
-    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.25, 2.3, 6.3);
-  }
-  if (up.decor3) {
-    glow.sphere(0.25, 0xfff0c0, 10, 2.3, 9.2, 1, 0.6, 1, 8);
-    s.cyl(0.4, 0.3, 0.1, 10, 0xc8a050, 10, 2.45, 9.2);
+    // The speaker meets the side wall; the room has no visible ceiling.
+    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.125, 2.3, Z(6.3));
   }
 }
 
@@ -3820,18 +4846,188 @@ function skyColor(clock, phase) {
   return night;
 }
 
-return { buildRoom, skyColor };
+return { buildRoom, disposeRoom, skyColor };
+})();
+
+// ---- src/view/alley.js ----
+__m.view_alley = (() => {
+// A separate exterior scene. All solid props share the restaurant material.
+
+const { ALLEY_SIZE, ALLEY_OBJECTS, ALLEY_OBSTACLES } = __m.data_alley;
+const { Shape, MAT, meshOf, mix, shade } = __m.view_shape;
+const STEEL = 0x747f82, DARK = 0x323b3f, WOOD = 0x8a7661;
+
+function addBag(s, x, y, z, scale = 1) {
+  s.sphere(0.27 * scale, 0x343e3e, x, y + 0.25 * scale, z, 1.05, 1.05, 0.92, 7);
+  s.cone(0.19 * scale, 0.26 * scale, 7, 0x3d4847, x, y + 0.49 * scale, z);
+  s.box(0.09 * scale, 0.06 * scale, 0.08 * scale, 0x6e7770, x, y + 0.59 * scale, z);
+  s.cone(0.1 * scale, 0.12 * scale, 5, 0x43504c, x, y + 0.67 * scale, z, 0, 0, 0.25);
+}
+
+function trashBagModel() {
+  const s = new Shape();
+  addBag(s, 0, -0.55, 0, 0.95);
+  return meshOf(s);
+}
+
+function cigaretteModel() {
+  const s = new Shape();
+  s.cyl(0.018, 0.018, 0.12, 6, 0xe7d3a5, 0, 0, 0.06, Math.PI / 2);
+  s.cyl(0.018, 0.018, 0.15, 6, 0xf0e9d8, 0, 0, 0.19, Math.PI / 2);
+  s.cyl(0.019, 0.019, 0.025, 6, 0xe39555, 0, 0, 0.275, Math.PI / 2);
+  return meshOf(s);
+}
+
+function crate(s, x, y, z, size = 0.65) {
+  s.box(size, size, size, 0x8d7154, x, y + size / 2, z);
+  for (const side of [-1, 1]) {
+    s.box(size + 0.03, 0.08, 0.04, 0xad8e65, x, y + 0.1, z + side * size / 2);
+    s.box(size + 0.03, 0.08, 0.04, 0xad8e65, x, y + size - 0.1, z + side * size / 2);
+    s.box(0.065, size, 0.035, 0x6e5846, x + side * size * 0.3, y + size / 2, z + size / 2 + 0.025);
+  }
+}
+
+function dumpster(s, lid, x, z) {
+  s.box(1.8, 1.05, 0.87, 0x496b60, x, 0.68, z);
+  s.box(1.9, 0.09, 0.96, 0x354f47, x, 1.23, z);
+  for (const sx of [-0.68, 0.68]) {
+    s.box(0.06, 0.86, 0.035, 0x6a8775, x + sx, 0.7, z + 0.45);
+    for (const sz of [-0.3, 0.3]) s.cyl(0.1, 0.1, 0.12, 8, DARK, x + sx, 0.12, z + sz, Math.PI / 2);
+  }
+  s.box(0.46, 0.22, 0.018, 0xc9c4a7, x, 0.81, z + 0.452);
+  s.box(0.12, 0.035, 0.025, 0x5f7962, x - 0.08, 0.82, z + 0.465, 0, 0, 0.6);
+  s.box(0.12, 0.035, 0.025, 0x5f7962, x + 0.04, 0.8, z + 0.465, 0, 0, -0.6);
+  const top = new Shape();
+  top.box(1.94, 0.1, 1.0, 0x313f3e, 0, 0.02, 0.47);
+  for (let i = 0; i < 7; i++) top.box(0.07, 0.04, 0.83, 0x4c5a55, -0.78 + i * 0.26, 0.09, 0.47);
+  top.box(0.36, 0.05, 0.1, 0x6f7971, 0, 0.12, 0.83);
+  lid.add(meshOf(top));
+  lid.position.set(x, 1.28, z - 0.47);
+}
+
+function truck(s, x, z, accent) {
+  // The truck faces down the alley. The short cab keeps the doorway clear.
+  const paint = 0xddd3bc, trim = mix(accent, 0x687579, 0.65);
+  s.box(2.55, 0.19, 1.65, DARK, x, 0.38, z);
+  s.box(1.64, 1.62, 1.61, paint, x + 0.39, 1.29, z);
+  s.box(0.8, 0.92, 1.58, paint, x - 0.84, 0.93, z);
+  s.box(0.78, 0.63, 1.52, paint, x - 0.84, 1.69, z);
+  s.box(0.035, 0.43, 1.32, 0x627c83, x - 1.25, 1.72, z);
+  for (const side of [-1, 1]) {
+    const edge = z + side * 0.82;
+    s.box(0.55, 0.43, 0.025, 0x6c858a, x - 0.83, 1.72, edge);
+    s.box(0.12, 0.025, 0.045, STEEL, x - 0.52, 1.31, edge);
+    s.box(1.64, 0.24, 0.035, trim, x + 0.39, 1.4, edge);
+    s.box(0.055, 1.53, 0.04, 0xc2bcae, x + 1.19, 1.3, edge);
+    for (const wx of [-0.86, 0.83]) {
+      s.cyl(0.31, 0.31, 0.2, 10, 0x2c3032, x + wx, 0.35, z + side * 0.8, Math.PI / 2);
+      s.cyl(0.17, 0.17, 0.22, 8, STEEL, x + wx, 0.35, z + side * 0.82, Math.PI / 2);
+    }
+    s.box(0.06, 0.13, 0.19, 0xd6b875, x - 1.29, 0.92, z + side * 0.54);
+    s.box(0.06, 0.12, 0.14, 0xa9543d, x + 1.24, 0.68, z + side * 0.58);
+  }
+  s.box(0.1, 0.15, 1.69, STEEL, x - 1.3, 0.6, z);
+  s.box(0.03, 0.2, 0.68, DARK, x - 1.31, 0.86, z);
+  s.box(0.04, 0.13, 0.32, 0xdad5bc, x - 1.37, 0.58, z);
+  s.box(1.73, 0.08, 1.7, 0xf0e7d3, x + 0.39, 2.14, z);
+}
+
+function buildAlley(cuisine) {
+  const { width: W, height: H } = ALLEY_SIZE;
+  const root = new THREE.Group(), s = new Shape(), glow = new Shape(false);
+  const wall = mix(cuisine.palette.trim, 0x987667, 0.78);
+  const mortar = shade(wall, 0.8), pavement = 0x78817f;
+  s.box(W, 0.22, H, 0x525d60, W / 2, -0.14, H / 2);
+  s.box(W - 0.6, 0.06, H - 0.6, pavement, W / 2, -0.03, H / 2);
+  // Broad slabs and a drain read at the same scale as the interior floor.
+  for (let x = 1; x < W - 1; x += 2) s.box(0.025, 0.008, H - 0.7, 0x656f6e, x, 0.006, H / 2);
+  for (let z = 1; z < H; z += 2) s.box(W - 0.7, 0.008, 0.025, 0x656f6e, W / 2, 0.006, z);
+  s.box(0.7, 0.015, 0.48, 0x434e51, 5.3, 0.035, 5.35);
+  for (let i = 0; i < 7; i++) s.box(0.035, 0.02, 0.45, 0x87908c, 5.04 + i * 0.085, 0.05, 5.35);
+  for (const x of [0.35, W - 0.65]) s.box(0.3, 0.18, H - 0.2, 0xa0a394, x, 0.05, H / 2);
+  s.box(W, 0.15, 0.25, 0xa0a394, W / 2, 0.04, H - 0.2);
+
+  // Right-hand wall is the restaurant exterior. Its door matches the sim tile.
+  s.box(0.65, 3.55, H, wall, W - 0.35, 1.775, H / 2);
+  s.box(0.7, 0.22, H, 0xc0b49b, W - 0.35, 3.55, H / 2);
+  s.box(0.69, 0.4, H, 0x746e63, W - 0.35, 0.2, H / 2);
+  for (let y = 0.55; y < 3.5; y += 0.3) {
+    s.box(0.012, 0.02, H - 0.1, mortar, W - 0.682, y, H / 2);
+    for (let z = 0.5 + (Math.round(y * 10) % 2) * 0.32; z < H; z += 0.75) s.box(0.015, 0.27, 0.02, mortar, W - 0.685, y + 0.15, z);
+  }
+  const door = ALLEY_OBJECTS.find((o) => o.type === 'backdoor');
+  const dz = door.z + 0.5, dx = W - 0.72;
+  s.box(0.07, 2.28, 1.14, 0x3c4c4b, dx, 1.14, dz);
+  s.box(0.095, 0.1, 1.3, 0xd2c5a5, dx - 0.025, 2.3, dz);
+  for (const side of [-1, 1]) s.box(0.095, 2.3, 0.1, 0xd2c5a5, dx - 0.025, 1.15, dz + side * 0.62);
+  s.box(0.11, 0.06, 0.46, STEEL, dx - 0.06, 1.03, dz);
+  s.box(0.42, 0.08, 1.32, 0xaaa68e, dx - 0.16, 0.055, dz);
+  s.box(0.08, 0.32, 0.3, 0x263c41, dx - 0.045, 1.83, dz);
+  // Pipework, meter, and wall-mounted extraction fan.
+  for (const z of [0.8, 6.85]) {
+    s.cyl(0.055, 0.055, 3.2, 7, 0x6b7675, W - 0.82, 1.65, z);
+    for (const y of [0.55, 1.8, 2.9]) s.box(0.16, 0.06, 0.17, 0x4e5b5d, W - 0.79, y, z);
+  }
+  s.box(0.26, 0.6, 0.45, 0xa1aaa3, W - 0.84, 1.28, 5.1);
+  s.cyl(0.13, 0.13, 0.05, 10, 0xd2d4bd, W - 1, 1.35, 5.1, 0, 0, Math.PI / 2);
+  s.box(0.25, 0.72, 1.05, 0x717c7a, W - 0.8, 2.65, 1.7);
+  for (let i = 0; i < 6; i++) s.box(0.035, 0.035, 0.86, 0x3b4848, W - 0.95, 2.4 + i * 0.1, 1.7);
+  const lights = [];
+  for (const z of [3.5, 6.2]) {
+    s.box(0.18, 0.12, 0.32, 0x3a4446, W - 0.79, 2.72, z);
+    s.box(0.38, 0.08, 0.4, 0x47514e, W - 0.92, 2.68, z);
+    glow.box(0.22, 0.075, 0.27, 0xffd79b, W - 0.92, 2.61, z);
+    const light = new THREE.PointLight(0xffd7a1, 3, 4.5, 2);
+    light.position.set(W - 1.1, 2.5, z);
+    root.add(light); lights.push(light);
+  }
+
+  // Timber end fence and a low side wall enclose the yard without hiding play.
+  s.box(W - 0.9, 0.11, 0.12, 0x645849, W / 2 - 0.2, 0.55, 0.55);
+  s.box(W - 0.9, 0.11, 0.12, 0x645849, W / 2 - 0.2, 1.45, 0.55);
+  for (let x = 0.5; x < W - 0.7; x += 0.33) s.box(0.29, 1.85, 0.08, shade(WOOD, 0.93 + (Math.round(x * 10) % 3) * 0.05), x, 0.95, 0.43);
+  for (let x = 0.5; x < W - 0.5; x += 2.6) s.box(0.14, 2.0, 0.17, 0x675c4e, x, 1, 0.5);
+  s.box(0.5, 0.66, H - 0.7, wall, 0.4, 0.33, H / 2);
+  s.box(0.57, 0.1, H - 0.65, 0xa69e89, 0.4, 0.71, H / 2);
+
+  const bin = ALLEY_OBJECTS.find((o) => o.type === 'dumpster'), lid = new THREE.Group();
+  dumpster(s, lid, bin.x + bin.w / 2, bin.z + 0.5);
+  root.add(lid);
+  addBag(s, 1.5, 0.05, 1.48, 0.8);
+  const smoke = ALLEY_OBJECTS.find((o) => o.type === 'smoking');
+  s.cyl(0.17, 0.23, 0.12, 10, DARK, smoke.x + 0.5, 0.08, smoke.z + 0.5);
+  s.cyl(0.055, 0.055, 0.89, 8, STEEL, smoke.x + 0.5, 0.56, smoke.z + 0.5);
+  s.cyl(0.18, 0.14, 0.09, 10, STEEL, smoke.x + 0.5, 1.04, smoke.z + 0.5);
+  s.cyl(0.13, 0.13, 0.012, 10, 0x3b4241, smoke.x + 0.5, 1.09, smoke.z + 0.5);
+  const van = ALLEY_OBSTACLES.find((o) => o.type === 'truck');
+  truck(s, van.x + van.w / 2, van.z + van.h / 2, cuisine.palette.accent);
+  const boxes = ALLEY_OBSTACLES.find((o) => o.type === 'crates');
+  crate(s, boxes.x + 0.5, 0.06, boxes.z + 0.5);
+  crate(s, boxes.x + 0.5, 0.71, boxes.z + 0.5, 0.55);
+  crate(s, boxes.x + 0.5, 0.06, boxes.z + 1.4, 0.7);
+  for (const [x, z] of [[0.9, 2.8], [4.8, 0.8], [10.8, 7.25], [0.9, 6.9]]) {
+    for (let i = 0; i < 4; i++) s.cone(0.035, 0.24 + i * 0.03, 3, i % 2 ? 0x6a7955 : 0x839168, x + (i - 1.5) * 0.055, 0.16, z, 0.15, i, (i - 1.5) * 0.25);
+  }
+  // Small, grounded litter and pavement repairs keep the main path readable.
+  for (const [x, z, turn] of [[4.3, 1.2, 0.4], [1.1, 4, -0.3], [7.4, 6.8, 0.9]]) s.box(0.2, 0.012, 0.15, 0xc4bda5, x, 0.01, z, 0, turn);
+  s.box(1.4, 0.008, 0.9, 0x6d7777, 4.7, 0.006, 3.4, 0, 0.1);
+  root.add(meshOf(s), meshOf(glow, MAT.glow, false, false));
+  root.visible = false;
+  return { root, lights, lid };
+}
+
+return { trashBagModel, cigaretteModel, buildAlley };
 })();
 
 // ---- src/view/food.js ----
-__m.food = (() => {
+__m.view_food = (() => {
 // Food, plates, drinks, boxes. Every held or placed item gets a merged mesh
 // built from its signature and cached, so identical items share geometry.
 
-const { Shape, MAT, shade } = __m.shape;
-const { ING, stateInfo } = __m.ingredients;
-const { CUISINES } = __m.cuisines;
-const { itemSig } = __m.items;
+const { Shape, MAT, shade } = __m.view_shape;
+const { ING, stateInfo } = __m.data_ingredients;
+const { CUISINES } = __m.data_cuisines;
+const { itemSig } = __m.sim_items;
 const WHITE = 0xf6f3ec, RIM = 0xe2ddd2, STEEL = 0xc5cbd0, CARD = 0xc8995c, CARD_D = 0xa87a44;
 
 /** Adds one ingredient shape resting on y, centered on x/z, scaled by k. */
@@ -4063,10 +5259,11 @@ function drinkShape(s, color, glass, k) {
 function boxShape(s, ing, k) {
   const d = ING[ing];
   s.box(0.42 * k, 0.3 * k, 0.34 * k, CARD, 0, 0.15 * k, 0);
-  s.box(0.43 * k, 0.04 * k, 0.345 * k, CARD_D, 0, 0.28 * k, 0);
-  s.box(0.16 * k, 0.12 * k, 0.005 * k, 0xf4f0e6, 0, 0.16 * k, 0.172 * k);
-  s.box(0.1 * k, 0.07 * k, 0.006 * k, d.look.color, 0, 0.16 * k, 0.175 * k);
-  addIng(s, d.look.shape, d.look.color, 0, 0.3 * k, 0, k * 0.7);
+  // Keep tape and labels above the box faces, below the next stack layer.
+  s.box(0.06 * k, 0.006 * k, 0.34 * k, CARD_D, 0, 0.303 * k, 0);
+  for (const side of [-1, 1]) s.box(0.06 * k, 0.3 * k, 0.006 * k, CARD_D, 0, 0.15 * k, side * 0.173 * k);
+  s.box(0.16 * k, 0.12 * k, 0.006 * k, 0xf4f0e6, 0, 0.16 * k, 0.179 * k);
+  s.box(0.1 * k, 0.07 * k, 0.004 * k, d.look.color, 0, 0.16 * k, 0.184 * k);
 }
 
 function dirtyShape(s, n, k) {
@@ -4132,30 +5329,38 @@ return { addIng, itemMesh, potContents };
 })();
 
 // ---- src/view/scene.js ----
-__m.scene = (() => {
+__m.view_scene = (() => {
 // The 3D view: renderer, camera, light rig, and syncing models to the game
 // state every frame. Knows nothing about networking.
 
-const { CUISINES } = __m.cuisines;
-const { MAP } = __m.layout;
-const { footprint, seatsOf, buildGrid, walkable } = __m.world;
-const { itemSig } = __m.items;
-const { stepFor } = __m.ingredients;
-const { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } = __m.models;
-const { buildRoom, skyColor } = __m.room;
-const { itemMesh, potContents } = __m.food;
-const { Shape, MAT, meshOf } = __m.shape;
-const { mix } = __m.shape;
-const RW = MAP[0].length, RH = MAP.length;
+const { CUISINES } = __m.data_cuisines;
+const { roomSize, layoutTile } = __m.data_layout;
+const { ALLEY_SIZE, ALLEY_OBJECTS, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, playerArea } = __m.data_alley;
+const { footprint, seatsOf, buildGrid, walkable, isWallTile } = __m.sim_world;
+const { itemSig } = __m.sim_items;
+const { stepFor } = __m.data_ingredients;
+const { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } = __m.view_models;
+const { buildRoom, skyColor, disposeRoom } = __m.view_room;
+const { buildAlley, trashBagModel, cigaretteModel } = __m.view_alley;
+const { itemMesh, potContents } = __m.view_food;
+const { Shape, MAT, meshOf } = __m.view_shape;
+const { mix } = __m.view_shape;
+const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
+const _shadowMatrix = new THREE.Matrix4();
+const _shadowPosition = new THREE.Vector3();
+const _shadowScale = new THREE.Vector3();
+const _shadowRotation = new THREE.Quaternion();
 
 class View {
   constructor(container) {
     this.container = container;
+    this.dimensions = roomSize({ mode: 'arcade' });
+    this.area = 'restaurant';
     const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.08;
     r.domElement.id = 'game-canvas';
@@ -4163,16 +5368,17 @@ class View {
     this.renderer = r;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1e1a18);
+    scene.background = new THREE.Color(0x29252d);
+    scene.fog = new THREE.Fog(0x29252d, 30, 68);
     this.scene = scene;
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.5, 120);
     this.camMode = 'overview';
     this.camPos = new THREE.Vector3(10, 22, 30);
     this.camLook = new THREE.Vector3(10, 0, 7.5);
 
-    this.hemi = new THREE.HemisphereLight(0xfff4e4, 0x8a6a50, 1.35);
+    this.hemi = new THREE.HemisphereLight(0xfff1df, 0x536174, 1.2);
     scene.add(this.hemi);
-    const sun = new THREE.DirectionalLight(0xfff2dc, 2.1);
+    const sun = new THREE.DirectionalLight(0xffdfbd, 2.0);
     sun.position.set(-6, 22, 16);
     sun.target.position.set(10, 0, 7);
     sun.castShadow = true;
@@ -4192,6 +5398,9 @@ class View {
 
     this.world = new THREE.Group();
     scene.add(this.world);
+    this.layoutGuide = new LayoutGuide();
+    this.world.add(this.layoutGuide.root);
+    this.contacts = new ContactShadows(scene);
     this.objs = new Map();
     this.chefs = new Map();
     this.guests = new Map();
@@ -4202,6 +5411,12 @@ class View {
     this.focus = null;
     window.addEventListener('resize', () => this.resize());
     this.resize();
+  }
+
+  setInsetLeft(px) {
+    if (Math.abs((this.insetLeft || 0) - px) < 4) return;
+    this.insetLeft = px;
+    this.fitOverview();
   }
 
   resize() {
@@ -4216,35 +5431,45 @@ class View {
 
   /** Places the overview camera so the whole room fits between the HUD bars. */
   fitOverview() {
-    const pitch = THREE.MathUtils.degToRad(54);
-    const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
+    const outside = this.area === 'alley';
+    const { width: RW, height: RH } = outside ? ALLEY_SIZE : this.dimensions;
+    const pitch = THREE.MathUtils.degToRad(outside ? 49 : 54);
+    const dir = new THREE.Vector3(outside ? -0.24 : 0, Math.sin(pitch), Math.cos(pitch)).normalize();
     const cam = this.camera;
+    cam.far = Math.max(120, Math.hypot(RW, RH) * 8);
+    cam.updateProjectionMatrix();
     const pts = [];
-    for (const x of [0.2, RW - 0.2]) {
-      pts.push(new THREE.Vector3(x, 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, 0.5, RH), new THREE.Vector3(x, 0, RH));
+    for (const x of [-0.05, RW + 0.05]) {
+      pts.push(new THREE.Vector3(x, outside ? 3.75 : 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, outside ? 3.75 : 0.5, RH + 0.05), new THREE.Vector3(x, 0, RH + 0.05));
     }
-    const mt = 0.13, mb = 0.1, ms = 0.015;
+    const W = this.container.clientWidth || 1;
+    const mt = 0.1, mb = 0.09, ms = 0.03, ml = Math.min(0.3, (this.insetLeft || 0) / W);
     const target = new THREE.Vector3();
-    const fits = (tz, d) => {
-      target.set(RW / 2, 0, tz);
+    const fits = (tz, d, tx = RW / 2) => {
+      target.set(tx, 0, tz);
       cam.position.copy(target).addScaledVector(dir, d);
       cam.lookAt(target);
       cam.updateMatrixWorld();
       for (const p of pts) {
         _v.copy(p).project(cam);
         const sx = (_v.x + 1) / 2, sy = (1 - _v.y) / 2;
-        if (sx < ms || sx > 1 - ms || sy < mt || sy > 1 - mb) return false;
+        if (sx < ml + ms || sx > 1 - ms || sy < mt || sy > 1 - mb) return false;
       }
       return true;
     };
-    let best = { d: Infinity, tz: RH / 2 };
-    for (let tz = RH / 2 - 3; tz <= RH / 2 + 3; tz += 0.25) {
-      let lo = 6, hi = 90;
-      if (!fits(tz, hi)) continue;
-      for (let i = 0; i < 26; i++) { const d = (lo + hi) / 2; if (fits(tz, d)) hi = d; else lo = d; }
-      if (hi < best.d) best = { d: hi, tz };
+    let best = { d: Infinity, tz: RH / 2, tx: RW / 2 };
+    const txs = ml > 0.01 ? [RW / 2, RW / 2 - 1, RW / 2 - 2, RW / 2 - 3, RW / 2 - 4] : [RW / 2];
+    for (const tx of txs) {
+      for (let tz = RH / 2 - 3; tz <= RH / 2 + 3; tz += 0.25) {
+        let lo = 6, hi = Math.max(90, Math.hypot(RW, RH) * 6);
+        if (!fits(tz, hi, tx)) continue;
+        for (let i = 0; i < 24; i++) { const d = (lo + hi) / 2; if (fits(tz, d, tx)) hi = d; else lo = d; }
+        if (hi < best.d) best = { d: hi, tz, tx };
+      }
     }
-    target.set(RW / 2, 0, best.tz);
+    target.set(best.tx, 0, best.tz);
+    this.scene.fog.near = Math.max(30, best.d - 12);
+    this.scene.fog.far = Math.max(68, best.d + 26);
     this.overview = { pos: target.clone().addScaledVector(dir, best.d), look: target.clone() };
     if (!this.camInit) { this.camPos.copy(this.overview.pos); this.camLook.copy(this.overview.look); this.camInit = true; }
     cam.position.copy(this.camPos);
@@ -4271,16 +5496,31 @@ class View {
   // ------------------------------------------------------------ static build
 
   ensureLayout(state) {
+    const size = roomSize(state);
+    const dimensionsChanged = size.width !== this.dimensions.width || size.height !== this.dimensions.height;
+    if (dimensionsChanged) {
+      this.dimensions = size;
+      this.fitOverview();
+    }
     const decorKey = ['decor1', 'decor2', 'decor3'].map((k) => state.upgrades[k] ? 1 : 0).join('');
-    const roomKey = state.cuisine + '|' + state.name + '|' + decorKey;
-    if (roomKey !== this.roomKey) {
-      if (this.room) { this.world.remove(this.room.root); disposeTree(this.room.root); }
-      this.room = buildRoom(CUISINES[state.cuisine], state.name, state.upgrades);
+    const roomKey = `${state.cuisine}|${state.name}|${decorKey}|${state.mode}|${JSON.stringify(state.building || null)}`;
+    const roomChanged = roomKey !== this.roomKey;
+    if (roomChanged) {
+      if (this.room) { this.world.remove(this.room.root); disposeRoom(this.room); }
+      this.room = buildRoom(CUISINES[state.cuisine], state.name, state.upgrades, state);
       this.world.add(this.room.root);
       this.roomKey = roomKey;
       this.layoutKey = '';
+      this.placeLights(this.area === 'alley' ? ALLEY_SIZE : size);
     }
-    const key = state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
+    if (this.alleyKey !== state.cuisine) {
+      if (this.alley) { this.world.remove(this.alley.root); disposeTree(this.alley.root); }
+      this.alley = buildAlley(CUISINES[state.cuisine]);
+      this.world.add(this.alley.root);
+      this.alleyKey = state.cuisine;
+    }
+    this.layoutGuide.setState(state);
+    const key = `${size.width}:${size.height}|` + state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
     if (key === this.layoutKey) return;
     this.layoutKey = key;
     const pal = CUISINES[state.cuisine].palette;
@@ -4289,7 +5529,7 @@ class View {
     for (const o of state.objects) {
       seen.add(o.id);
       let e = this.objs.get(o.id);
-      if (e && (e.x !== o.x || e.z !== o.z)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(o.id); e = null; }
+      if (e && (roomChanged || e.x !== o.x || e.z !== o.z)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(o.id); e = null; }
       if (e) continue;
       e = this.buildObject(o, pal, grid, state);
       this.objs.set(o.id, e);
@@ -4298,13 +5538,28 @@ class View {
     for (const [id, e] of this.objs) {
       if (!seen.has(id)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(id); }
     }
+    this.contacts.syncStatic(state);
+  }
+
+  placeLights({ width, height }) {
+    const centerX = width / 2, centerZ = height / 2;
+    this.sun.position.set(centerX - 16, 22, centerZ + 8.5);
+    this.sun.target.position.set(centerX, 0, centerZ - 0.5);
+    const span = Math.max(15, width * 0.65);
+    Object.assign(this.sun.shadow.camera, { left: -span, right: span, top: Math.max(13, height * 0.8), bottom: -Math.max(13, height * 0.8), far: Math.max(60, width + height) });
+    this.sun.shadow.camera.updateProjectionMatrix();
+    const diningZ = (6 + height - 1) / 2;
+    for (const [index, [x, z]] of [[width * 0.3, diningZ], [width * 0.7, diningZ], [centerX, 2.5]].entries()) {
+      this.lamps[index].position.set(x, 2.4, z);
+      this.lamps[index].distance = Math.max(9, width * 0.4);
+    }
   }
 
   buildObject(o, pal, grid, state) {
     const e = { id: o.id, type: o.type, x: o.x, z: o.z, sig: '', item: null };
     if (o.type === 'table') {
       const cloth = CUISINES[state.cuisine].palette.cloth;
-      e.group = tableModel(o.seats, pal, cloth);
+      e.group = tableModel(o.seats, pal, cloth, state.cuisine);
       e.group.position.set(o.x, 0, o.z);
       e.top = e.group.userData.top;
       e.dyn = {};
@@ -4332,15 +5587,35 @@ class View {
 
   sync(state, dt, opts = {}) {
     this.t += dt;
+    const area = opts.area === 'alley' ? 'alley' : 'restaurant';
+    const areaChanged = area !== this.area;
+    if (areaChanged) {
+      if (area === 'alley') this.restaurantZoom = this.zoomTarget;
+      this.area = area;
+      this.zoom = this.zoomTarget = area === 'alley' ? 1 : (this.restaurantZoom ?? DEFAULT_ZOOM);
+      this.camMode = this.zoomTarget > 0.02 ? 'follow' : 'overview';
+      this.snapCamera = true;
+    }
     this.ensureLayout(state);
     this.state = state;
+    if (areaChanged) {
+      this.placeLights(area === 'alley' ? ALLEY_SIZE : this.dimensions);
+      this.fitOverview();
+      this.camPos.copy(this.overview.pos);
+      this.camLook.copy(this.overview.look);
+    }
+    const inside = this.area === 'restaurant';
+    this.room.root.visible = inside;
+    this.alley.root.visible = !inside;
+    this.contacts.staticLayer.visible = inside;
     for (const o of state.objects) {
       const e = this.objs.get(o.id);
-      if (e) this.syncObject(e, o, state, dt);
+      if (e) { e.group.visible = inside; this.syncObject(e, o, state, dt); }
     }
     this.syncPeople(state, dt, opts);
+    this.contacts.syncPeople(this.chefs, this.guests);
     this.syncLighting(state, dt);
-    this.particles.update(dt);
+    this.particles.update(dt, this.area);
     this.updateCamera(dt, opts);
   }
 
@@ -4369,7 +5644,7 @@ class View {
         if (e.dyn.glow) e.dyn.glow.material.opacity += ((active ? 0.85 + Math.sin(t * 9) * 0.1 : 0) - e.dyn.glow.material.opacity) * Math.min(1, dt * 6);
         if (e.dyn.basket) e.dyn.basket.position.y = COUNTER_H + (active ? -0.08 : 0.03);
         if (o.type === 'oven' && e.item) e.item.visible = true;
-        if (active) {
+        if (active && this.area === 'restaurant') {
           const burning = it.over > 0 && o.type !== 'pot' && it.q < 1;
           e.puff = (e.puff || 0) - dt;
           if (e.puff <= 0) {
@@ -4377,7 +5652,7 @@ class View {
             const p = e.group.position;
             this.particles.puff(p.x + (Math.random() - 0.5) * 0.3, e.slotY + 0.15, p.z + (Math.random() - 0.5) * 0.3, burning ? 0x3a3432 : 0xf4f0ea, burning ? 0.7 : 0.45);
           }
-        } else if (it && it.st === 'burnt') {
+        } else if (it && it.st === 'burnt' && this.area === 'restaurant') {
           e.puff = (e.puff || 0) - dt;
           if (e.puff <= 0) { e.puff = 0.1; const p = e.group.position; this.particles.puff(p.x, e.slotY + 0.2, p.z, 0x2a2624, 0.9); }
         }
@@ -4427,7 +5702,21 @@ class View {
           e.item = o.n ? itemMesh(state, { k: 'dirty', n: Math.min(o.n, 8) }, 1) : null;
           if (e.item) { e.item.position.set(0, -0.02, 0.05); e.slot.add(e.item); }
         }
-        if (o.wash > 0 && Math.random() < dt * 8) { const p = e.group.position; this.particles.puff(p.x, COUNTER_H + 0.1, p.z, 0xd8eef8, 0.3, true); }
+        if (this.area === 'restaurant' && o.wash > 0 && Math.random() < dt * 8) { const p = e.group.position; this.particles.puff(p.x, COUNTER_H + 0.1, p.z, 0xd8eef8, 0.3, true); }
+        break;
+      }
+      case 'bin': {
+        const full = (o.trash || 0) >= TRASH_CAPACITY;
+        if (e.sig !== String(full)) {
+          e.sig = String(full);
+          if (e.item) { e.slot.remove(e.item); disposeTree(e.item); e.item = null; }
+          if (full) {
+            e.item = trashBagModel();
+            e.item.scale.setScalar(0.7);
+            e.item.position.y = 0.65;
+            e.slot.add(e.item);
+          }
+        }
         break;
       }
       case 'dock': {
@@ -4440,7 +5729,6 @@ class View {
             const m = itemMesh(state, { k: 'box', ing: b.ing }, 1);
             const col = i % 2, row = (i >> 1) % 2, lvl = i >> 2;
             m.position.set((col - 0.5) * 0.45, lvl * 0.31, (row - 0.5) * 0.4);
-            m.rotation.y = (i % 3 - 1) * 0.08;
             g.add(m);
           });
           e.item = g;
@@ -4493,7 +5781,12 @@ class View {
         c = { m, lookKey, x: p.x, z: p.z, rot: p.rot, sig: '', item: null };
         this.chefs.set(pid, c);
       }
-      const pose = poses[pid] || p;
+      const area = playerArea(p);
+      const pose = poses[pid] && playerArea(poses[pid]) === area ? poses[pid] : p;
+      if (c.area !== area || c.areaRev !== p.areaRev) { c.x = pose.x; c.z = pose.z; c.rot = pose.rot; }
+      c.area = area;
+      c.areaRev = p.areaRev;
+      c.m.root.visible = area === this.area;
       const px = c.x, pz = c.z;
       const k = pid === opts.self ? 1 : Math.min(1, dt * 14);
       c.x += (pose.x - c.x) * k;
@@ -4505,10 +5798,56 @@ class View {
       const sig = p.hand ? itemSig(p.hand) : '';
       if (sig !== c.sig) {
         c.sig = sig;
-        if (c.item) { c.m.hand.remove(c.item); c.item = null; }
-        if (p.hand) { c.item = itemMesh(state, p.hand, 1.05); c.m.hand.add(c.item); }
+        if (c.item) { c.m.hand.remove(c.item); disposeTree(c.item); c.item = null; }
+        if (p.hand) { c.item = p.hand.k === 'trash' ? trashBagModel() : itemMesh(state, p.hand, 1.05); c.m.hand.add(c.item); }
       }
       animatePerson(c.m, { speed, dt, carrying: !!p.hand, working: !!p.working, t: this.t });
+      const arm = c.m.arms[1];
+      arm.rotation.z = 0;
+      arm.scale.y = 1;
+      if (!c.cigarette) {
+        c.cigarette = cigaretteModel();
+        c.m.body.add(c.cigarette);
+      }
+      c.cigarette.visible = !!p.smoking;
+      if (p.smoking) {
+        const age = Math.max(0, SMOKE_SECONDS - p.smoking.left);
+        const cycle = age % 6, cycleId = Math.floor(age / 6);
+        const canGesture = !p.hand && !p.working;
+        c.cigarette.position.set(0.025, c.m.top + 0.71, 0.15);
+        c.cigarette.rotation.set(-0.08, 0, -0.06);
+        if (canGesture && cycle >= 2.4 && cycle < 5.8) {
+          const reach = THREE.MathUtils.smoothstep(cycle, 2.4, 3) * (1 - THREE.MathUtils.smoothstep(cycle, 5.2, 5.8));
+          const away = THREE.MathUtils.smoothstep(cycle, 3, 3.6) * (1 - THREE.MathUtils.smoothstep(cycle, 4.6, 5.2));
+          arm.rotation.x = THREE.MathUtils.lerp(arm.rotation.x, -2.46 + away * 1.25, reach);
+          arm.rotation.z = (-0.83 + away * 0.68) * reach;
+          arm.scale.y = 1 - 0.23 * reach;
+          if (cycle >= 3 && cycle < 5.2) {
+            arm.updateWorldMatrix(true, false);
+            arm.localToWorld(_v.set(0, -0.47, 0.015));
+            c.m.body.worldToLocal(_v);
+            c.cigarette.position.copy(_v);
+          }
+        }
+        if (c.m.root.visible) {
+          c.smokePuff = (c.smokePuff || 0) - dt;
+          if (c.smokePuff <= 0) {
+            c.smokePuff = 0.45;
+            c.cigarette.updateWorldMatrix(true, false);
+            c.cigarette.localToWorld(_v.set(0, 0, 0.27));
+            this.particles.puff(_v.x, _v.y, _v.z, 0xe2ded4, 0.25, false, area);
+          }
+          if (cycle >= 3.6 && c.exhaleCycle !== cycleId) {
+            c.exhaleCycle = cycleId;
+            c.m.body.updateWorldMatrix(true, false);
+            c.m.body.localToWorld(_v.set(0, c.m.top + 0.72, 0.24));
+            this.particles.exhale(_v.x, _v.y, _v.z, c.rot, area);
+          }
+        }
+      } else {
+        c.exhaleCycle = null;
+        c.smokePuff = 0;
+      }
     }
     for (const [pid, c] of this.chefs) if (!seen.has(pid)) { this.world.remove(c.m.root); disposeTree(c.m.root); this.chefs.delete(pid); }
 
@@ -4518,6 +5857,7 @@ class View {
     for (const party of state.parties) {
       const seated = ['browsing', 'ordering', 'waitingFood', 'eating', 'dessertReady', 'dessertWait', 'dessertEat', 'paying'].includes(party.state);
       for (const g of party.guests) {
+        if (g.exited) continue;
         gseen.add(g.id);
         let c = this.guests.get(g.id);
         if (!c) {
@@ -4527,6 +5867,7 @@ class View {
           this.guests.set(g.id, c);
         }
         const pose = (gpos && gpos[g.id]) || g;
+        c.m.root.visible = this.area === 'restaurant';
         const px = c.x, pz = c.z;
         const k = Math.min(1, dt * 12);
         c.x += (pose.x - c.x) * k;
@@ -4547,34 +5888,122 @@ class View {
     const sky = skyColor(state.clock, state.phase);
     this.room.winMat.color.setHex(sky);
     const evening = state.phase === 'office' ? 1 : state.phase === 'service' ? THREE.MathUtils.clamp((state.clock - 17.5 * 60) / 180, 0, 1) : 0;
-    const target = 1.35 - evening * 0.45;
+    if (this.room.outsideMat) this.room.outsideMat.color.setHex(mix(0xffffff, 0x68718c, evening * 0.7));
+    const target = 1.2 - evening * 0.35;
     this.hemi.intensity += (target - this.hemi.intensity) * Math.min(1, dt * 2);
-    this.sun.intensity += ((2.1 - evening * 1.5) - this.sun.intensity) * Math.min(1, dt * 2);
-    for (const l of this.lamps) l.intensity += ((evening * 14) - l.intensity) * Math.min(1, dt * 2);
+    this.sun.intensity += ((2.0 - evening * 1.35) - this.sun.intensity) * Math.min(1, dt * 2);
+    for (const l of this.lamps) l.intensity += ((this.area === 'restaurant' ? evening * 12 : 0) - l.intensity) * Math.min(1, dt * 2);
+    for (const l of this.alley.lights) l.intensity = 2 + evening * 5;
   }
 
-  setCameraMode(mode) { this.camMode = mode; }
+  setCameraMode(mode) {
+    this.camMode = mode;
+    this.zoomTarget = mode === 'follow' ? DEFAULT_ZOOM : 0;
+  }
+
+  /** Mouse wheel: positive delta zooms out. Zoom 0 = whole room, 1 = closest. */
+  zoomBy(delta) {
+    this.zoomTarget = Math.max(0, Math.min(1, (this.zoomTarget || 0) - delta));
+    this.camMode = this.zoomTarget > 0.02 ? 'follow' : 'overview';
+  }
 
   updateCamera(dt, opts) {
-    let pos, look;
-    if (this.camMode === 'follow' && opts.self && this.chefs.get(opts.self)) {
-      const c = this.chefs.get(opts.self);
-      look = new THREE.Vector3(c.x, 0.6, c.z - 0.6);
-      pos = look.clone().add(new THREE.Vector3(0, 9.5, 7.2));
-    } else if (this.overview) {
-      pos = this.overview.pos; look = this.overview.look;
-    } else return;
-    const k = Math.min(1, dt * 5);
+    if (!this.overview) return;
+    const { width: RW, height: RH } = this.area === 'alley' ? ALLEY_SIZE : this.dimensions;
+    if (this.zoom == null) { this.zoom = 0; }
+    if (this.zoomTarget == null) this.zoomTarget = DEFAULT_ZOOM;
+    this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, dt * 8);
+    const O = this.overview.pos, OL = this.overview.look;
+    const dir = _v.copy(O).sub(OL);
+    const d0 = dir.length();
+    dir.divideScalar(d0);
+    let fx = OL.x, fz = OL.z;
+    const c = opts.self && this.chefs.get(opts.self);
+    if (c) {
+      fx = THREE.MathUtils.clamp(c.x, 4, RW - 4);
+      fz = THREE.MathUtils.clamp(c.z - 0.3, 2.5, RH - 3);
+    }
+    const z = this.zoom;
+    const look = this._look || (this._look = new THREE.Vector3());
+    const follow = Math.min(1, z / DEFAULT_ZOOM);
+    look.set(OL.x + (fx - OL.x) * follow, OL.y + (0.5 - OL.y) * z, OL.z + (fz - OL.z) * follow);
+    // Gameplay zoom has a fixed scale even after the building grows.
+    const followDistance = Math.min(d0, 28), closeDistance = Math.min(d0, 16);
+    const dist = z <= DEFAULT_ZOOM
+      ? THREE.MathUtils.lerp(d0, followDistance, z / DEFAULT_ZOOM)
+      : THREE.MathUtils.lerp(followDistance, closeDistance, (z - DEFAULT_ZOOM) / (1 - DEFAULT_ZOOM));
+    const pos = this._pos || (this._pos = new THREE.Vector3());
+    pos.copy(look).addScaledVector(dir, dist);
+    const k = this.snapCamera ? 1 : Math.min(1, dt * 6);
+    this.snapCamera = false;
     this.camPos.lerp(pos, k);
     this.camLook.lerp(look, k);
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
   }
 
+  setLayoutMode(on, state) {
+    if (on) {
+      if (this.layoutZoom == null) this.layoutZoom = this.zoomTarget == null ? DEFAULT_ZOOM : this.zoomTarget;
+      this.zoom = this.zoomTarget = 0;
+      this.fitOverview();
+      this.camPos.copy(this.overview.pos);
+      this.camLook.copy(this.overview.look);
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(this.camLook);
+      this.layoutGuide.setPalette(CUISINES[state.cuisine].palette.accent);
+      this.layoutGuide.setState(state);
+    } else if (this.layoutZoom != null) {
+      this.zoomTarget = this.layoutZoom;
+      this.layoutZoom = null;
+      this.clearLayoutPreview();
+    }
+    this.layoutGuide.root.visible = !!on;
+    this.renderer.domElement.classList.toggle('layout-edit', !!on);
+    if (!on) { this.renderer.domElement.classList.remove('layout-dragging'); this.layoutGuide.clear(); }
+  }
+
+  setLayoutSelection(state, id) {
+    const o = id && state && state.objects.find((item) => item.id === id);
+    this.layoutGuide.setOrigin(o ? footprint(o) : null);
+  }
+
+  previewLayoutObject(state, id, x, z, valid) {
+    this.clearObjectPreview();
+    const o = state.objects.find((item) => item.id === id);
+    const e = this.objs.get(id);
+    if (!o || !e) return;
+    this.previewId = id;
+    if (o.type === 'table') e.group.position.set(x, 0, z);
+    else e.group.position.set(x + 0.5, 0, z + 0.5);
+    this.layoutGuide.setTarget({ ...footprint(o), x, z }, valid);
+  }
+
+  clearObjectPreview() {
+    if (!this.previewId || !this.state) return;
+    const o = this.state.objects.find((item) => item.id === this.previewId);
+    const e = this.objs.get(this.previewId);
+    if (o && e) {
+      if (o.type === 'table') e.group.position.set(o.x, 0, o.z);
+      else e.group.position.set(o.x + 0.5, 0, o.z + 0.5);
+    }
+    this.previewId = null;
+  }
+
+  clearLayoutPreview() {
+    this.clearObjectPreview();
+    this.layoutGuide.setTarget(null);
+  }
+
   render() { this.renderer.render(this.scene, this.camera); }
 
   /** World position of an object's slot (for overlay markers). */
   anchorOf(id) {
+    if (this.area === 'alley') {
+      const o = ALLEY_OBJECTS.find((item) => item.id === id);
+      return o ? { x: o.x + (o.type === 'backdoor' ? 0.1 : (o.w || 1) / 2), y: o.type === 'backdoor' ? 2.5 : 1.8, z: o.z + (o.h || 1) / 2 } : null;
+    }
+    if (id === BACK_DOOR.id) return { x: BACK_DOOR.x + 0.95, y: 2.5, z: BACK_DOOR.z + 0.5 };
     const e = this.objs.get(id);
     if (!e) return null;
     if (e.type === 'table') {
@@ -4588,22 +6017,26 @@ class View {
 
   chefAnchor(pid) {
     const c = this.chefs.get(pid);
-    return c ? { x: c.x, y: 2.35, z: c.z } : null;
+    return c && c.m.root.visible ? { x: c.x, y: 2.35, z: c.z } : null;
   }
 
   guestAnchor(id) {
     const c = this.guests.get(id);
-    return c ? { x: c.x, y: 1.9, z: c.z } : null;
+    return c && c.m.root.visible ? { x: c.x, y: 1.9, z: c.z } : null;
   }
 
   clear() {
     for (const [, e] of this.objs) { this.world.remove(e.group); disposeTree(e.group); }
     this.objs.clear();
-    for (const [, c] of this.chefs) this.world.remove(c.m.root);
+    for (const [, c] of this.chefs) { this.world.remove(c.m.root); disposeTree(c.m.root); }
     this.chefs.clear();
-    for (const [, c] of this.guests) this.world.remove(c.m.root);
+    for (const [, c] of this.guests) { this.world.remove(c.m.root); disposeTree(c.m.root); }
     this.guests.clear();
-    if (this.room) { this.world.remove(this.room.root); this.room = null; }
+    if (this.room) { this.world.remove(this.room.root); disposeRoom(this.room); this.room = null; }
+    if (this.alley) { this.world.remove(this.alley.root); disposeTree(this.alley.root); this.alley = null; }
+    this.alleyKey = '';
+    this.particles.clear();
+    this.contacts.clear();
     this.layoutKey = ''; this.roomKey = '';
   }
 }
@@ -4629,63 +6062,276 @@ function lerpAngle(a, b, t) {
 
 function disposeTree(obj) {
   obj.traverse((o) => {
-    if (o.isMesh && o.material && o.material !== MAT.solid && o.material !== MAT.glow && o.material.dispose && !o.userData.sig) {
+    // Food meshes with a signature share cached geometry between instances.
+    if (!o.isMesh || o.userData.sig) return;
+    if (o.geometry) o.geometry.dispose();
+    if (o.material && o.material !== MAT.solid && o.material !== MAT.glow && o.material !== MAT.glass && o.material.dispose) {
       if (o.material.map) o.material.map.dispose();
       o.material.dispose();
     }
   });
 }
 
+class LayoutGuide {
+  constructor() {
+    this.root = new THREE.Group();
+    this.root.visible = false;
+    this.gridMat = new THREE.MeshBasicMaterial({ color: 0x48b7c4, vertexColors: true, transparent: true, opacity: 0.58, depthWrite: false });
+    this.grid = new THREE.Mesh(new THREE.BufferGeometry(), this.gridMat);
+    this.grid.renderOrder = 4;
+    this.root.add(this.grid);
+    this.origin = this.marker(0xf0c060, 0.28);
+    this.target = this.marker(0x54bd68, 0.52);
+    this.root.add(this.origin, this.target);
+    this.key = '';
+  }
+
+  setState(state) {
+    const { width: RW, height: RH } = roomSize(state);
+    const key = `${state.mode}:${RW}:${RH}:${JSON.stringify(state.building?.divider || null)}`;
+    if (key === this.key) return;
+    this.key = key;
+    const gridShape = new Shape(false);
+    for (let z = 1; z < RH - 1; z++) {
+      for (let x = 1; x < RW - 1; x++) {
+        if (isWallTile(state, x, z) || layoutTile(state, x, z) === 'D') continue;
+        gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.06);
+        gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.94);
+        gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.06, 0.035, z + 0.5);
+        gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.94, 0.035, z + 0.5);
+      }
+    }
+    this.grid.geometry.dispose();
+    this.grid.geometry = gridShape.build();
+  }
+
+  marker(color, opacity) {
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 0.035, 1), material);
+    mesh.visible = false;
+    mesh.renderOrder = 5;
+    return mesh;
+  }
+
+  setPalette(color) { this.gridMat.color.setHex(color); }
+
+  place(mesh, f, y) {
+    if (!f) { mesh.visible = false; return; }
+    mesh.visible = true;
+    mesh.position.set(f.x + f.w / 2, y, f.z + f.h / 2);
+    mesh.scale.set(Math.max(0.08, f.w - 0.1), 1, Math.max(0.08, f.h - 0.1));
+  }
+
+  setOrigin(f) { this.place(this.origin, f, 0.055); }
+
+  setTarget(f, valid = true) {
+    this.target.material.color.setHex(valid ? 0x54bd68 : 0xd84c3f);
+    this.place(this.target, f, 0.08);
+  }
+
+  clear() { this.setOrigin(null); this.setTarget(null); }
+}
+
+class ContactShadows {
+  constructor(scene) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 3, 32, 32, 31);
+    gradient.addColorStop(0, 'rgba(0,0,0,0.62)');
+    gradient.addColorStop(0.55, 'rgba(0,0,0,0.24)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    geometry.rotateX(-Math.PI / 2);
+    this.staticLayer = this.makeLayer(geometry, texture, 96, 0.25);
+    this.peopleLayer = this.makeLayer(geometry, texture, 40, 0.32);
+    scene.add(this.staticLayer, this.peopleLayer);
+  }
+
+  makeLayer(geometry, texture, count, opacity) {
+    const material = new THREE.MeshBasicMaterial({ color: 0x2a1b18, map: texture, transparent: true, opacity, depthWrite: false, toneMapped: false });
+    const layer = new THREE.InstancedMesh(geometry, material, count);
+    layer.count = 0;
+    layer.frustumCulled = false;
+    layer.renderOrder = 1;
+    return layer;
+  }
+
+  set(layer, index, x, z, sx, sz) {
+    _shadowMatrix.compose(_shadowPosition.set(x, 0.012, z), _shadowRotation.identity(), _shadowScale.set(sx, 1, sz));
+    layer.setMatrixAt(index, _shadowMatrix);
+  }
+
+  syncStatic(state) {
+    let n = 0;
+    for (const o of state.objects) {
+      if (n >= this.staticLayer.instanceMatrix.count) break;
+      if (o.type === 'table') {
+        if (o.seats === 4) this.set(this.staticLayer, n++, o.x + 1, o.z + 1.5, 2.15, 1.65);
+        else this.set(this.staticLayer, n++, o.x + 1.5, o.z + 0.5, 1.65, 0.92);
+      } else {
+        this.set(this.staticLayer, n++, o.x + 0.5, o.z + 0.5, 0.86, 0.72);
+      }
+    }
+    this.staticLayer.count = n;
+    this.staticLayer.instanceMatrix.needsUpdate = true;
+  }
+
+  syncPeople(chefs, guests) {
+    let n = 0;
+    for (const people of [chefs, guests]) {
+      for (const [, person] of people) {
+        if (!person.m.root.visible) continue;
+        if (n >= this.peopleLayer.instanceMatrix.count) break;
+        this.set(this.peopleLayer, n++, person.x, person.z, 0.62, 0.42);
+      }
+    }
+    this.peopleLayer.count = n;
+    this.peopleLayer.instanceMatrix.needsUpdate = true;
+  }
+
+  clear() {
+    this.staticLayer.count = 0;
+    this.peopleLayer.count = 0;
+  }
+}
+
 /** Cheap steam and smoke puffs. */
+function smallFade(t) { return Math.min(1, t * 8); }
+
 class Particles {
   constructor(scene) {
     this.pool = [];
     this.live = [];
     this.geo = new THREE.IcosahedronGeometry(0.09, 0);
+    this.smokeGeo = new THREE.SphereGeometry(0.09, 7, 5);
     this.scene = scene;
   }
-  puff(x, y, z, color, size = 0.5, small = false) {
+  puff(x, y, z, color, size = 0.5, small = false, area = 'restaurant') {
     let p = this.pool.pop();
     if (!p) {
       p = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false }));
       this.scene.add(p);
     }
     p.material.color.setHex(color);
+    p.geometry = this.geo;
     p.visible = true;
     p.position.set(x, y, z);
     p.userData.life = 0;
+    p.userData.area = area;
     p.userData.max = small ? 0.5 : 1.2;
     p.userData.size = size * (small ? 0.5 : 1);
+    p.userData.opacity = 0.48;
+    p.userData.rise = 0.58;
     p.userData.vx = (Math.random() - 0.5) * 0.2;
     p.userData.vz = (Math.random() - 0.5) * 0.2;
+    p.userData.wobble = Math.random() * Math.PI * 2;
+    p.userData.spin = (Math.random() - 0.5) * 1.8;
     this.live.push(p);
   }
-  update(dt) {
+  exhale(x, y, z, rot, area) {
+    for (let i = 0; i < 3; i++) {
+      this.puff(x + Math.sin(rot) * i * 0.05, y + i * 0.035, z + Math.cos(rot) * i * 0.05, 0xe5e3d9, 1.15 - i * 0.12, false, area);
+      const p = this.live[this.live.length - 1];
+      p.geometry = this.smokeGeo;
+      p.userData.max = 1.8;
+      p.userData.opacity = 0.22;
+      p.userData.rise = 0.65;
+      p.userData.vx = Math.sin(rot) * 0.18 + (i - 1) * 0.05;
+      p.userData.vz = Math.cos(rot) * 0.18;
+    }
+  }
+  update(dt, area) {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const p = this.live[i];
       const u = p.userData;
+      p.visible = u.area === area;
       u.life += dt;
       const t = u.life / u.max;
       if (t >= 1) { p.visible = false; this.live.splice(i, 1); this.pool.push(p); continue; }
       p.position.x += u.vx * dt;
       p.position.z += u.vz * dt;
-      p.position.y += dt * 0.7;
-      p.scale.setScalar(u.size * (0.6 + t * 1.8));
-      p.material.opacity = 0.55 * (1 - t);
+      p.position.y += dt * (u.rise + t * 0.25);
+      p.position.x += Math.sin(u.life * 5 + u.wobble) * dt * 0.035;
+      p.rotation.y += u.spin * dt;
+      const grow = u.size * (0.55 + t * 1.45);
+      p.scale.set(grow * (0.82 + t * 0.18), grow * (1.0 + t * 0.55), grow * (0.82 + t * 0.18));
+      p.material.opacity = u.opacity * (1 - t) * (smallFade(t));
     }
+  }
+  clear() {
+    for (const p of this.live) { p.visible = false; this.pool.push(p); }
+    this.live.length = 0;
   }
 }
 
 return { View };
 })();
 
+// ---- src/ui/chat.js ----
+__m.ui_chat = (() => {
+// Quick chat for two-player games. Enter opens a one-line box, Enter again
+// sends, Esc (or clicking away) cancels. Lines show as speech bubbles over
+// the sender's chef (see Overlay.say) for CHAT_SECONDS.
+const CHAT_MAX = 80;
+const CHAT_SECONDS = 5;
+
+/** One tidy line: no control characters, collapsed spaces, capped length. */
+function cleanChat(text) {
+  return String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX);
+}
+
+class ChatBox {
+  constructor(root, onSend) {
+    this.onSend = onSend;
+    this.el = document.createElement('form');
+    this.el.className = 'chat-box';
+    this.el.hidden = true;
+    this.el.innerHTML = `<label class="chat-label" for="chat-input">Say</label>`
+      + `<input id="chat-input" maxlength="${CHAT_MAX}" autocomplete="off" spellcheck="false" placeholder="Message your partner…">`
+      + `<span class="chat-hint"><kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel</span>`;
+    this.input = this.el.querySelector('input');
+    root.appendChild(this.el);
+    this.el.addEventListener('submit', (e) => { e.preventDefault(); this.send(); });
+    this.input.addEventListener('blur', () => { if (this.open) this.close(); });
+  }
+
+  get open() { return !this.el.hidden; }
+
+  show() {
+    this.el.hidden = false;
+    this.input.value = '';
+    this.input.focus();
+  }
+
+  close() {
+    this.el.hidden = true;
+    this.input.value = '';
+    if (document.activeElement === this.input) this.input.blur();
+  }
+
+  send() {
+    const text = cleanChat(this.input.value);
+    this.close();
+    if (text) this.onSend(text);
+  }
+}
+
+return { CHAT_MAX, CHAT_SECONDS, cleanChat, ChatBox };
+})();
+
 // ---- src/ui/overlay.js ----
-__m.overlay = (() => {
+__m.ui_overlay = (() => {
 // DOM markers that float over the 3D scene: cooking rings, table bubbles,
 // name tags, counts and floating "+$" text.
 const { CFG } = __m.config;
-const { stepFor } = __m.ingredients;
-const { HEAT_TYPES } = __m.layout;
+const { stepFor } = __m.data_ingredients;
+const { HEAT_TYPES } = __m.data_layout;
+const { playerArea, TRASH_CAPACITY, cookingMultiplier } = __m.data_alley;
+const { CHAT_SECONDS } = __m.ui_chat;
 const ICON = {
   menu: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2"/></svg>',
   bang: '<svg viewBox="0 0 24 24"><path d="M12 3v12" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/><circle cx="12" cy="20" r="2" fill="currentColor"/></svg>',
@@ -4708,7 +6354,11 @@ class Overlay {
     this.els = new Map();
     this.floats = [];
     this.frame = 0;
+    this.said = new Map(); // pid -> { text, until } chat bubbles
   }
+
+  /** Shows a chat line over a chef for CHAT_SECONDS. A new line replaces the old one. */
+  say(pid, text) { this.said.set(pid, { text, until: performance.now() + CHAT_SECONDS * 1000 }); }
 
   el(key, cls) {
     let e = this.els.get(key);
@@ -4725,20 +6375,32 @@ class Overlay {
 
   html(e, h) { if (e._html !== h) { e.innerHTML = h; e._html = h; } }
 
-  place(e, a, dy = 0) {
+  place(e, a, dy = 0, pin = false) {
     if (!a) { e.style.display = 'none'; return; }
     const p = this.view.toScreen(a.x, a.y, a.z);
-    e.style.display = p.on ? '' : 'none';
-    e.style.transform = `translate(${p.x.toFixed(1)}px, ${(p.y + dy).toFixed(1)}px) translate(-50%, -100%)`;
+    let x = p.x, y = p.y + dy;
+    let off = false;
+    if (pin) {
+      // Keep calls for attention on screen, pinned to the nearest edge.
+      const W = this.root.clientWidth, H = this.root.clientHeight;
+      const L = 250, R = W - 150, T = 150, B = H - 70;
+      const cx = Math.max(L, Math.min(R, x)), cy = Math.max(T, Math.min(B, y));
+      off = cx !== x || cy !== y || !p.on;
+      x = cx; y = cy;
+    }
+    e.classList.toggle('edge', off);
+    e.style.display = p.on || pin ? '' : 'none';
+    e.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
   }
 
   /** extra: seconds since the last snapshot, so client rings move smoothly. */
   update(state, opts = {}) {
     this.frame++;
+    const area = opts.area || playerArea(state.players[opts.self]);
     const extra = opts.extra || 0;
     const showAll = state.phase !== 'office';
     for (const o of state.objects) {
-      if (!showAll) break;
+      if (!showAll || area === 'alley') break;
       const a = this.view.anchorOf(o.id);
       if (!a) continue;
       if (HEAT_TYPES.has(o.type) && o.slot && o.slot.k === 'ing') {
@@ -4749,7 +6411,7 @@ class Overlay {
         else {
           const step = stepFor(it.ing, it.st, o.type);
           if (step) {
-            const p = Math.min(1, (it.t + extra) / step.t);
+            const p = Math.min(1, (it.t + extra * cookingMultiplier(state)) / step.t);
             e.style.setProperty('--p', (p * 100).toFixed(1));
             cls += ' cooking';
             h = it.n > 1 ? `<b>${it.n}</b>` : '';
@@ -4789,6 +6451,10 @@ class Overlay {
         const e = this.el(o.id, 'badge dockb');
         this.html(e, `${o.boxes.length} case${o.boxes.length > 1 ? 's' : ''}`);
         this.place(e, { ...a, y: 1.2 + Math.min(3, Math.ceil(o.boxes.length / 4)) * 0.3 });
+      } else if (o.type === 'bin' && o.trash >= TRASH_CAPACITY) {
+        const e = this.el(o.id, 'badge low');
+        this.html(e, 'Trash full');
+        this.place(e, a);
       } else if (o.type === 'rack' && o.n <= 3) {
         const e = this.el(o.id, 'badge low');
         this.html(e, o.n ? `${o.n} plates` : 'No plates!');
@@ -4800,21 +6466,43 @@ class Overlay {
           const mood = waiting ? waiting.mood : 100;
           const e = this.el(o.id, 'bubble host');
           this.html(e, `<span class="ic">${ICON.bang}</span><span>${q} waiting</span>${moodBar(mood)}`);
-          this.place(e, { ...a, y: 2.0 });
+          this.place(e, { ...a, y: 2.0 }, 0, true);
         }
       } else if (o.type === 'table') {
         this.tableMarker(state, o, a);
       }
     }
+    // What the local chef would use.
+    if (opts.target && showAll) {
+      const a = this.view.anchorOf(opts.target);
+      if (a) {
+        const e = this.el('aim', 'aim');
+        this.html(e, '<svg viewBox="0 0 24 24"><path d="M5 7h14l-7 11z" fill="currentColor" stroke="#2a1b12" stroke-width="2.5" stroke-linejoin="round"/></svg>');
+        const o = state.objects.find((x) => x.id === opts.target);
+        const busy = o && (o.slot || o.well || o.type === 'table');
+        this.place(e, { ...a, y: a.y + (busy ? 0.7 : 0.25) });
+      }
+    }
     // Chef name tags.
     for (const [pid, p] of Object.entries(state.players)) {
+      if (playerArea(p) !== area) continue;
       const e = this.el('chef:' + pid, 'tag');
       const col = p.look.apron ? p.look.apronColor : p.look.shirt;
       this.html(e, `<span style="--c:${col}">${esc(p.name)}</span>`);
       this.place(e, this.view.chefAnchor(pid));
+      const said = this.said.get(pid);
+      if (said) {
+        const left = said.until - performance.now();
+        if (left <= 0) { this.said.delete(pid); continue; }
+        const b = this.el('say:' + pid, 'bubble say');
+        this.html(b, `<span>${esc(said.text)}</span>`);
+        b.classList.toggle('fading', left < 400);
+        this.place(b, this.view.chefAnchor(pid), -30);
+      }
     }
     // Following parties show above their first guest.
     for (const party of state.parties) {
+      if (area === 'alley') break;
       if (party.state !== 'following') continue;
       const e = this.el('follow:' + party.id, 'bubble small');
       this.html(e, `<span class="ic">${ICON.dots}</span><span>Party of ${party.size}</span>`);
@@ -4847,7 +6535,7 @@ class Overlay {
         const open = p.items.filter((x) => !x.served).length;
         const drinks = p.drinks.filter((x) => !x.served).length;
         icon = ICON.plate;
-        label = `#${p.ticket} · ${open} dish${open === 1 ? '' : 'es'}` + (drinks ? ` · ${drinks} drink${drinks > 1 ? 's' : ''}` : '');
+        label = `${open} dish${open === 1 ? '' : 'es'}` + (drinks ? ` · ${drinks} drink${drinks > 1 ? 's' : ''}` : '');
         cls += ' wait';
         break;
       }
@@ -4866,7 +6554,7 @@ class Overlay {
     const work = p.workP > 0 && (p.state === 'ordering' || p.state === 'dessertReady' || p.state === 'paying') ? `<i class="wp" style="width:${Math.min(100, p.workP * 100).toFixed(0)}%"></i>` : '';
     const critic = p.kind === 'critic' ? '<em>Critic</em>' : '';
     this.html(e, `<span class="ic">${icon}</span><span>${label}</span>${critic}${moodBar(p.mood)}${work}`);
-    this.place(e, a);
+    this.place(e, a, 0, cls.includes('call') || cls.includes('angry'));
   }
 
   float(text, x, y, z, cls = '') {
@@ -4893,6 +6581,7 @@ class Overlay {
     this.els.clear();
     for (const f of this.floats) f.e.remove();
     this.floats = [];
+    this.said.clear();
   }
 }
 
@@ -5010,6 +6699,7 @@ function sfx(name) {
     case 'box': noise(0.09, 'lowpass', 700, 0.2); break;
     case 'fridge': tone(110, 0.25, 'sine', 0.08); noise(0.2, 'lowpass', 400, 0.05); break;
     case 'pour': { const n = noise(0.6, 'bandpass', 900, 0.12, 0, 2); n.f.frequency.linearRampToValueAtTime(1800, ctx.currentTime + 0.6); break; }
+    case 'chat': tone(990, 0.07, 'sine', 0.07); tone(1320, 0.09, 'sine', 0.06, 0.06); break;
     case 'door': tone(1318, 0.5, 'sine', 0.09); tone(1046, 0.6, 'sine', 0.08, 0.16); break;
     case 'greet': tone(660, 0.1, 'triangle', 0.08); tone(880, 0.12, 'triangle', 0.07, 0.08); break;
     case 'seat': noise(0.1, 'lowpass', 600, 0.12); break;
@@ -5116,20 +6806,133 @@ function stopMusic() {
 return { volumes, setVolume, unlockAudio, sfx, setCrowd, startMusic, stopMusic };
 })();
 
+// ---- src/input.js ----
+__m.input = (() => {
+// Keyboard state. Movement keys are polled and can be rebound (arrow keys
+// always work too); action keys fire callbacks once per press.
+const DEFAULT_BINDS = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' };
+const RESERVED = new Set(['KeyE', 'KeyQ', 'KeyB', 'KeyO', 'KeyC', 'KeyH', 'KeyU', 'Tab', 'Space', 'Enter']);
+const ARROWS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+
+function keyName(code) {
+  if (!code) return '?';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  return { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=' }[code] || code;
+}
+
+class Input {
+  constructor() {
+    this.held = { up: false, down: false, left: false, right: false, space: false };
+    this.handlers = {};
+    this.enabled = true;
+    this.binds = { ...DEFAULT_BINDS };
+    try { Object.assign(this.binds, JSON.parse(localStorage.getItem('tf-binds') || '{}')); } catch { /* ignore */ }
+    this.capture = null;
+    window.addEventListener('keydown', (e) => this.down(e), true);
+    window.addEventListener('keyup', (e) => this.up(e), true);
+    window.addEventListener('blur', () => { for (const k of Object.keys(this.held)) this.held[k] = false; });
+  }
+
+  on(key, fn) { this.handlers[key] = fn; }
+
+  /** Next key press rebinds a direction. Calls done(code) when set. */
+  rebind(dir, done) { this.capture = { dir, done }; }
+
+  resetBinds() {
+    this.binds = { ...DEFAULT_BINDS };
+    this.saveBinds();
+  }
+
+  saveBinds() { try { localStorage.setItem('tf-binds', JSON.stringify(this.binds)); } catch { /* ignore */ } }
+
+  moveFor(code) {
+    if (ARROWS[code]) return ARROWS[code];
+    for (const [dir, c] of Object.entries(this.binds)) if (c === code) return dir;
+    return null;
+  }
+
+  typing(e) {
+    const t = e.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+  }
+
+  down(e) {
+    if (this.capture) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (RESERVED.has(e.code)) { const { done } = this.capture; this.capture = null; done(null, true); return; }
+      if (e.code !== 'Escape') {
+        const { dir, done } = this.capture;
+        for (const [d, c] of Object.entries(this.binds)) if (c === e.code && d !== dir) this.binds[d] = this.binds[dir];
+        this.binds[dir] = e.code;
+        this.saveBinds();
+        this.capture = null;
+        done(e.code);
+      } else { const { done } = this.capture; this.capture = null; done(null); }
+      return;
+    }
+    if (this.typing(e) && e.code !== 'Escape') return;
+    if (e.code === 'Space' && e.target?.closest?.('button, summary')) return;
+    // Let the focused ticket list use normal browser scrolling.
+    if (e.target?.closest?.('.rail') && ['ArrowUp', 'ArrowDown', 'Space', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.code)) return;
+    const m = this.moveFor(e.code);
+    if (m) {
+      if (this.enabled) { this.held[m] = true; e.preventDefault(); }
+      if (this.handlers.move) this.handlers.move();
+      return;
+    }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (this.enabled) this.held.space = true;
+      return;
+    }
+    if (e.repeat) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.code === 'Escape' ? 'esc' : e.code === 'Tab' ? 'tab' : /^Digit\d$/.test(e.code) ? 'digit' : e.code.replace('Key', '').toLowerCase();
+    const h = this.handlers[k];
+    if (h) {
+      const used = h(e.code === 'Escape' ? null : e.code.replace('Digit', ''));
+      if (used !== false && (k === 'tab' || k === 'esc')) e.preventDefault();
+    }
+  }
+
+  up(e) {
+    const m = this.moveFor(e.code);
+    if (m) this.held[m] = false;
+    if (e.code === 'Space') this.held.space = false;
+  }
+
+  axis() {
+    if (!this.enabled) return { x: 0, z: 0 };
+    let x = (this.held.right ? 1 : 0) - (this.held.left ? 1 : 0);
+    let z = (this.held.down ? 1 : 0) - (this.held.up ? 1 : 0);
+    const l = Math.hypot(x, z);
+    if (l > 0) { x /= l; z /= l; }
+    return { x, z };
+  }
+}
+
+return { keyName, Input };
+})();
+
 // ---- src/ui/hud.js ----
-__m.hud = (() => {
+__m.ui_hud = (() => {
 // In-game HUD: clock, money, ticket rail, prompts, toasts, and the small
 // modal sheets (storage pickers, cookbook, rush orders, pause menu).
 const { CFG } = __m.config;
-const { ING, stateInfo } = __m.ingredients;
-const { CUISINES } = __m.cuisines;
-const { STATION_NAMES } = __m.layout;
-const { dishById, drinkById, WEEKDAYS, nextLevelAt, menuIngredients, courseSlot } = __m.state;
-const { storeList } = __m.kitchen;
-const { plateDiff, itemLabel, matchDish } = __m.items;
-const { stockCount, casePrice, avgRating } = __m.economy;
-const { esc } = __m.overlay;
+const { ING, stateInfo } = __m.data_ingredients;
+const { CUISINES } = __m.data_cuisines;
+const { STATION_NAMES } = __m.data_layout;
+const { playerArea, hasSmokeBoost, cookingMultiplier } = __m.data_alley;
+const { XP_LEVELS, ingredientAllowed } = __m.data_progression;
+const { dishById, drinkById, WEEKDAYS, menuIngredients, courseSlot } = __m.sim_state;
+const { storeList } = __m.sim_kitchen;
+const { plateDiff, itemLabel, matchDish } = __m.sim_items;
+const { stockCount, casePrice, avgRating } = __m.sim_economy;
+const { esc } = __m.ui_overlay;
 const { sfx, volumes, setVolume } = __m.audio;
+const { keyName } = __m.input;
 const money = (v) => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money0 = (v) => (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US');
 function clockText(m) {
@@ -5138,12 +6941,20 @@ function clockText(m) {
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${hh}:${String(mm).padStart(2, '0')} ${ap}`;
 }
+function setText(el, t) { if (el && el._t !== t) { el.textContent = t; el._t = t; } }
 function stars(n) { const r = Math.round(n); return '★'.repeat(r) + '☆'.repeat(5 - r); }
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 
+function stepTime(step, state) {
+  const base = step.t / (step.at === 'board' && state.upgrades.knife ? CFG.chopSpeedKnife : 1);
+  const speed = cookingMultiplier(state), time = base / speed;
+  const seconds = (value) => Math.round(value * 10) / 10;
+  return `${seconds(time)}s${speed > 1 ? ` (−${seconds(base - time)}s 🚬)` : ''}`;
+}
+
 /** Station steps from raw to a state, as readable text. */
-function howTo(ing, st) {
+function howTo(ing, st, state) {
   const d = ING[ing];
   if (st === 'raw') return `from the ${STATION_NAMES[d.store].toLowerCase()}`;
   const steps = [];
@@ -5151,7 +6962,7 @@ function howTo(ing, st) {
   while (cur !== 'raw' && guard++ < 6) {
     const s = d.steps.find((x) => x.to === cur);
     if (!s) break;
-    steps.unshift(s.at === 'board' ? 'board' : `${STATION_NAMES[s.at].toLowerCase()} ${s.t}s`);
+    steps.unshift(`${s.at === 'board' ? 'board' : STATION_NAMES[s.at].toLowerCase()} ${stepTime(s, state)}`);
     cur = s.from;
   }
   return steps.join(' → ');
@@ -5164,27 +6975,38 @@ class Hud {
     this.modal = document.getElementById('modal');
     this.toasts = document.getElementById('toasts');
     this.root.innerHTML = `
-      <div class="panel hud-tl"><div class="rname"></div><div class="day"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i></div></div>
-      <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div></div>
-      <div class="rail"></div>
+      <div class="hud-left">
+        <div class="hud-tl"><div class="rname"></div><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div>
+          <span class="smoke-boost" hidden tabindex="0" role="img" aria-label="Movement speed +10%. Cooking time −20%." title="Movement speed +10% · Cooking time −20%"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M19 15c-5-4 5-5 0-10M25 15c-4-3 4-4 1-8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><rect x="4" y="20" width="24" height="5" rx="1" fill="#fff8ea" stroke="#40372e" stroke-width="1.2"/><path d="M5 20.6h6v3.8H5z" fill="#bd874f"/><path d="M26 20.5h2v4h-2z" fill="#ed8858"/></svg></span>
+        </div>
+        <div class="morning" hidden></div>
+        <div class="hud-bl"><div class="rail" aria-label="Order tickets" tabindex="-1"></div><button class="keys-toggle" data-act="keys" aria-expanded="false">Keys <kbd>H</kbd></button><div class="keys" hidden>
+          <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
+          <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
+          <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>Enter</kbd> chat (co-op)</span><span><kbd>U</kbd> hide HUD</span>
+        </div></div>
+      </div>
+      <div class="hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div><div class="story-goal" hidden></div></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
-      <div class="hud-bl"><div class="panel keys">
-        <span><kbd>WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
-        <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-        <span><kbd>C</kbd> camera</span><span><kbd>Esc</kbd> menu</span>
-      </div></div>
-      <div class="panel hud-br"></div>
-      <div class="panel morning" hidden></div>
-      <div class="panel closing" hidden></div>`;
+      <div class="hud-br"></div>
+      <button class="hud-toggle" data-act="hud" title="Hide or show the HUD (U)" aria-pressed="false"><span class="eye" aria-hidden="true"></span><b>Hide HUD</b><kbd>U</kbd></button>
+      <div class="closing" hidden></div>`;
     const q = (s) => this.root.querySelector(s);
     this.el = {
-      rname: q('.rname'), day: q('.day'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'),
-      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'),
+      rname: q('.rname'), dn: q('.day .dn'), wk: q('.day .wk'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'), sun: q('.hud-tl .bar b'),
+      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'), goal: q('.story-goal'), smokeBoost: q('.smoke-boost'),
       rail: q('.rail'), prompt: q('.prompt'), need: q('.need'), br: q('.hud-br'), morning: q('.morning'), closing: q('.closing'), keys: q('.keys'),
     };
     this.slowAcc = 0;
     this.modalKind = null;
+    let keys = null;
+    try { keys = localStorage.getItem('tf-keys'); } catch { /* ignore */ }
+    this.toggleKeys(keys !== '1');
+    let mini = null;
+    try { mini = localStorage.getItem('tf-mini'); } catch { /* ignore */ }
+    if (mini === '1') this.toggleMinimal(true);
+    this.root.querySelector('.hud-toggle').addEventListener('click', () => { this.toggleMinimal(); sfx('ui'); });
     this.el.rail.addEventListener('click', (e) => {
       const b = e.target.closest('button.x');
       if (!b) return;
@@ -5198,38 +7020,94 @@ class Hud {
       if (b.dataset.act === 'office') this.app.openOffice();
       sfx('ui');
     });
+    this.root.querySelector('.keys-toggle').addEventListener('click', () => this.toggleKeys());
     this.el.br.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (b && b.dataset.act === 'copy' && this.app.code) { navigator.clipboard && navigator.clipboard.writeText(this.app.code); this.toast('Room code copied', 'good'); }
     });
   }
 
-  show(on) { this.root.hidden = !on; }
+  show(on) {
+    this.root.hidden = !on;
+    if (!on) { this.pendingStoryCard = null; this.purchaseSig = null; }
+    this.refreshKeys();
+  }
+
+  refreshKeys() {
+    const b = this.app.input.binds;
+    const el = this.root.querySelector('.movekeys');
+    if (el) el.textContent = [b.up, b.left, b.down, b.right].map(keyName).join('');
+  }
+
+  toggleKeys(force) {
+    this.keysHidden = force != null ? force : !this.keysHidden;
+    this.el.keys.hidden = this.keysHidden;
+    const toggle = this.root.querySelector('.keys-toggle');
+    toggle.innerHTML = `${this.keysHidden ? 'Keys' : 'Hide keys'} <kbd>H</kbd>`;
+    toggle.setAttribute('aria-expanded', String(!this.keysHidden));
+    try { localStorage.setItem('tf-keys', this.keysHidden ? '0' : '1'); } catch { /* ignore */ }
+  }
+
+  /** Minimal mode hides panels, tickets and key help; prompts, bubbles and toasts stay. */
+  toggleMinimal(force) {
+    this.minimal = force != null ? force : !this.minimal;
+    this.root.classList.toggle('hud-min', this.minimal);
+    const toggle = this.root.querySelector('.hud-toggle');
+    toggle.querySelector('b').textContent = this.minimal ? 'Show HUD' : 'Hide HUD';
+    toggle.setAttribute('aria-pressed', String(this.minimal));
+    try { localStorage.setItem('tf-mini', this.minimal ? '1' : '0'); } catch { /* ignore */ }
+  }
 
   // ------------------------------------------------------------ per frame
 
   update(state, info, dt) {
     const e = this.el;
+    const outside = playerArea(state.players[info.self]) === 'alley';
+    e.rail.hidden = outside;
+    e.smokeBoost.hidden = !hasSmokeBoost(state, state.players[info.self]);
     const cz = CUISINES[state.cuisine];
     if (this.cuisine !== state.cuisine) {
       this.cuisine = state.cuisine;
       document.documentElement.style.setProperty('--accent', cz.palette.ui);
       document.documentElement.style.setProperty('--accent-dark', cz.palette.uiDark);
     }
-    e.rname.textContent = state.name;
-    e.day.textContent = `Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]}`;
+    setText(e.rname, state.name);
+    setText(e.dn, `Day ${state.day}`);
+    setText(e.wk, WEEKDAYS[(state.day - 1) % 7]);
     const ph = state.phase;
-    e.clock.textContent = ph === 'morning' ? 'Morning prep' : ph === 'office' ? 'After hours' : clockText(state.clock);
-    e.phase.textContent = state.paused ? 'Paused' : ph === 'service' ? (state.clock >= CFG.doorsLock ? 'Last seating passed' : 'Open') : ph === 'closing' ? 'Closing' : ph === 'morning' ? 'Doors closed' : 'Office';
-    const frac = ph === 'service' ? (state.clock - CFG.serviceStart) / (CFG.serviceEnd - CFG.serviceStart) : ph === 'closing' ? 1 : 0;
+    setText(e.clock, ph === 'morning' ? 'Prep time' : ph === 'office' ? 'After hours' : clockText(state.clock));
+    setText(e.phase, state.paused ? 'Paused' : ph === 'service' ? (state.clock >= CFG.doorsLock ? 'Last seating passed' : 'Open for business') : ph === 'closing' ? 'Closing up' : ph === 'morning' ? 'Doors closed' : 'Office');
+    e.phase.className = 'phase ' + (ph === 'service' ? 'open' : ph === 'closing' ? 'closing-phase' : '');
+    const frac = ph === 'service' ? (state.clock - CFG.serviceStart) / (CFG.serviceEnd - CFG.serviceStart) : ph === 'closing' || ph === 'office' ? 1 : 0;
     e.dayBar.style.width = (frac * 100).toFixed(1) + '%';
-    e.cash.textContent = money(state.cash);
+    e.sun.style.left = (frac * 100).toFixed(1) + '%';
+    const night = ph === 'office' || (ph !== 'morning' && state.clock >= 19 * 60);
+    setText(e.sun, night ? '☾' : '☀');
+    e.sun.classList.toggle('moon', night);
+    const cashText = money(state.cash);
+    if (cashText !== e.cash.textContent) {
+      if (this.lastCash != null && state.cash > this.lastCash) { e.cash.classList.remove('bump'); void e.cash.offsetWidth; e.cash.classList.add('bump'); }
+      this.lastCash = state.cash;
+      e.cash.textContent = cashText;
+    }
     e.cash.classList.toggle('neg', state.cash < 0);
     const avg = avgRating(state);
-    e.rating.innerHTML = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : '<span class="stars">☆☆☆☆☆</span> no reviews yet';
-    const lv = state.rep.level, next = nextLevelAt(lv), prev = CFG.rep.levels[lv - 1] || 0;
-    e.lvl.textContent = next != null ? `Reputation level ${lv} · ${Math.floor(state.rep.points)}/${next}` : `Reputation level ${lv} · max`;
-    e.lvlBar.style.width = next != null ? Math.min(100, ((state.rep.points - prev) / (next - prev)) * 100).toFixed(1) + '%' : '100%';
+    const rh = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : 'No reviews yet';
+    if (rh !== e.rating._h) { e.rating.innerHTML = rh; e.rating._h = rh; }
+    const story = state.mode === 'story';
+    e.lvl.hidden = !story;
+    e.lvlBar.parentElement.hidden = !story;
+    e.goal.hidden = !story;
+    if (story) {
+      const lv = state.level, next = XP_LEVELS[lv], prev = XP_LEVELS[lv - 1] || 0;
+      setText(e.lvl, next != null ? `Chef Level ${lv} · ${Math.floor(state.xp)}/${next} XP` : `Chef Level ${lv} · ${state.prestige || 0} prestige stars`);
+      e.lvlBar.style.width = next != null ? Math.max(0, Math.min(100, ((state.xp - prev) / (next - prev)) * 100)).toFixed(1) + '%' : '100%';
+      const goal = state.goal;
+      const progress = goal && goal.target > 1 && Number.isFinite(goal.progress) ? ` · ${Math.min(goal.target, Math.max(0, Math.floor(goal.progress)))}/${goal.target}` : '';
+      const goalHtml = `<b>${state.chapter > 4 ? 'Story complete' : `Chapter ${state.chapter} of 4`}</b>${goal ? `<span class="${goal.done ? 'goal-done' : ''}">${goal.done ? '✓ ' : ''}${esc(goal.label)}${progress} · +${goal.xp} XP</span>` : 'Keep serving to earn XP.'}`;
+      if (goalHtml !== e.goal._h) { e.goal.innerHTML = goalHtml; e.goal._h = goalHtml; }
+    }
+    this.updatePurchase(state);
 
     this.updatePrompt(state, info);
 
@@ -5246,6 +7124,7 @@ class Hud {
         e.closing.innerHTML = `Closing time · ${left} table${left === 1 ? '' : 's'} still here`;
       }
       if (this.modalKind === 'picker' && this.pickerState) this.renderPicker(state);
+      if (this.modalKind === 'cookbook') this.updateCookbook(state);
     }
   }
 
@@ -5269,7 +7148,9 @@ class Hud {
 
     // Recipe helper while plating.
     let need = '';
-    if (p && p.hand && p.hand.k === 'plate' && p.hand.items.length) {
+    if (playerArea(p) === 'alley') {
+      need = '';
+    } else if (p && p.hand && p.hand.k === 'plate' && p.hand.items.length) {
       need = this.plateHelp(state, p.hand);
     } else if (p && p.hand && p.hand.k === 'ing' && p.hand.ing === 'dough' && p.hand.st === 'raw') {
       need = this.doughHelp(state, p.hand);
@@ -5322,44 +7203,69 @@ class Hud {
     return lines.join(' &nbsp;·&nbsp; ');
   }
 
-  updateRail(state, info) {
+  updateRail(state) {
     const parties = state.parties.filter((p) => p.ticket && (p.items.some((x) => !x.served) || p.drinks.some((x) => !x.served)) && ['waitingFood', 'dessertWait', 'eating', 'dessertEat'].includes(p.state));
     parties.sort((a, b) => a.ticket - b.ticket);
-    const max = Math.max(1, Math.floor((this.el.rail.clientWidth + 8) / 166));
-    let h = '';
-    for (const p of parties.slice(0, max)) {
+    const firstFood = parties.find((p) => p.items.some((x) => !x.served));
+    this.el.rail.tabIndex = parties.length ? 0 : -1;
+    this.tickets = this.tickets || new Map();
+    const keep = new Set();
+    let prev = null;
+    for (const p of parties) {
+      const key = p.id + ':' + p.ticket;
+      keep.add(key);
+      let el = this.tickets.get(key);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'ticket';
+        el.innerHTML = '<header><span class="num"></span><span class="tm"></span></header><div class="body"></div>';
+        this.tickets.set(key, el);
+      }
       const t = state.objects.find((o) => o.id === p.table);
       const since = p.state === 'dessertWait' ? p.dessertAt : p.orderedAt;
-      const el = Math.max(0, (state.t || 0) - since);
-      const ratio = el / (p.grace || 90);
-      const cls = p.state === 'eating' || p.state === 'dessertEat' ? 'eating' : ratio > 1 ? 'late' : ratio > 0.6 ? 'mid' : '';
-      const mm = Math.floor(el / 60), ss = Math.floor(el % 60);
-      h += `<div class="ticket ${cls}"><header><span>#${p.ticket} · T${t ? t.num : '?'}</span><span>${mm}:${String(ss).padStart(2, '0')}</span></header>`;
-      const openIdx = [];
-      p.items.forEach((x) => { if (!x.served) openIdx.push(x); });
-      const groups = new Map();
-      for (const x of p.items) {
-        const k = x.id + (x.served ? ':s' : ':o');
-        const g = groups.get(k) || { id: x.id, served: x.served, n: 0, first: x };
-        g.n++;
-        groups.set(k, g);
-      }
-      for (const g of groups.values()) {
-        const d = dishById(state, g.id);
-        if (!d) continue;
-        const comps = d.comps.map(([i, s]) => lc(stateInfo(i, s).label)).join(' · ');
-        const idx = openIdx.indexOf(g.first);
-        h += `<div class="ln ${g.served ? 'done' : ''}" title="${esc(comps)}">${g.n > 1 ? g.n + '× ' : ''}${esc(d.name)}${!g.served ? `<button class="x" data-party="${p.id}" data-index="${idx}" title="Can't make it: take it off the order">✕</button>` : ''}</div>`;
-        if (!g.served) h += `<div class="comps">${esc(comps)}</div>`;
-      }
-      const dr = new Map();
-      for (const x of p.drinks) if (!x.served) dr.set(x.id, (dr.get(x.id) || 0) + 1);
-      for (const [id, n] of dr) h += `<div class="ln drk">${n > 1 ? n + '× ' : ''}${esc(drinkById(state, id).name)}</div>`;
-      if (p.kind === 'critic') h += '<span class="crit">CRITIC</span>';
-      h += '</div>';
+      const secs = Math.max(0, (state.t || 0) - since);
+      const ratio = secs / (p.grace || 90);
+      const cls = 'ticket ' + (p.state === 'eating' || p.state === 'dessertEat' ? 'eating' : ratio > 1 ? 'late' : ratio > 0.6 ? 'mid' : '');
+      if (el.className !== cls) el.className = cls;
+      setText(el.querySelector('.num'), `Table ${t ? t.num : '?'}`);
+      setText(el.querySelector('.tm'), `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`);
+      const body = this.ticketBody(state, p, p === firstFood);
+      const b = el.querySelector('.body');
+      if (b._h !== body) { b.innerHTML = body; b._h = body; }
+      const want = prev ? prev.nextSibling : this.el.rail.firstChild;
+      if (el !== want) this.el.rail.insertBefore(el, want);
+      prev = el;
     }
-    if (parties.length > max) h += `<div class="more">+${parties.length - max} more</div>`;
-    if (h !== this.lastRail) { this.el.rail.innerHTML = h; this.lastRail = h; }
+    for (const [k, el] of this.tickets) if (!keep.has(k)) { el.remove(); this.tickets.delete(k); }
+  }
+
+  ticketBody(state, p, withComps) {
+    let h = '';
+    const openIdx = p.items.filter((x) => !x.served);
+    const groups = new Map();
+    for (const x of p.items) {
+      const k = x.id + (x.served ? ':s' : ':o');
+      const g = groups.get(k) || { id: x.id, served: x.served, n: 0, first: x };
+      g.n++;
+      groups.set(k, g);
+    }
+    for (const g of groups.values()) {
+      const d = dishById(state, g.id);
+      if (!d) continue;
+      const comps = d.comps.map(([i, s]) => lc(stateInfo(i, s).label)).join(' · ');
+      const idx = openIdx.indexOf(g.first);
+      h += `<div class="ln ${g.served ? 'done' : ''}" title="${esc(comps)}">${g.n > 1 ? g.n + '× ' : ''}${esc(d.name)}${!g.served ? `<button class="x" data-party="${p.id}" data-index="${idx}" title="Can't make it: take it off the order">✕</button>` : ''}</div>`;
+      if (!g.served && withComps) {
+        h += `<div class="comps">${d.comps.map(([i, s]) => { const info = stateInfo(i, s); return `<i><s style="background:${hex(info.color)}"></s>${esc(lc(info.label))}</i>`; }).join('')}</div>`;
+      } else if (!g.served) {
+        h += `<div class="comps">${d.comps.map(([i, s]) => `<i title="${esc(stateInfo(i, s).label)}"><s style="background:${hex(stateInfo(i, s).color)}"></s></i>`).join('')}</div>`;
+      }
+    }
+    const dr = new Map();
+    for (const x of p.drinks) if (!x.served) dr.set(x.id, (dr.get(x.id) || 0) + 1);
+    for (const [id, n] of dr) h += `<div class="ln drk">${n > 1 ? n + '× ' : ''}${esc(drinkById(state, id).name)}</div>`;
+    if (p.kind === 'critic') h += '<span class="crit">CRITIC</span>';
+    return h;
   }
 
   updateCorner(state, info) {
@@ -5380,23 +7286,32 @@ class Hud {
 
   updateMorning(state, info) {
     const m = this.el.morning;
-    if (state.phase !== 'morning') { m.hidden = true; return; }
+    if (state.phase !== 'morning' || playerArea(state.players[info.self]) === 'alley') { m.hidden = true; return; }
     m.hidden = false;
     const dock = state.objects.find((o) => o.type === 'dock');
+    const notes = [];
     const items = [];
-    if (dock.boxes.length) items.push(`<li>${dock.boxes.length} case${dock.boxes.length > 1 ? 's' : ''} on the pallet by the back door. Carry each one (<kbd>E</kbd>) to the fridge, freezer or pantry.</li>`);
+    if (dock.boxes.length) items.push(`<li>${dock.boxes.length} delivery case${dock.boxes.length > 1 ? 's' : ''} at the back door. Carry them to storage with <kbd>E</kbd>.</li>`);
     const out = menuIngredients(state).filter((i) => stockCount(state, i) === 0 && !state.objects.some((o) => o.well && o.well.ing === i) && !dock.boxes.some((b) => b.ing === i));
-    if (out.length) items.push(`<li class="warn">Out of ${out.map((i) => lc(ING[i].name)).join(', ')}. Those dishes can't be ordered. Use <kbd>O</kbd> for a rush delivery.</li>`);
+    if (out.length) {
+      items.push(`<li class="warn">${out.length} ingredient${out.length > 1 ? 's' : ''} out of stock. Rush order: <kbd>O</kbd>.</li>`);
+      notes.push(`<li>Out of ${out.map((i) => lc(ING[i].name)).join(', ')}. Dishes that need these cannot be ordered.</li>`);
+    }
     const mains = state.menu.dishes.filter((x) => x.on && courseSlot(dishById(state, x.id).course) === 'main').length;
-    items.push(`<li>Optional: prep ahead. Chopped and cooked food in a prep well keeps warm and lasts until tomorrow.</li>`);
-    if (state.day === 1) items.push(`<li>Press <kbd>B</kbd> any time to see every recipe on tonight's menu (${mains} mains).</li>`);
+    notes.push(`<li>Prep wells keep cooked food warm until tomorrow.</li>`);
+    if (state.day === 1) notes.push(`<li><kbd>B</kbd> opens the cookbook (${mains} mains).</li>`);
     this.selfReady = !!state.ready[info.self];
     const others = Object.values(state.players).filter((p) => p.id !== info.self);
     const partner = others.length ? (state.ready[others[0].id] ? `${esc(others[0].name)} is ready` : `Waiting for ${esc(others[0].name)}`) : '';
-    const html = `<h3>Good morning! Day ${state.day}</h3><ul>${items.join('')}</ul>
-      <div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready (click to undo)' : 'Ready to open'}</button>
-      <button class="btn ghost" data-act="office">Office: menu, orders, upgrades</button><span class="partner">${partner}</span></div>`;
-    if (html !== this.lastMorning) { m.innerHTML = html; this.lastMorning = html; }
+    const html = `${items.length ? `<ul class="prep-alerts">${items.join('')}</ul>` : ''}<div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready · undo' : 'Ready to open'}</button>
+      <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button>${partner ? `<span class="partner">${partner}</span>` : ''}</div>
+      <details class="prep-notes"><summary>Prep notes</summary><ul>${notes.join('')}</ul></details>`;
+    if (html !== this.lastMorning) {
+      const notesOpen = !!m.querySelector('.prep-notes[open]');
+      m.innerHTML = html;
+      m.querySelector('.prep-notes').open = notesOpen;
+      this.lastMorning = html;
+    }
   }
 
   // ------------------------------------------------------------ toasts
@@ -5413,9 +7328,57 @@ class Hud {
   levelUp(level, dishes) {
     const d = document.createElement('div');
     d.className = 'panel levelup';
-    d.innerHTML = `<h2>Reputation level ${level}!</h2><p>${dishes.length ? 'New dishes to put on the menu: <b>' + dishes.map(esc).join(', ') + '</b>' : 'Word is getting around. More guests are coming.'}</p>`;
+    d.innerHTML = `<h2>Reputation level ${level}!</h2><p>${dishes.length ? 'New dishes: <b>' + dishes.map(esc).join(', ') + '</b>' : 'More guests are coming.'}</p>`;
     this.app.root.appendChild(d);
     setTimeout(() => d.remove(), 4200);
+  }
+
+  showLevelUp({ level, unlocks = [] }) {
+    const d = document.createElement('div');
+    d.className = 'panel levelup';
+    d.setAttribute('role', 'status');
+    d.innerHTML = `<h2>Chef Level ${level}</h2>${unlocks.length ? '<p>New unlocks: <b>' + unlocks.map(esc).join(', ') + '</b></p>' : ''}`;
+    this.app.root.appendChild(d);
+    setTimeout(() => d.remove(), 5000);
+  }
+
+  showStoryCard(card) {
+    if (this.app.session && this.app.session.state.pendingPurchase) { this.pendingStoryCard = card; return; }
+    let { chapter, title, text } = card;
+    if (this.modalKind === 'pause') this.closeModal();
+    chapter = chapter || (this.app.session && this.app.session.state.chapter) || 1;
+    const nextLabel = chapter === 1 ? 'Enter the restaurant' : 'Back to the restaurant';
+    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">${nextLabel}</button>`);
+    this.modal.querySelector('.story-next').onclick = () => this.closeModal();
+  }
+
+  updatePurchase(state) {
+    const purchase = state.pendingPurchase;
+    if (!purchase || !purchase.required.includes(this.app.selfPid)) {
+      if (this.modalKind === 'purchase-confirm') this.closeModal();
+      this.purchaseSig = null;
+      if (this.pendingStoryCard) {
+        const card = this.pendingStoryCard;
+        this.pendingStoryCard = null;
+        this.showStoryCard(card);
+      }
+      return;
+    }
+    const sig = JSON.stringify([purchase, state.cash]);
+    if (this.modalKind === 'purchase-confirm' && sig === this.purchaseSig) return;
+    this.purchaseSig = sig;
+    this.showPurchaseConfirm(purchase, state);
+  }
+
+  showPurchaseConfirm(purchase, state = this.app.session.state) {
+    if (this.modalKind === 'pause') this.closeModal();
+    const approved = purchase.approved.includes(this.app.selfPid);
+    const names = purchase.required.map((id) => `${state.players[id] ? state.players[id].name : 'Chef'}${purchase.approved.includes(id) ? ' ✓' : ''}`);
+    this.openSheet('purchase-confirm', `<h2>Approve this purchase?</h2><p>${esc(purchase.name)}</p><div class="purchase-price">${money0(purchase.price)}</div><div class="sub">Cash after: ${money(state.cash - purchase.price)}<br>Approvals: ${purchase.approved.length}/${purchase.required.length} chefs</div><p>${names.map(esc).join(' · ')}</p><div class="actions"><button class="btn primary" data-vote="yes" ${approved ? 'disabled' : ''}>${approved ? 'Approved · waiting' : 'Approve'}</button><button class="btn ghost" data-vote="no">Cancel purchase</button></div>`);
+    this.modal.onclick = null;
+    this.modal.querySelectorAll('[data-vote]').forEach((b) => {
+      b.onclick = () => this.app.command({ c: 'approvePurchase', id: purchase.id, approve: b.dataset.vote === 'yes' });
+    });
   }
 
   // ------------------------------------------------------------ modals
@@ -5423,18 +7386,27 @@ class Hud {
   get modalOpen() { return !this.modal.hidden; }
 
   closeModal() {
+    const options = this.modalKind === 'options';
+    if (options || this.modalKind === 'pause') this.app.input.capture = null;
+    if (this.modalKind === 'purchase-confirm') {
+      this.purchaseSig = null;
+      const purchase = this.app.session && this.app.session.state.pendingPurchase;
+      if (purchase) this.app.command({ c: 'approvePurchase', id: purchase.id, approve: false });
+    }
     this.modal.hidden = true;
     this.modal.innerHTML = '';
     this.modal.className = '';
     this.modalKind = null;
     this.pickerState = null;
     this.app.focusGame();
+    if (options) this.app.lobby.root.querySelector('[data-act=options]')?.focus();
   }
 
   openSheet(kind, html, light = false) {
+    const refresh = this.modalKind === kind && this.modalOpen;
     this.modalKind = kind;
     this.modal.className = light ? 'light' : '';
-    this.modal.innerHTML = `<div class="sheet ${kind}">${html}</div>`;
+    this.modal.innerHTML = `<div class="sheet ${kind}${refresh ? ' sheet-refresh' : ''}">${html}</div>`;
     this.modal.hidden = false;
     const close = this.modal.querySelector('.close');
     if (close) close.onclick = () => this.closeModal();
@@ -5460,15 +7432,15 @@ class Hud {
         const d = drinkById(state, m.id);
         return { key: m.id, name: d.name, sw: hex(d.color), ct: pending[m.id] ? `${pending[m.id]} waiting` : '', need: !!pending[m.id] };
       });
-      sub = 'Pour one, then carry it to the table that ordered it.';
+      sub = '';
     } else {
       title = STATION_NAMES[store];
       list = storeList(state, store).map((x) => ({ key: x.ing, name: x.name, sw: hex(ING[x.ing].look.color), ct: `${x.n} left`, low: x.n <= 3, need: wanted.has(x.ing) }));
       const p = state.players[this.app.selfPid];
-      sub = p && p.hand && p.hand.k === 'plate' ? 'Goes straight onto your plate.' : 'Take one. Press Q at the same spot to grab another.';
+      sub = p && p.hand && p.hand.k === 'plate' ? 'Adds to your plate.' : 'Press Q here to take another.';
     }
-    const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2><div class="sub">${sub}</div>
-      <div class="grid">${list.length ? list.map((x, i) => `<button class="pick ${x.need ? 'need' : ''}" data-key="${x.key}"><span class="sw" style="background:${x.sw}"></span><span><span class="nm">${esc(x.name)}</span><br><span class="ct ${x.low ? 'low' : ''}">${x.ct}</span></span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}</button>`).join('') : '<div class="empty">Nothing in here. Unpack deliveries or order more.</div>'}</div>`;
+    const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2>${sub ? `<div class="sub">${sub}</div>` : ''}
+      <div class="grid">${list.length ? list.map((x, i) => `<button class="pick ${x.need ? 'wanted' : ''}" data-key="${x.key}"><span class="sw" style="background:${x.sw}"></span><span><span class="nm">${esc(x.name)}</span><br><span class="ct ${x.low ? 'low' : ''}">${x.ct}</span></span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}</button>`).join('') : '<div class="empty">Nothing in here. Unpack deliveries or order more.</div>'}</div>`;
     const sheet = this.modal.querySelector('.sheet');
     if (!sheet || sheet._html === html) return;
     sheet._html = html;
@@ -5503,49 +7475,91 @@ class Hud {
       const d = dishById(state, m.id);
       groups[courseSlot(d.course)].push({ d, m });
     }
-    const card = ({ d, m }) => `<div class="recipe"><div class="course">${d.course}</div><h4>${esc(d.name)} <small>${money(m.price)}</small></h4><ol>${d.comps.map(([i, s]) => {
+    const card = ({ d, m }) => `<div class="recipe"><h4>${esc(d.name)} <small>${money(m.price)}</small></h4><ol>${d.comps.map(([i, s]) => {
       const info = stateInfo(i, s);
-      const how = i === 'dough' ? 'add toppings on raw dough, then oven ' + ING.dough.steps[0].t + 's' : howTo(i, s);
-      return `<li><span class="sw" style="background:${hex(info.color)}"></span>${esc(info.label)}<span class="how">${esc(how)}</span></li>`;
+      return `<li><span class="sw" style="background:${hex(info.color)}"></span>${esc(info.label)}<span class="how" data-ing="${esc(i)}" data-state="${esc(s)}"></span></li>`;
     }).join('')}</ol></div>`;
     const drinks = state.menu.drinks.filter((m) => m.on).map((m) => drinkById(state, m.id).name).join(' · ');
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>Cookbook</h2>
-      <div class="sub">Everything on tonight's menu. Build each plate on a counter: grab a plate from the rack, then add each part. Pot and fryer take several portions at once.</div>
       ${['main', 'starter', 'dessert'].map((k) => groups[k].length ? `<div class="section-title">${k === 'starter' ? 'Starters & sides' : k + 's'}</div><div class="cols">${groups[k].map(card).join('')}</div>` : '').join('')}
-      <div class="section-title">Drinks</div><div>${esc(drinks)} (pour at the drink station)</div>`;
+      <div class="section-title">Drinks</div><div>${esc(drinks)}</div>`;
     this.openSheet('cookbook', html);
+    this.cookbookSpeed = null;
+    this.updateCookbook(state);
+  }
+
+  updateCookbook(state) {
+    const speed = cookingMultiplier(state), knife = !!state.upgrades.knife;
+    if (this.cookbookSpeed === speed && this.cookbookKnife === knife) return;
+    this.cookbookSpeed = speed;
+    this.cookbookKnife = knife;
+    this.modal.querySelectorAll('.recipe .how').forEach((el) => {
+      const { ing, state: target } = el.dataset;
+      const how = ing === 'dough' ? 'add toppings on raw dough, then oven ' + stepTime(ING.dough.steps[0], state) : howTo(ing, target, state);
+      setText(el, how);
+    });
   }
 
   openRush(state) {
     if (state.phase === 'office') { this.toast('Rush deliveries are for open hours. Use the supplier tab instead.', 'warn'); return; }
-    const ings = menuIngredients(state).sort((a, b) => stockCount(state, a) - stockCount(state, b));
+    const ings = menuIngredients(state).filter((id) => ingredientAllowed(state, id)).sort((a, b) => stockCount(state, a) - stockCount(state, b));
     const rows = ings.map((i) => {
       const n = stockCount(state, i);
-      return `<button class="pick ${n === 0 ? 'need' : ''}" data-ing="${i}"><span class="sw" style="background:${hex(ING[i].look.color)}"></span><span><span class="nm">${esc(ING[i].name)}</span><br><span class="ct ${n <= 3 ? 'low' : ''}">${n} in stock · case of ${ING[i].case} ${money(casePrice(i, true))}</span></span></button>`;
+      return `<button class="pick ${n === 0 ? 'wanted' : ''}" data-ing="${i}"><span class="sw" style="background:${hex(ING[i].look.color)}"></span><span><span class="nm">${esc(ING[i].name)}</span><br><span class="ct ${n <= 3 ? 'low' : ''}">${n} in stock · case of ${ING[i].case} ${money(casePrice(i, true))}</span></span></button>`;
     }).join('');
     const pending = (state.rush || []).map((r) => `${ING[r.ing].name} in ${Math.max(0, Math.ceil(r.at - state.t))}s`).join(' · ');
     this.openSheet('picker', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Call the supplier</h2>
-      <div class="sub">Rush delivery: arrives at the back door in ${CFG.money.rushDelay} seconds, at ${Math.round((CFG.money.rushMarkup - 1) * 100)}% over the usual price.${pending ? '<br>On the way: ' + esc(pending) : ''}</div><div class="grid">${rows}</div>`);
+      <div class="sub">Back-door delivery · ${CFG.money.rushDelay}s · ${Math.round((CFG.money.rushMarkup - 1) * 100)}% extra${pending ? '<br>On the way: ' + esc(pending) : ''}</div><div class="grid">${rows}</div>`);
     this.modal.querySelectorAll('.pick').forEach((b) => {
       b.onclick = () => { this.app.command({ c: 'rush', ing: b.dataset.ing, cases: 1 }); sfx('ui'); this.closeModal(); };
     });
   }
 
-  openPause(state, info) {
+  optionsHtml() {
     const v = volumes();
+    return `<label class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></label>
+      <label class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></label>
+      <div class="section-title">Movement keys</div>
+      <div class="binds">${['up', 'left', 'down', 'right'].map((d) => `<label>${d}<button class="btn small" data-bind="${d}">${keyName(this.app.input.binds[d])}</button></label>`).join('')}<button class="btn small ghost" data-bind="reset">Reset</button></div>
+      <div class="hint-line">Arrow keys always work too. Click a key, then press the new one.</div>`;
+  }
+
+  bindOptions(refresh) {
+    const kind = this.modalKind;
+    this.modal.querySelectorAll('input[data-vol]').forEach((inp) => { inp.oninput = () => setVolume(inp.dataset.vol, +inp.value); });
+    this.modal.querySelectorAll('button[data-bind]').forEach((b) => {
+      b.onclick = () => {
+        const d = b.dataset.bind;
+        if (d === 'reset') { this.app.input.capture = null; this.app.input.resetBinds(); refresh(); this.refreshKeys(); return; }
+        b.textContent = 'Press a key…';
+        this.app.input.rebind(d, (code, reserved) => {
+          if (!this.modalOpen || this.modalKind !== kind) return;
+          if (reserved) this.toast('That key is already used for something else.', 'warn');
+          refresh();
+          this.refreshKeys();
+        });
+      };
+    });
+  }
+
+  openOptions() {
+    this.openSheet('options', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Options</h2>${this.optionsHtml()}`);
+    this.bindOptions(() => this.openOptions());
+  }
+
+  openPause(state, info) {
     const host = info.role !== 'client';
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${state.paused ? 'Paused' : 'Menu'}</h2>
-      <div class="sub">${host ? 'The game pauses for both of you while this is open.' : 'The kitchen keeps running while this is open.'}</div>
-      <div class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></div>
-      <div class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></div>
+      ${host ? '' : '<div class="sub">Service continues while this menu is open.</div>'}
+      ${this.optionsHtml()}
       <div class="stack">
         <button class="btn primary" data-act="resume">Back to the kitchen</button>
         <button class="btn" data-act="chef">Change my chef</button>
-        ${host ? '<button class="btn" data-act="code">Save code (backup / move to another laptop)</button>' : ''}
+        ${host ? '<button class="btn" data-act="code">Export save code</button>' : ''}
         <button class="btn ghost" data-act="leave">${host ? 'Save and quit to title' : 'Leave the kitchen'}</button>
       </div>`;
     this.openSheet('pause', html);
-    this.modal.querySelectorAll('input[data-vol]').forEach((inp) => { inp.oninput = () => setVolume(inp.dataset.vol, +inp.value); });
+    this.bindOptions(() => this.openPause(state, info));
     this.modal.querySelectorAll('button[data-act]').forEach((b) => {
       b.onclick = () => {
         const a = b.dataset.act;
@@ -5561,24 +7575,95 @@ class Hud {
 return { money, money0, clockText, stars, howTo, Hud };
 })();
 
+// ---- src/ui/fx.js ----
+__m.ui_fx = (() => {
+// Big moments: banners, coins flying to the till, confetti.
+const COLORS = { red: '#ef4b3f', green: '#2b8c45', yellow: '#d69a12', blue: '#2167c8', purple: '#9b6cf2', ink: '#2a1b12' };
+
+class Fx {
+  constructor(root) {
+    this.root = root;
+    this.bannerEl = null;
+  }
+
+  banner(text, sub = '', color = 'red', ms = 2000) {
+    if (this.bannerEl) this.bannerEl.remove();
+    const b = document.createElement('div');
+    b.className = 'banner';
+    b.style.setProperty('--bc', COLORS[color] || color);
+    b.innerHTML = `<div class="t"></div>${sub ? '<br><div class="s"></div>' : ''}`;
+    b.querySelector('.t').textContent = text;
+    if (sub) b.querySelector('.s').textContent = sub;
+    this.root.appendChild(b);
+    this.bannerEl = b;
+    setTimeout(() => { b.classList.add('out'); setTimeout(() => b.remove(), 420); }, ms);
+  }
+
+  /** Coins hop from a screen point to the cash counter. */
+  coins(x, y, n = 5) {
+    const target = document.querySelector('.hud-tr .cash');
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    const tx = r.left + 16, ty = r.top + r.height / 2;
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('div');
+      c.className = 'coin';
+      c.textContent = '$';
+      this.root.appendChild(c);
+      const sx = x + (Math.random() - 0.5) * 40, sy = y + (Math.random() - 0.5) * 20;
+      const mx = (sx + tx) / 2 + (Math.random() - 0.5) * 160, my = Math.min(sy, ty) - 80 - Math.random() * 80;
+      const anim = c.animate([
+        { transform: `translate(${sx}px, ${sy}px) scale(0.4)`, opacity: 0 },
+        { transform: `translate(${sx}px, ${sy - 30}px) scale(1.1)`, opacity: 1, offset: 0.18 },
+        { transform: `translate(${mx}px, ${my}px) scale(1)`, opacity: 1, offset: 0.55 },
+        { transform: `translate(${tx}px, ${ty}px) scale(0.7)`, opacity: 0.9 },
+      ], { duration: 900 + i * 90, easing: 'cubic-bezier(.4,0,.6,1)', delay: i * 60, fill: 'both' });
+      anim.onfinish = () => c.remove();
+    }
+  }
+
+  confetti(n = 90) {
+    const cols = ['#ef4b3f', '#ffc83c', '#45c463', '#3d9bff', '#ff7aa8', '#9b6cf2'];
+    const w = window.innerWidth, h = window.innerHeight;
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti';
+      c.style.background = cols[i % cols.length];
+      c.style.left = '0px';
+      this.root.appendChild(c);
+      const x = Math.random() * w, drift = (Math.random() - 0.5) * 240;
+      const anim = c.animate([
+        { transform: `translate(${x}px, -30px) rotate(0deg)` },
+        { transform: `translate(${x + drift}px, ${h + 40}px) rotate(${720 + Math.random() * 720}deg)` },
+      ], { duration: 2200 + Math.random() * 1600, easing: 'cubic-bezier(.2,.6,.4,1)', delay: Math.random() * 500, fill: 'both' });
+      anim.onfinish = () => c.remove();
+    }
+  }
+}
+
+return { Fx };
+})();
+
 // ---- src/ui/office.js ----
-__m.office = (() => {
+__m.ui_office = (() => {
 // The office: end-of-day P&L, menu design and pricing, supplier orders,
 // upgrades, marketing, the layout editor, and save codes.
 const { CFG } = __m.config;
-const { ING, stateInfo, statesOf } = __m.ingredients;
-const { CUISINES, BUILDER } = __m.cuisines;
-const { UPGRADES, MARKETING } = __m.upgrades;
-const { STATION_NAMES } = __m.layout;
-const { allDishes, dishById, drinkById, dishCost, courseSlot, menuLimits, menuIngredients, WEEKDAYS, dishVeg } = __m.state;
-const { stockCount, casePrice, pendingCases, autofillPlan, expectedParties, upgradeStatus, rateCustom, classTip, avgRating, forecastDishes } = __m.economy;
-const { footprint } = __m.world;
-const { esc } = __m.overlay;
-const { money, money0, stars } = __m.hud;
+const { ING, stateInfo, statesOf } = __m.data_ingredients;
+const { BUILDER } = __m.data_cuisines;
+const { UPGRADES, MARKETING } = __m.data_upgrades;
+const { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } = __m.data_layout;
+const { isOwned, recipeRequirements, drinkRequirements, ingredientAllowed, unlockList, chapterInfo } = __m.data_progression;
+const { allDishes, dishById, drinkById, dishCost, courseSlot, menuLimits, menuIngredients, WEEKDAYS, dishVeg } = __m.sim_state;
+const { stockCount, casePrice, pendingCases, autofillPlan, expectedParties, upgradeStatus, rateCustom, classTip, avgRating, forecastDishes, placementStatus } = __m.sim_economy;
+const { footprint } = __m.sim_world;
+const { esc } = __m.ui_overlay;
+const { money, money0, stars } = __m.ui_hud;
 const { sfx } = __m.audio;
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const pct = (v) => (v * 100).toFixed(0) + '%';
-const TABS = [['report', 'Report'], ['menu', 'Menu'], ['supplier', 'Supplier'], ['upgrades', 'Upgrades'], ['layout', 'Layout'], ['house', 'Restaurant']];
+const TABS = [['report', 'Report'], ['menu', 'Menu'], ['supplier', 'Supplier'], ['unlocks', 'Unlocks'], ['upgrades', 'Upgrades'], ['layout', 'Layout'], ['house', 'Restaurant']];
+const requirementChips = (requirements) => requirements.length ? `<div class="requirement-chips">${requirements.map((text) => `<span class="requirement-chip">${esc(text)}</span>`).join('')}</div>` : '';
 
 class Office {
   constructor(app) {
@@ -5587,6 +7672,7 @@ class Office {
     this.tab = 'report';
     this.open = false;
     this.layoutMode = false;
+    this.drag = null;
     this.draft = { name: '', course: 'main', tpl: 'burger', comps: [] };
     this.showAllIngs = false;
     this.root.addEventListener('click', (e) => this.onClick(e));
@@ -5596,6 +7682,7 @@ class Office {
 
   show(state, tab) {
     this.open = true;
+    document.body.classList.add('office-open');
     if (tab) this.tab = tab;
     if (!state.report && this.tab === 'report' && state.phase === 'morning') this.tab = 'menu';
     this.root.hidden = false;
@@ -5604,10 +7691,29 @@ class Office {
 
   hide() {
     this.open = false;
-    this.layoutMode = false;
+    document.body.classList.remove('office-open');
+    this.stopLayout(false);
     this.root.hidden = true;
-    this.root.classList.remove('layout-mode');
+  }
+
+  startLayout(state) {
+    this.layoutMode = true;
+    this.drag = null;
+    this.root.classList.add('layout-mode');
+    document.body.classList.add('layout-planning');
     this.app.layoutSel = null;
+    this.app.view.setLayoutMode(true, state);
+    this.render(state, true);
+  }
+
+  stopLayout(render = true) {
+    this.layoutMode = false;
+    this.drag = null;
+    this.root.classList.remove('layout-mode');
+    document.body.classList.remove('layout-planning');
+    this.app.layoutSel = null;
+    this.app.view.setLayoutMode(false, this.state);
+    if (render && this.state) this.render(this.state, true);
   }
 
   update(state) {
@@ -5617,26 +7723,32 @@ class Office {
 
   render(state, force) {
     this.state = state;
+    if (state.mode !== 'story' && this.tab === 'unlocks') this.tab = 'upgrades';
     if (this.layoutMode) { this.renderLayoutBar(state, force); return; }
     const sig = this.sigFor(state);
     if (!force && sig === this.lastSig) return;
     const active = document.activeElement;
+    const focusedButton = active?.tagName === 'BUTTON' && this.root.contains(active) ? { ...active.dataset } : null;
     if (!force && active && this.root.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) return;
     this.lastSig = sig;
     const scroll = this.root.querySelector('.office-body');
     const top = scroll ? scroll.scrollTop : 0;
     this.root.innerHTML = `<div class="office">
-      <div class="office-head"><div><h1>${esc(state.name)}</h1><div class="meta">${CUISINES[state.cuisine].style} · Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]} · ${state.phase === 'office' ? 'after hours' : 'morning'}</div></div>
-        <div class="tabs">${TABS.map(([k, n]) => `<button data-tab="${k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+      <div class="office-head"><div class="office-title"><h1>${esc(state.name)}</h1></div>
+        <div class="tabs" aria-label="Office sections">${TABS.filter(([k]) => k !== 'unlocks' || state.mode === 'story').map(([k, n]) => `<button data-tab="${k}" aria-pressed="${this.tab === k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
       <div class="office-body">${this.body(state)}</div>
       <div class="office-foot">${this.foot(state)}</div></div>`;
     const nb = this.root.querySelector('.office-body');
     if (nb && !force) nb.scrollTop = top;
+    if (focusedButton) {
+      const next = [...this.root.querySelectorAll('button')].find((button) => Object.entries(focusedButton).every(([key, value]) => button.dataset[key] === value));
+      if (next && !next.disabled) next.focus({ preventScroll: true });
+    }
   }
 
   sigFor(state) {
     return JSON.stringify([this.tab, state.phase, state.day, state.cash, state.menu, state.custom, state.orders, state.upgrades, state.marketing, state.ready, Object.keys(state.players), state.rep.level,
-      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev]);
+      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev, state.building, state.mode, state.xp, state.level, state.owned, state.chapter, state.goal, state.pendingPurchase]);
   }
 
   foot(state) {
@@ -5659,6 +7771,7 @@ class Office {
       case 'menu': return this.menu(state);
       case 'supplier': return this.supplier(state);
       case 'upgrades': return this.upgrades(state);
+      case 'unlocks': return this.unlocks(state);
       case 'layout': return this.layoutTab(state);
       case 'house': return this.house(state);
     }
@@ -5669,7 +7782,7 @@ class Office {
 
   report(state) {
     const r = state.report;
-    if (!r) return '<div class="empty">No service yet. Your first P&L shows up here after closing.</div>';
+    if (!r) return '<div class="empty">Your first report will be ready after closing.</div>';
     const line = (label, v, cls = '') => `<tr class="${cls}"><td>${label}</td><td class="${v < 0 ? 'neg' : ''}">${money(v)}</td></tr>`;
     const f = r.fixed;
     const pl = `<table class="pl">
@@ -5677,7 +7790,7 @@ class Office {
       ${line('<b>Cost of goods sold</b>', -r.cogs)}${line('Food ingredients', -r.cogsFood, 'sub')}${line('Drinks', -r.cogsDrink, 'sub')}
       ${line('Gross profit', r.gross, 'total')}
       ${line('<b>Waste</b>', -r.waste)}${line('Thrown away', -r.wasteParts.binned, 'sub')}${line('Spoiled overnight', -r.wasteParts.spoiled, 'sub')}${line('Left out at closing', -r.wasteParts.cleanup, 'sub')}
-      ${line('<b>Running costs</b>', -r.fixedTotal)}${line('Rent', -f.rent, 'sub')}${line('Equipment loan', -f.loan, 'sub')}${line('Utilities', -f.utilities, 'sub')}${line('Card fees (3%)', -f.cardFees, 'sub')}${line('Napkins and supplies', -f.supplies, 'sub')}${f.cleaning ? line('Dishwashing service (unwashed plates)', -f.cleaning, 'sub') : ''}
+      ${line('<b>Running costs</b>', -r.fixedTotal)}${line('Rent', -f.rent, 'sub')}${line(state.mode === 'story' ? 'Loan payment' : 'Equipment loan', -f.loan, 'sub')}${line('Utilities', -f.utilities, 'sub')}${line('Card fees (3%)', -f.cardFees, 'sub')}${line('Napkins and supplies', -f.supplies, 'sub')}${f.cleaning ? line('Dishwashing service (unwashed plates)', -f.cleaning, 'sub') : ''}
       <tr class="net"><td>Net profit</td><td class="${r.net >= 0 ? 'pos' : 'neg'}">${money(r.net)}</td></tr></table>`;
     const kpi = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
     const kpis = `<div class="kpis">${kpi(r.covers, 'Guests')}${kpi(money(r.avgCheck), 'Avg check / guest')}${kpi(r.foodCostPct + '%', 'Food cost')}${kpi(r.rating ? r.rating.toFixed(1) + '★' : '–', 'Avg rating')}
@@ -5695,15 +7808,18 @@ class Office {
       return `<tr><th colspan="6">${slot === 'starter' ? 'Starters & sides' : slot + 's'}</th></tr>` + g.map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${m.n}</td><td class="n">${money(m.price)}</td><td class="n">${money(m.cost)}</td><td class="n">${money(m.cm)}</td><td><span class="cls ${m.cls}" title="${esc(classTip(m.cls))}">${m.cls}</span></td></tr>`).join('');
     }).join('');
     const spoiled = (r.spoiled || []).length ? `<div class="tip">Spoiled this morning: ${r.spoiled.map((s) => `${s.n} ${ING[s.ing].name.toLowerCase()}${s.well ? ' (prep well)' : ''}`).join(', ')}</div>` : '';
-    return `${kpis}<div class="cols2">
-      <div class="card"><h3>Day ${r.day} profit & loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
+    const progress = r.progression;
+    const xp = state.mode === 'story' && progress ? `<div class="card xp-report"><h3>Chef Level ${progress.level} <span class="xp-total">+${progress.xp} XP</span></h3><div class="xp-lines">${(progress.lines || []).map((x) => `<span>${esc(x.label)} <b>+${x.amount} XP</b></span>`).join('')}</div>${progress.goal ? `<p>${progress.goal.done ? '✓ Goal met' : 'Goal not met'}: ${esc(progress.goal.label)}${progress.goal.done ? ` · +${progress.goal.xp} XP` : ''}</p>` : ''}${progress.relief ? `<p>The bank lent you ${money(progress.relief)} to keep the restaurant open. Total loan balance: ${money(progress.debt)}. This loan is not sales income.</p>` : progress.debtDays ? `<p class="neg">Cash is below zero for ${progress.debtDays} day${progress.debtDays === 1 ? '' : 's'}. The bank allows three days before loan terms change.</p>` : ''}</div>` : '';
+    const crew = (r.crew || []).length ? `<div class="card" style="margin-top:14px"><h3>Crew</h3><table class="crew-report"><tr><th>Chef</th><th>Plated</th><th>Served</th><th>Tables cleared</th></tr>${r.crew.map((chef) => `<tr><td>${esc(chef.name)}</td><td>${chef.plated}</td><td>${chef.served}</td><td>${chef.bused}</td></tr>`).join('')}</table></div>` : '';
+    return `${kpis}${xp}<div class="cols2">
+      <div class="card receipt"><h3>Day ${r.day} · Profit &amp; Loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="card"><h3>Net profit, last ${hist.length} day${hist.length > 1 ? 's' : ''}</h3>${spark}</div>
         <div class="card"><h3>Reviews</h3><div class="reviews">${reviews.length ? reviews.map((v) => `<div class="review ${v.critic ? 'critic' : ''}"><span class="st">${'★'.repeat(v.stars)}${'☆'.repeat(5 - v.stars)}</span> ${esc(v.text)} <span class="who">${esc(v.name)}${v.critic ? ', food critic' : ''}</span></div>`).join('') : '<div class="tip">No reviews today.</div>'}</div></div>
         <div class="card"><h3>Tip jar</h3>${tipsToday.length ? tipsToday.map(([n, v]) => `<div>${esc(n)}: <b>${money(v)}</b> today</div>`).join('') : '<div class="tip">Tips go to whoever settles the bill.</div>'}${jar.length ? `<div class="tip">All time: ${jar.map(([n, v]) => `${esc(n)} ${money(v)}`).join(' · ')}</div>` : ''}</div>
       </div></div>
-      <div class="card" style="margin-top:14px"><h3>Menu engineering</h3><div class="tip" style="margin-bottom:6px">Popularity is compared to a fair share of orders (70% rule); profit is each dish's margin against the average. Hover a tag for advice.</div>
-      <table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div>`;
+      ${crew}${isOwned(state, 'features', 'menu_report') ? `<div class="card" style="margin-top:14px"><h3>Menu engineering</h3>
+      <div class="table-scroll"><table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th title="Popularity uses the 70% rule. Profit compares each dish's margin with the average.">Class</th></tr>${meRows}</table></div></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Chef Level 5</p></div>'}`;
   }
 
   // ------------------------------------------------------------ menu
@@ -5717,44 +7833,48 @@ class Office {
       const d = dishById(state, m.id);
       const cost = dishCost(d);
       const fc = cost / m.price;
-      const locked = d.level > state.rep.level;
+      const requirements = recipeRequirements(state, d);
+      const locked = requirements.length > 0;
       const s = sold.find((x) => x.id === m.id);
       return `<div class="mrow ${m.on ? '' : 'off'} ${locked ? 'locked' : ''}">
-        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked ? 'disabled' : ''} title="${locked ? 'Unlocks at reputation level ' + d.level : m.on ? 'Take off the menu' : 'Put on the menu'}"></button>
-        <div class="nm">${esc(d.name)}${d.custom ? ' <span class="cls Puzzle">House</span>' : ''}${dishVeg(d) ? ' <span title="Vegetarian">🌱</span>' : ''} <span class="appeal" title="Appeal">${'★'.repeat(Math.round(d.appeal / 2))}</span><small>${locked ? `Unlocks at reputation level ${d.level}` : d.comps.map(([i, st]) => stateInfo(i, st).label.toLowerCase()).join(' · ')}</small></div>
-        <div class="price"><button data-act="price" data-id="${m.id}" data-d="-1">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-price="${m.id}"><button data-act="price" data-id="${m.id}" data-d="1">+</button></div>
+        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked && !m.on ? 'disabled' : ''} title="${locked ? esc(requirements.join(' · ')) : m.on ? 'Take off the menu' : 'Put on the menu'}" role="switch" aria-checked="${m.on}" aria-label="${esc(d.name)} on the menu"></button>
+        <div class="nm">${esc(d.name)}${d.custom ? ' <span class="cls Puzzle">House</span>' : ''}${dishVeg(d) ? ' <span title="Vegetarian">🌱</span>' : ''} <span class="appeal" title="Appeal">${'★'.repeat(Math.round(d.appeal / 2))}</span><small>${d.comps.map(([i, st]) => stateInfo(i, st).label.toLowerCase()).join(' · ')}</small>${requirementChips(requirements)}</div>
+        <div class="price"><button data-act="price" data-id="${m.id}" data-d="-1" aria-label="Lower ${esc(d.name)} price">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-price="${m.id}" aria-label="${esc(d.name)} price"><button data-act="price" data-id="${m.id}" data-d="1" aria-label="Raise ${esc(d.name)} price">+</button></div>
         <div class="n">${money(cost)}<br><span class="fc ${fc > 0.38 ? 'hi' : ''}">${pct(fc)} cost</span></div>
         <div class="n" title="What guests think it's worth">fair ${money0(d.fair)}</div>
         <div class="n">${s ? s.n + ' sold' : ''}${d.custom ? `<br><button class="icon-btn" data-act="deldish" data-id="${m.id}" title="Delete this house dish">🗑</button>` : ''}</div></div>`;
     };
     const group = (slot, title) => {
       const items = state.menu.dishes.filter((m) => courseSlot(dishById(state, m.id).course) === slot);
-      return `<div class="section-title">${title} · ${used[slot]}/${lim[slot]} on the menu</div><div class="menu-list">${items.map(row).join('')}</div>`;
+      return `<div class="section-title">${title} · ${used[slot]}/${lim[slot]}</div><div class="menu-list">${items.map(row).join('')}</div>`;
     };
     const drinks = state.menu.drinks.map((m) => {
       const d = drinkById(state, m.id);
-      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}"></button><div class="nm">${esc(d.name)}</div>
-        <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}"><button data-act="dprice" data-id="${m.id}" data-d="0.5">+</button></div>
+      const requirements = drinkRequirements(state, d);
+      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}" ${requirements.length && !m.on ? 'disabled' : ''} role="switch" aria-checked="${m.on}" aria-label="${esc(d.name)} on the menu"></button><div class="nm">${esc(d.name)}${requirementChips(requirements)}</div>
+        <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5" aria-label="Lower ${esc(d.name)} price">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}" aria-label="${esc(d.name)} price"><button data-act="dprice" data-id="${m.id}" data-d="0.5" aria-label="Raise ${esc(d.name)} price">+</button></div>
         <div class="n">${money(d.cost)}<br><span class="fc">${pct(d.cost / m.price)} cost</span></div><div class="n">fair ${money0(d.price)}</div><div></div></div>`;
     }).join('');
-    return `<div class="tip">Guests compare your price with what they think a dish is worth ("fair"). Charge more and fewer people order it, and fewer people come in at all. Food cost around 25 to 35% is healthy.</div>
-      <div class="mhead" style="margin-top:10px"><span>On</span><span>Dish</span><span>Price</span><span>Food cost</span><span>Value</span><span></span></div>
+    return `<div class="mhead"><span>On</span><span>Dish</span><span>Price</span><span title="Aim for 25–35% food cost.">Food cost</span><span title="What guests will pay. Higher prices reduce demand.">Value</span><span></span></div>
       ${group('main', 'Mains')}${group('starter', 'Starters & sides')}${group('dessert', 'Desserts')}
       <div class="section-title">Drinks</div><div class="menu-list">${drinks}</div>
       ${this.builder(state)}`;
   }
 
   builder(state) {
+    if (!isOwned(state, 'features', 'house_dish')) return '<div class="card" style="margin-top:16px"><h3>Create a house dish</h3><p>Chef Level 6</p></div>';
     const dr = this.draft;
     const tpl = BUILDER[dr.tpl];
     const r = dr.comps.length ? rateCustom(dr.comps) : null;
-    const ingOpts = Object.values(ING).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+    const ingOpts = Object.values(ING).filter((i) => ingredientAllowed(state, i.id)).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
     const kinds = [...new Set(ingOpts.map((i) => i.kind))];
-    const sel = this.pickIng || tpl.bases[0][0];
+    const wanted = this.pickIng || tpl.bases[0][0];
+    const sel = ingOpts.some((i) => i.id === wanted) ? wanted : ingOpts[0].id;
     const states = statesOf(sel);
     const custom = (state.custom || []).length;
+    const requirements = recipeRequirements(state, { id: '', custom: true, comps: dr.comps });
     return `<div class="card builder" style="margin-top:16px"><h3>Create a house dish (${custom}/8)</h3>
-      <div class="tip" style="margin-bottom:8px">Pick a type, start with its base, then add up to ${tpl.max} components in total. Classic pairings (bacon + cheddar, avocado + lime, salmon + teriyaki…) make guests like it more. Every ingredient can be ordered from the supplier.</div>
+      <div class="tip" style="margin-bottom:8px">Up to ${tpl.max} components. Good pairings increase appeal.</div>
       <div class="row"><input type="text" placeholder="Dish name" maxlength="28" value="${esc(dr.name)}" data-draft="name">
         <select data-draft="course">${['main', 'starter', 'side', 'dessert'].map((c) => `<option ${dr.course === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <select data-draft="tpl">${Object.entries(BUILDER).map(([k, b]) => `<option value="${k}" ${dr.tpl === k ? 'selected' : ''}>${b.name}</option>`).join('')}</select></div>
@@ -5764,7 +7884,7 @@ class Office {
         <span class="hint-line">Base: ${tpl.bases.map(([i, s]) => esc(stateInfo(i, s).label.toLowerCase())).join(' or ')}</span></div>
       <div class="chips">${dr.comps.map(([i, s], k) => `<span class="chip2"><span class="sw" style="background:${hex(stateInfo(i, s).color)}"></span>${esc(stateInfo(i, s).label)}<button data-act="rmcomp" data-k="${k}">✕</button></span>`).join('') || '<span class="hint-line">No components yet.</span>'}</div>
       ${r ? `<div class="preview"><span>Ingredient cost <b>${money(r.cost)}</b></span><span>Guests would pay <b>${money0(r.fair)}</b></span><span>Appeal <b>${r.appeal}/9</b></span><span>Pairings <b>${r.pairs}</b></span></div>` : ''}
-      <button class="btn primary" data-act="create" ${dr.comps.length < 2 ? 'disabled' : ''}>Add to the dish list</button></div>`;
+      ${requirementChips(requirements)}<button class="btn primary" data-act="create" ${dr.comps.length < 2 || requirements.length ? 'disabled' : ''}>Add to the dish list</button></div>`;
   }
 
   // ------------------------------------------------------------ supplier
@@ -5777,7 +7897,7 @@ class Office {
     const used = new Set(menuIngredients(state));
     const need = {};
     for (const [id, n] of Object.entries(forecast)) for (const [ing] of dishById(state, id).comps) need[ing] = (need[ing] || 0) + n;
-    const ings = Object.values(ING).filter((i) => used.has(i.id) || this.showAllIngs || stockCount(state, i.id) > 0 || pendingCases(state, i.id) > 0);
+    const ings = Object.values(ING).filter((i) => ingredientAllowed(state, i.id) && (used.has(i.id) || this.showAllIngs || stockCount(state, i.id) > 0 || pendingCases(state, i.id) > 0));
     ings.sort((a, b) => (used.has(b.id) - used.has(a.id)) || a.store.localeCompare(b.store) || a.name.localeCompare(b.name));
     const tomorrow = state.phase === 'office' ? state.day + 1 : state.day;
     const rows = ings.map((i) => {
@@ -5786,40 +7906,64 @@ class Office {
       const pend = pendingCases(state, i.id);
       const needN = Math.ceil(need[i.id] || 0);
       const short = used.has(i.id) && n + pend * i.case - exp < needN;
-      return `<tr class="${used.has(i.id) ? 'used' : ''}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hex(i.look.color)}"></span> ${esc(i.name)}</td>
+      const storage = state.mode !== 'story' || state.objects.some((o) => o.type === i.store);
+      return `<tr class="${used.has(i.id) ? 'used' : ''}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hex(i.look.color)}"></span> ${esc(i.name)}${storage ? '' : requirementChips([`Needs ${STATION_NAMES[i.store].toLowerCase()}`])}</td>
         <td>${STATION_NAMES[i.store]}</td><td class="n">${n}${exp ? ` <span class="exp">(${exp} spoil soon)</span>` : ''}</td><td class="n ${short ? 'short' : ''}">${needN || ''}</td>
         <td class="n">${i.case} · ${i.keep}d</td><td class="n">${money(casePrice(i.id))}</td>
-        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1">+</button></span></td>
+        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" aria-label="Order one less case of ${esc(i.name)}" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1" aria-label="Order one more case of ${esc(i.name)}" ${storage ? '' : 'disabled'}>+</button></span></td>
         <td class="n">${pend ? money(pend * casePrice(i.id)) : ''}</td></tr>`;
     }).join('');
     const total = state.orders.reduce((s, o) => s + o.cases * casePrice(o.ing), 0);
     const planCost = plan.reduce((s, p) => s + p.cases * casePrice(p.ing), 0);
-    return `<div class="cols2" style="grid-template-columns:1fr auto;align-items:center">
-      <div><div class="card"><b>Forecast for ${state.phase === 'office' ? 'tomorrow' : 'today'}:</b> about ${Math.round(parties)} parties (${Math.round(parties * 2.35)} guests) on a ${WEEKDAYS[(tomorrow - 1) % 7]}. Orders arrive on the pallet by the back door the next morning. Fresh food spoils; check the shelf life column.</div></div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
+    return `<div class="supplier-summary">
+      <div><b>${WEEKDAYS[(tomorrow - 1) % 7]} forecast: ${Math.round(parties)} parties · ${Math.round(parties * 2.35)} guests</b><p class="tip">Delivery: next morning, back door.</p></div>
+      <div class="supplier-order"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
       <span class="hint-line">Tonight's order: <b>${money(total)}</b></span></div></div>
-      <table class="sup" style="margin-top:12px"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table>
-      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show only what the menu uses' : 'Show every ingredient (for house dishes)'}</button>`;
+      <div class="table-scroll"><table class="sup"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table></div>
+      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show menu ingredients' : state.mode === 'story' ? 'Show licensed ingredients' : 'Show all ingredients'}</button>`;
   }
 
   // ------------------------------------------------------------ upgrades
 
-  upgrades(state) {
-    const card = (u) => {
-      const n = state.upgrades[u.id] || 0;
-      const st = upgradeStatus(state, u);
-      return `<div class="up ${n >= u.max ? 'maxed' : ''}"><h4>${esc(u.name)}<span>${money0(u.price)}</span></h4><p>${esc(u.desc)}</p>
-        <div class="owned">${u.max > 1 ? `Owned ${n}/${u.max}` : n ? 'Owned' : ''}</div>
-        <button class="btn small ${st.can ? 'primary' : ''}" data-act="buy" data-id="${u.id}" ${st.can ? '' : 'disabled'}>${st.can ? 'Buy' : esc(st.reason)}</button></div>`;
+  unlocks(state) {
+    const floor = roomSize(state);
+    const entries = unlockList(state);
+    const chapter = chapterInfo(state);
+    const card = (item) => {
+      let desc = '';
+      if (item.kind === 'areas') desc = `+${FLOOR_EXPANSION_WIDTH} × ${floor.height - 2} floor cells`;
+      if (item.kind === 'recipes') desc = recipeRequirements(state, dishById(state, item.id)).join(' · ');
+      if (item.kind === 'licenses' && item.id === 'bar') desc = item.desc;
+      return `<div class="unlock-card ${item.owned ? 'owned' : item.level > state.level ? 'locked' : ''}"><h4>${esc(item.name)}${item.kind === 'licenses' ? ' license' : ''}</h4>${desc ? `<p>${esc(desc)}</p>` : ''}${item.owned ? '' : `<span class="unlock-price">${item.price ? money0(item.price) : 'Free'}</span><button class="btn small ${item.can ? 'primary' : ''}" data-act="unlock" data-kind="${esc(item.kind)}" data-id="${esc(item.id)}" ${item.can && !state.pendingPurchase ? '' : 'disabled'}>${item.can ? (item.price ? 'Buy' : 'Get') : esc(item.reason || `Needs Chef Level ${item.level}`)}</button>`}</div>`;
     };
+    const groups = [
+      ['Owned', entries.filter((x) => x.owned)],
+      ['Buy now', entries.filter((x) => !x.owned && x.level <= state.level)],
+      ['Locked', entries.filter((x) => !x.owned && x.level > state.level)],
+    ];
+    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? (chapter.area ? 'Buy floor expansion' : 'Complete chapter') : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Story complete</h3></div>';
+    const tables = UPGRADES.filter((u) => u.table).map((u) => this.upgradeCard(state, u)).join('');
+    return `<div class="unlock-summary"><h3>Chef Level ${state.level}</h3><span>Floor: <b>${floor.width - 2} × ${floor.height - 2}</b> cells</span></div>${gate}<div class="section-title">Tables</div><div class="ups">${tables}</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">None</div>'}</section>`).join('')}</div>`;
+  }
+
+  upgradeCard(state, upgrade) {
+    const n = state.upgrades[upgrade.id] || 0;
+    const status = upgradeStatus(state, upgrade);
+    return `<div class="up ${n >= upgrade.max ? 'maxed' : ''}"><h4>${esc(upgrade.name)}<span>${money0(upgrade.price)}</span></h4><p>${esc(upgrade.desc)}</p>
+      <div class="owned">${upgrade.max > 1 ? `Owned ${n}/${upgrade.max}` : n ? 'Owned' : ''}</div>
+      <button class="btn small ${status.can ? 'primary' : ''}" data-act="buy" data-id="${upgrade.id}" ${status.can && !state.pendingPurchase ? '' : 'disabled'}>${status.can ? 'Buy' : esc(status.reason)}</button></div>`;
+  }
+
+  upgrades(state) {
     const mk = MARKETING.map((m) => {
       const running = state.marketing && state.marketing.days > 0;
+      const licensed = isOwned(state, 'features', 'marketing');
       return `<div class="up"><h4>${esc(m.name)}<span>${money0(m.price)}</span></h4><p>+${Math.round(m.boost * 100)}% guests for ${m.days} day${m.days > 1 ? 's' : ''}, starting with the next service.</p>
-        <button class="btn small ${!running && state.cash >= m.price ? 'primary' : ''}" data-act="market" data-id="${m.id}" ${running || state.cash < m.price ? 'disabled' : ''}>${running ? 'Campaign running' : 'Run it'}</button></div>`;
+        <button class="btn small ${licensed && !running && state.cash >= m.price ? 'primary' : ''}" data-act="market" data-id="${m.id}" ${!licensed || running || state.cash < m.price ? 'disabled' : ''}>${!licensed ? 'Needs Marketing in Unlocks' : running ? 'Campaign running' : 'Run it'}</button></div>`;
     }).join('');
-    const kitchen = UPGRADES.filter((u) => u.group === 'Kitchen').map(card).join('');
-    const dining = UPGRADES.filter((u) => u.group === 'Dining room').map(card).join('');
-    return `<div class="tip">New stations and tables are placed automatically. Rearrange them in the Layout tab. Every heat station adds $${CFG.money.utilityPerStation} a day to utilities.</div>
+    const kitchen = UPGRADES.filter((u) => u.group === 'Kitchen').map((u) => this.upgradeCard(state, u)).join('');
+    const dining = UPGRADES.filter((u) => u.group === 'Dining room').map((u) => this.upgradeCard(state, u)).join('');
+    return `<div class="tip">Each heat station adds $${CFG.money.utilityPerStation}/day to utilities.</div>
       <div class="section-title">Kitchen</div><div class="ups">${kitchen}</div>
       <div class="section-title">Dining room</div><div class="ups">${dining}</div>
       <div class="section-title">Marketing${state.marketing ? ` · ${esc(state.marketing.name)}: ${state.marketing.days} day${state.marketing.days > 1 ? 's' : ''} left` : ''}</div><div class="ups">${mk}</div>`;
@@ -5828,14 +7972,13 @@ class Office {
   // ------------------------------------------------------------ layout
 
   layoutTab(state) {
-    return `<div class="card"><h3>Rearrange the restaurant</h3><p>Move stations around the kitchen and tables around the dining room. Click something to pick it up, then click where it should go. Everything has to stay reachable, and tables need a walkway around them.</p>
-      <button class="btn primary" data-act="layout">Start rearranging</button></div>`;
+    return `<div class="card"><button class="btn primary" data-act="layout">Open floor planner</button></div>`;
   }
 
   renderLayoutBar(state, force) {
     const sel = this.app.layoutSel;
     const o = sel && state.objects.find((x) => x.id === sel);
-    const html = `<div class="panel layout-bar"><p>${o ? `Moving <b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''}. Click an empty spot.` : 'Click a station or table to pick it up.'}</p>
+    const html = `<div class="panel layout-bar"><p>${o ? `<b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''} · Drag or click a cell.` : 'Drag items to grid cells. Green means valid.'}</p>
       ${o ? '<button class="btn small ghost" data-act="unsel">Cancel</button>' : ''}<button class="btn small primary" data-act="layoutdone">Done</button></div>`;
     if (!force && html === this.lastBar) return;
     this.lastBar = html;
@@ -5845,14 +7988,13 @@ class Office {
   // ------------------------------------------------------------ restaurant
 
   house(state) {
-    const c = CUISINES[state.cuisine];
     const host = this.app.session.role !== 'client';
     const L = state.lifetime;
-    return `<div class="cols2"><div class="card"><h3>${esc(state.name)}</h3><p>${esc(c.style)}. ${esc(c.blurb)}</p>
+    return `<div class="cols2"><div class="card"><h3>Statistics</h3>
       <p>Open ${L.days} day${L.days === 1 ? '' : 's'} · ${L.guests} guests served · ${money0(L.revenue)} lifetime revenue · best day ${money(L.bestDay)}</p>
-      <p>Average rating ${avgRating(state) ? avgRating(state).toFixed(2) + '★' : '–'} · Reputation level ${state.rep.level}</p>
+      <p><span class="mode-badge ${state.mode === 'story' ? 'story' : ''}">${state.mode === 'story' ? 'STORY' : 'ARCADE'}</span> Average rating ${avgRating(state) ? avgRating(state).toFixed(2) + '★' : '–'}${state.mode === 'story' ? ` · Chef Level ${state.level} · ${state.xp} XP` : ''}</p>
       <button class="btn" data-act="chef">Change my chef</button></div>
-      <div class="card"><h3>Save</h3>${host ? `<p>The game saves on this laptop after every day. A save code is a backup you can paste into any browser (Host → Import a save code).</p><button class="btn" data-act="code">Show save code</button>` : '<p>Your partner\'s laptop keeps the save. Only the host can export it.</p>'}</div></div>`;
+      <div class="card"><h3>Save</h3>${host ? `<p>Saved on this laptop each day. Use a save code to move to another browser.</p><button class="btn" data-act="code">Show save code</button>` : '<p>Saved on the host\'s laptop. Only the host can export it.</p>'}</div></div>`;
   }
 
   // ------------------------------------------------------------ events
@@ -5889,10 +8031,12 @@ class Office {
       case 'autofill': cmd({ c: 'autofill' }); break;
       case 'allings': this.showAllIngs = !this.showAllIngs; this.render(s, true); break;
       case 'buy': cmd({ c: 'upgrade', id: b.dataset.id }); break;
+      case 'unlock': cmd({ c: 'unlock', kind: b.dataset.kind, id: b.dataset.id }); break;
+      case 'chapter': cmd({ c: 'chapter' }); break;
       case 'market': cmd({ c: 'marketing', id: b.dataset.id }); break;
-      case 'layout': this.layoutMode = true; this.root.classList.add('layout-mode'); this.app.layoutSel = null; this.render(s, true); break;
-      case 'layoutdone': this.layoutMode = false; this.root.classList.remove('layout-mode'); this.app.layoutSel = null; this.render(s, true); break;
-      case 'unsel': this.app.layoutSel = null; this.render(s, true); break;
+      case 'layout': this.startLayout(s); break;
+      case 'layoutdone': this.stopLayout(); break;
+      case 'unsel': this.drag = null; this.app.layoutSel = null; this.app.view.setLayoutSelection(s, null); this.app.view.clearLayoutPreview(); this.render(s, true); break;
       case 'chef': this.app.editChef(); break;
       case 'code': this.app.showSaveCode(); break;
     }
@@ -5916,26 +8060,61 @@ class Office {
     if (t.dataset.draft === 'name') this.draft.name = t.value;
   }
 
-  /** Layout editor click on the 3D floor. */
-  floorClick(x, z) {
-    const s = this.state;
+  objectAt(x, z) {
     const tx = Math.floor(x), tz = Math.floor(z);
-    const sel = this.app.layoutSel;
-    const hit = s.objects.find((o) => { const f = footprint(o); return tx >= f.x && tx < f.x + f.w && tz >= f.z && tz < f.z + f.h; });
-    if (!sel) {
-      if (hit) { this.app.layoutSel = hit.id; sfx('pick'); }
-    } else if (hit && hit.id !== sel) {
-      this.app.layoutSel = hit.id; sfx('pick');
-    } else {
-      const o = s.objects.find((q) => q.id === sel);
+    return this.state.objects.find((o) => {
       const f = footprint(o);
-      // Click picks the center of the footprint.
-      const nx = tx - Math.floor((f.w - 1) / 2), nz = tz - Math.floor((f.h - 1) / 2);
-      this.app.command({ c: 'move', id: sel, x: nx, z: nz });
+      return tx >= f.x && tx < f.x + f.w && tz >= f.z && tz < f.z + f.h;
+    });
+  }
+
+  floorPointerDown(x, z, pointerId) {
+    const hit = this.objectAt(x, z);
+    const o = hit || this.state.objects.find((item) => item.id === this.app.layoutSel);
+    if (!o) return false;
+    const f = footprint(o);
+    const onObject = hit && hit.id === o.id;
+    this.app.layoutSel = o.id;
+    this.drag = {
+      id: o.id, pointerId, fromX: o.x, fromZ: o.z, x: o.x, z: o.z,
+      grabX: onObject ? Math.floor(x) - f.x : Math.floor((f.w - 1) / 2),
+      grabZ: onObject ? Math.floor(z) - f.z : Math.floor((f.h - 1) / 2),
+      valid: true, reason: '',
+    };
+    this.app.view.setLayoutSelection(this.state, o.id);
+    this.floorPointerMove(x, z, pointerId);
+    this.render(this.state, true);
+    sfx('pick');
+    return true;
+  }
+
+  floorPointerMove(x, z, pointerId) {
+    if (!this.drag || this.drag.pointerId !== pointerId) return;
+    const nx = Math.floor(x) - this.drag.grabX;
+    const nz = Math.floor(z) - this.drag.grabZ;
+    if (nx === this.drag.x && nz === this.drag.z) return;
+    const status = placementStatus(this.state, this.drag.id, nx, nz);
+    Object.assign(this.drag, { x: nx, z: nz, valid: status.ok, reason: status.reason || '' });
+    this.app.view.previewLayoutObject(this.state, this.drag.id, nx, nz, status.ok);
+  }
+
+  floorPointerUp(x, z, pointerId, cancelled = false) {
+    if (!this.drag || this.drag.pointerId !== pointerId) return;
+    this.floorPointerMove(x, z, pointerId);
+    const drag = this.drag;
+    this.drag = null;
+    this.app.view.clearLayoutPreview();
+    const moved = drag.x !== drag.fromX || drag.z !== drag.fromZ;
+    if (!cancelled && moved && drag.valid) {
+      this.app.command({ c: 'move', id: drag.id, x: drag.x, z: drag.z });
       this.app.layoutSel = null;
+      this.app.view.setLayoutSelection(this.state, null);
       sfx('drop');
+    } else {
+      this.app.view.setLayoutSelection(this.state, drag.id);
+      if (!cancelled && moved && drag.reason) { this.app.hud.toast(drag.reason, 'bad'); sfx('bad'); }
     }
-    this.render(s, true);
+    this.render(this.state, true);
   }
 }
 
@@ -5943,25 +8122,35 @@ return { Office };
 })();
 
 // ---- src/sim/sim.js ----
-__m.sim = (() => {
+__m.sim_sim = (() => {
 // The authoritative game. Only the host runs this; the partner sends it
 // positions and button presses and renders the snapshots it sends back.
+const { isStory, chapterInfo, CHAPTERS, AREAS, unlockList } = __m.data_progression;
+const { UPGRADES, MARKETING } = __m.data_upgrades;
+const { dailyGoal } = __m.sim_progression;
 const { CFG } = __m.config;
-const { SPAWN_POINTS, FRONT_DOOR } = __m.layout;
-const { ING } = __m.ingredients;
-const { buildGrid } = __m.world;
-const { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS } = __m.state;
-const { actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById } = __m.kitchen;
-const { updateParties, spawnParty, spawnRate, compItem, sendHome } = __m.guests;
-const { spoil, deliverOrders, expectedParties, closeBooks, placeOrder, cancelOrder, applyAutofill, buyUpgrade, buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot } = __m.economy;
+const { spawnPoints } = __m.data_layout;
+const { playerArea } = __m.data_alley;
+const { ING } = __m.data_ingredients;
+const { buildGrid, collide } = __m.sim_world;
+const { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } = __m.sim_state;
+const { actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById } = __m.sim_kitchen;
+const { updateParties, spawnParty, buildSchedule, compItem, sendHome, pay } = __m.sim_guests;
+const { spoil, deliverOrders, expectedParties, closeBooks, placeOrder, cancelOrder, applyAutofill, buyUpgrade, buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot, buyUnlock, completeChapter, upgradeStatus, autofillPlan, casePrice } = __m.sim_economy;
 const round2 = (v) => Math.round(v * 100) / 100;
 
 class Sim {
   constructor(state) {
     this.state = state;
     this.events = [];
+    this.guestMotion = new Map();
     this.time = state.t || 0;
     this.layoutRev = 0;
+    this.announcedLevel = state.level || 1;
+    for (const p of Object.values(state.players)) {
+      p.area = playerArea(p);
+      p.areaRev ||= 0;
+    }
     this.rebuild();
     if (!state.today) state.today = freshToday();
     if (state.phase === 'morning' && !state.morningDone) this.beginMorning(true);
@@ -5969,9 +8158,12 @@ class Sim {
 
   rebuild() {
     this.grid = buildGrid(this.state);
+    this.alleyGrid = buildGrid(this.state, 'alley');
     this.layoutRev++;
     this.state.layoutRev = (this.state.layoutRev || 0) + 1;
   }
+
+  gridFor(area = 'restaurant') { return area === 'alley' ? this.alleyGrid : this.grid; }
 
   emit(e) { this.events.push(e); }
 
@@ -5983,11 +8175,19 @@ class Sim {
 
   addPlayer(pid, profile) {
     const S = this.state;
-    const slot = Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0;
-    const sp = SPAWN_POINTS[slot];
+    const previous = S.players[pid];
+    if (previous) dropHeld(this, pid);
+    if (S.pendingPurchase && !S.players[pid]) {
+      delete S.pendingPurchase;
+      this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
+    }
+    const slot = previous?.slot ?? (Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0);
+    const sp = spawnPoints(S)[slot];
     S.players[pid] = {
       id: pid, slot, name: (profile.name || 'Chef').slice(0, 16), look: sanitizeLook(profile.look),
       x: sp.x, z: sp.z, rot: Math.PI, hand: null, tips: 0, last: {}, working: null,
+      area: 'restaurant', areaRev: previous ? (previous.areaRev || 0) + 1 : 0, smoking: null,
+      smokeBoostUntil: previous?.smokeBoostUntil || 0,
     };
     this.emit({ type: 'toast', text: `${S.players[pid].name} clocked in.`, kind: 'good' });
     return S.players[pid];
@@ -6008,23 +8208,32 @@ class Sim {
     const name = S.players[pid].name;
     delete S.players[pid];
     delete S.ready[pid];
+    if (S.pendingPurchase) {
+      delete S.pendingPurchase;
+      this.emit({ type: 'toast', text: 'Purchase canceled because a chef left.', kind: 'warn' });
+    }
     this.emit({ type: 'toast', text: `${name} left the kitchen.`, kind: 'warn' });
   }
 
-  setPose(pid, x, z, rot) {
+  setPose(pid, x, z, rot, area, areaRev) {
     const p = this.state.players[pid];
     if (!p) return;
+    if ((area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(rot)) return;
-    p.x = x; p.z = z; p.rot = rot;
+    const position = collide(this.gridFor(playerArea(p)), { x, z }, CFG.move.radius);
+    p.x = position.x; p.z = position.z; p.rot = rot;
   }
 
-  setWork(pid, on) {
+  setWork(pid, on, area, areaRev) {
     const p = this.state.players[pid];
-    if (p) p.space = !!on;
+    if (!p || (area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
+    p.space = playerArea(p) === 'restaurant' && !!on;
   }
 
-  press(pid, key) {
+  press(pid, key, area, areaRev) {
     const S = this.state;
+    const p = S.players[pid];
+    if (!p || (area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
     if (S.paused) return;
     if (S.phase === 'office') return;
     if (key === 'e') actE(this, pid, false);
@@ -6035,10 +8244,68 @@ class Sim {
 
   command(pid, c) {
     const S = this.state;
-    const r = this._command(pid, c) || {};
+    if (!S.players[pid] || !c || typeof c.c !== 'string') return { ok: false };
+    if (playerArea(S.players[pid]) !== 'restaurant' && !['profile', 'pause', 'approvePurchase'].includes(c.c)) return { ok: false, reason: 'Go inside first.' };
+    let r;
+    if (c.c === 'approvePurchase') r = this.approvePurchase(pid, c);
+    else {
+      const quote = this.purchaseQuote(c);
+      if (quote && S.pendingPurchase) r = { ok: false, reason: 'Finish the pending purchase first.' };
+      else if (quote && isStory(S) && quote.price > 500) {
+        if (!['morning', 'office'].includes(S.phase)) r = { ok: false, reason: 'Approve large purchases before opening or after closing.' };
+        else {
+          S.pendingPurchase = { id: nextId(S, 'purchase'), name: quote.name, price: quote.price, requestedBy: pid, required: Object.keys(S.players), approved: [], command: { ...c } };
+          r = { ok: true, pending: true };
+        }
+      } else r = this._command(pid, c) || {};
+    }
     if (r.reason) this.emit({ type: 'toast', text: r.reason, kind: 'bad', to: pid });
     if (r.layout) this.rebuild();
+    if (r.chapter) this.emit({ type: 'chapter', ...r.chapter });
+    this.syncProgression();
+    if (r.ok && ['unlock', 'chapter', 'approvePurchase', 'upgrade'].includes(c.c)) this.emit({ type: 'save' });
     return r;
+  }
+
+  purchaseQuote(c) {
+    const S = this.state;
+    if (c.c === 'chapter') {
+      const info = chapterInfo(S);
+      return info?.ready ? { name: info.area ? AREAS.find((a) => a.id === info.area).name : 'Finish the story', price: info.price } : null;
+    }
+    if (c.c === 'unlock') {
+      const row = unlockList(S).find((u) => u.kind === c.kind && u.id === c.id && u.can);
+      return row ? { name: row.name, price: row.price } : null;
+    }
+    if (c.c === 'upgrade') {
+      const row = UPGRADES.find((u) => u.id === c.id);
+      return row && upgradeStatus(S, row).can ? { name: row.name, price: row.price } : null;
+    }
+    if (c.c === 'marketing') return MARKETING.find((m) => m.id === c.id) || null;
+    if ((c.c === 'order' || c.c === 'rush') && ING[c.ing] && c.cases > 0) return { name: 'Supplier order', price: casePrice(c.ing, c.c === 'rush') * Math.min(c.c === 'rush' ? 5 : 50, c.cases | 0) };
+    if (c.c === 'autofill') return { name: 'Supplier autofill', price: Math.round(autofillPlan(S, this.playerCount()).reduce((sum, row) => sum + casePrice(row.ing) * row.cases, 0) * 100) / 100 };
+    return null;
+  }
+
+  approvePurchase(pid, c) {
+    const S = this.state, purchase = S.pendingPurchase;
+    if (!purchase || purchase.id !== c.id || !purchase.required.includes(pid)) return { ok: false };
+    if (c.approve !== true) { delete S.pendingPurchase; return { ok: true }; }
+    if (!purchase.approved.includes(pid)) purchase.approved.push(pid);
+    if (!purchase.required.every((id) => purchase.approved.includes(id))) return { ok: true, pending: true };
+    delete S.pendingPurchase;
+    const quote = this.purchaseQuote(purchase.command);
+    if (!['morning', 'office'].includes(S.phase) || !quote || quote.price !== purchase.price) return { ok: false, reason: 'The purchase changed. Please request it again.' };
+    return this._command(pid, purchase.command) || {};
+  }
+
+  syncProgression() {
+    const S = this.state;
+    if (!isStory(S) || S.level <= this.announcedLevel) return;
+    const unlocks = unlockList(S).filter((u) => u.level > this.announcedLevel && u.level <= S.level).map((u) => u.name);
+    this.announcedLevel = S.level;
+    this.emit({ type: 'chefLevelUp', level: S.level, unlocks });
+    this.emit({ type: 'sfx', name: 'level' });
   }
 
   _command(pid, c) {
@@ -6072,6 +8339,10 @@ class Sim {
         if (r.ok) this.emit({ type: 'sfx', name: 'cash' });
         return r;
       }
+      case 'unlock':
+      case 'chapter':
+        if (!['morning', 'office'].includes(S.phase)) return { ok: false, reason: 'Use the office before opening or after closing.' };
+        return c.c === 'chapter' ? completeChapter(S) : buyUnlock(S, c.kind, c.id);
       case 'marketing': return buyMarketing(S, c.id);
       case 'price': setPrice(S, c.id, c.price, c.drink); return null;
       case 'toggle': return toggleDish(S, c.id, c.on, c.drink);
@@ -6090,7 +8361,9 @@ class Sim {
 
   setReady(pid, on) {
     const S = this.state;
+    if (playerArea(S.players[pid]) !== 'restaurant') return { ok: false, reason: 'Go inside first.' };
     if (S.phase !== 'morning' && S.phase !== 'office') return null;
+    if (S.pendingPurchase) return { ok: false, reason: 'Approve or cancel the pending purchase first.' };
     if (on) S.ready[pid] = true; else delete S.ready[pid];
     const ids = Object.keys(S.players);
     if (ids.length && ids.every((id) => S.ready[id])) {
@@ -6111,6 +8384,7 @@ class Sim {
     if (initial && S.day === 1 && !S.started) {
       S.started = true;
       this.firstDelivery();
+      if (isStory(S)) this.emit({ type: 'chapter', chapter: 1, ...CHAPTERS[0] });
     }
   }
 
@@ -6139,10 +8413,9 @@ class Sim {
     S.clock = CFG.serviceStart;
     S.today.expected = expectedParties(S, S.day, this.playerCount());
     S.today.repStart = S.rep.points;
-    this.spawnAcc = 0;
     // A first party arrives right away so there is something to do.
-    this.firstSpawnIn = 4;
-    this.emit({ type: 'toast', text: `Doors open! ${WEEKDAYS[(S.day - 1) % 7]}, day ${S.day}.`, kind: 'good' });
+    S.today.schedule = [CFG.serviceStart + 3, ...buildSchedule(S.today.expected - 1, this.playerCount()).filter((t) => t > CFG.serviceStart + 12)];
+    this.emit({ type: 'banner', text: 'DOORS OPEN!', sub: `${WEEKDAYS[(S.day - 1) % 7]} · Day ${S.day}`, color: 'green' });
     this.emit({ type: 'sfx', name: 'bell' });
   }
 
@@ -6151,23 +8424,24 @@ class Sim {
     for (const p of [...S.parties]) {
       // Anyone still here pays what they owe.
       if (['eating', 'dessertEat', 'paying', 'dessertReady', 'dessertWait'].includes(p.state)) {
-        const food = p.items.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
-        const drinks = p.drinks.filter((x) => x.served).reduce((s, x) => s + x.price, 0);
-        S.cash = round2(S.cash + food + drinks);
-        S.today.foodRev = round2(S.today.foodRev + food);
-        S.today.drinkRev = round2(S.today.drinkRev + drinks);
+        pay(this, p, null);
       }
     }
     S.parties = [];
     const cl = cleanup(this);
+    delete S.pendingPurchase;
     const report = closeBooks(S, { cleanup: cl, spoiled: S.today.spoiledLines || [] });
     S.phase = 'office';
     S.ready = {};
     for (const p of Object.values(S.players)) {
-      const sp = SPAWN_POINTS[p.slot];
+      const sp = spawnPoints(S)[p.slot];
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
+      p.area = 'restaurant'; p.areaRev = (p.areaRev || 0) + 1;
+      p.space = false; p.working = null; p.smoking = null;
+      this.emit({ type: 'areaChanged', to: p.id, area: p.area, areaRev: p.areaRev });
     }
     if (S.marketing && S.marketing.days > 0) { S.marketing.days -= 1; if (S.marketing.days <= 0) S.marketing = null; }
+    this.syncProgression();
     this.emit({ type: 'dayEnd', report });
     this.emit({ type: 'sfx', name: 'bell' });
     this.emit({ type: 'save' });
@@ -6177,7 +8451,9 @@ class Sim {
     const S = this.state;
     S.day += 1;
     S.today = freshToday();
+    if (isStory(S)) S.goal = dailyGoal(S);
     const sp = spoil(S);
+    addTrash(S, sp.lines.reduce((n, line) => n + line.n, 0));
     S.today.waste.spoiled = sp.total;
     S.today.spoiledLines = sp.lines;
     const n = deliverOrders(S);
@@ -6210,10 +8486,15 @@ class Sim {
     // Held Space.
     for (const [pid, p] of Object.entries(S.players)) {
       p.working = null;
+      if (p.smoking) {
+        p.smoking.left -= dt;
+        if (p.smoking.left <= 0) p.smoking = null;
+      }
       if (p.space) actSpace(this, pid, dt, false);
     }
 
     tickStations(this, dt);
+    this.syncProgression();
     if (S.upgrades.dishwasher) {
       const sink = S.objects.find((o) => o.type === 'sink');
       if (sink.n > 0) {
@@ -6239,25 +8520,26 @@ class Sim {
     if (S.phase === 'service' || S.phase === 'closing') {
       if (S.phase === 'service') {
         S.clock = Math.min(CFG.serviceEnd, S.clock + dt * ((CFG.serviceEnd - CFG.serviceStart) / CFG.serviceRealSeconds));
-        if (this.firstSpawnIn != null) {
-          this.firstSpawnIn -= dt;
-          if (this.firstSpawnIn <= 0) { this.firstSpawnIn = null; spawnParty(this, { size: 2 }); }
+        const sched = S.today.schedule || [];
+        if (sched.length && S.clock >= sched[0]) {
+          const first = S.today.parties === 0;
+          sched.shift();
+          spawnParty(this, first ? { size: 2 } : {});
         }
-        const rate = spawnRate(this);
-        if (rate > 0 && Math.random() < rate * dt) spawnParty(this);
         if (S.clock >= CFG.doorsLock && !this.lockAnnounced) {
           this.lockAnnounced = true;
-          this.emit({ type: 'toast', text: 'Last seating. The doors are locked.', kind: 'warn' });
+          this.emit({ type: 'banner', text: 'LAST SEATING', sub: 'The doors are locked for new guests', color: 'yellow', ms: 1800 });
         }
         if (S.clock >= CFG.serviceEnd) {
           S.phase = 'closing';
           this.lockAnnounced = false;
           // Unseated parties go home.
           for (const p of S.parties) if (p.state === 'waiting' || p.state === 'entering' || p.state === 'following') sendHome(this, p);
-          this.emit({ type: 'toast', text: 'Closing time. Finish the last tables.', kind: 'warn' });
+          this.emit({ type: 'banner', text: 'CLOSING TIME', sub: 'Finish up the last tables', color: 'red', ms: 1800 });
         }
       }
       updateParties(this, dt);
+      this.syncProgression();
       if (S.phase === 'closing' && !S.parties.length) this.endDay();
     }
   }
@@ -6278,7 +8560,7 @@ return { Sim, sanitizeLook };
 })();
 
 // ---- src/net/net.js ----
-__m.net = (() => {
+__m.net_net = (() => {
 // Peer-to-peer link between the two laptops. Trystero finds the other
 // browser through public Nostr relays, then the game talks over a direct
 // WebRTC data channel. If the network blocks direct connections, /api/ice
@@ -6352,7 +8634,7 @@ class Net {
     this.code = code;
     this.selfId = mod.selfId;
     this.room = mod.joinRoom(cfg, 'tf-' + code);
-    for (const id of ['hello', 'welcome', 'slow', 'meta', 'fast', 'pose', 'key', 'cmd', 'ev']) {
+    for (const id of ['hello', 'welcome', 'slow', 'meta', 'fast', 'pose', 'key', 'cmd', 'ev', 'chat']) {
       this.send[id] = bindAction(this.room, id, (data, peerId) => this.emit(id, data, peerId));
     }
     onPeer(this.room, 'onPeerJoin', (peerId) => { this.peers.add(peerId); this.emit('join', peerId); });
@@ -6379,17 +8661,17 @@ return { makeCode, cleanCode, Net, BUILD };
 })();
 
 // ---- src/ui/lobby.js ----
-__m.lobby = (() => {
+__m.ui_lobby = (() => {
 // Title screen, saves, picking a cuisine, joining by code, and the chef
 // customizer with a live 3D preview.
 
-const { CUISINES, CUISINE_ORDER } = __m.cuisines;
-const { newState, decodeSave, WEEKDAYS } = __m.state;
-const { sanitizeLook } = __m.sim;
-const { makePerson, animatePerson } = __m.models;
-const { cleanCode } = __m.net;
-const { esc } = __m.overlay;
-const { money0 } = __m.hud;
+const { CUISINES, CUISINE_ORDER } = __m.data_cuisines;
+const { newState, decodeSave, WEEKDAYS } = __m.sim_state;
+const { sanitizeLook } = __m.sim_sim;
+const { makePerson, animatePerson } = __m.view_models;
+const { cleanCode } = __m.net_net;
+const { esc } = __m.ui_overlay;
+const { money0 } = __m.ui_hud;
 const { sfx, unlockAudio } = __m.audio;
 const HAT_COLORS = ['#ffffff', '#222222', '#c8282e', '#22365e', '#3f7a4a', '#e0a82e', '#f08cb0', '#9a7ad0'];
 const APRON_COLORS = ['#ffffff', '#3a6ea8', '#2a2a2e', '#c8282e', '#4a8a5a', '#e0a83a', '#c8643c', '#f08cb0'];
@@ -6417,7 +8699,7 @@ function listSaves() { return store.get('tf-saves', []).sort((a, b) => b.updated
 function writeSave(id, state) {
   const ok = store.set('tf-save-' + id, state);
   const list = store.get('tf-saves', []).filter((s) => s.id !== id);
-  list.push({ id, name: state.name, cuisine: state.cuisine, day: state.day, cash: state.cash, phase: state.phase, updated: Date.now() });
+  list.push({ id, name: state.name, cuisine: state.cuisine, mode: state.mode === 'story' ? 'story' : 'arcade', day: state.day, cash: state.cash, phase: state.phase, updated: Date.now() });
   store.set('tf-saves', list);
   return ok;
 }
@@ -6435,10 +8717,15 @@ class Lobby {
   constructor(app) {
     this.app = app;
     this.root = document.getElementById('lobby');
+    this.card = document.createElement('div');
+    this.card.className = 'lobby-card';
+    this.root.replaceChildren(this.card);
     this.screen = 'title';
     this.mode = 'host';
     this.pick = 'southern';
     this.pickName = CUISINES.southern.name;
+    this.gameMode = 'story';
+    this.startCash = 3000;
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('input', (e) => this.onInput(e));
     this.root.addEventListener('keydown', (e) => {
@@ -6454,58 +8741,73 @@ class Lobby {
 
   hide() { this.root.hidden = true; this.stopPreview(); }
 
+  setStarting(on) {
+    this.starting = on;
+    this.root.setAttribute('aria-busy', String(on));
+    if (!this.root.hidden) this.render();
+  }
+
   go(screen) {
     this.screen = screen;
     this.err = '';
     this.render();
+    this.card.scrollTop = 0;
   }
 
   render() {
-    this.stopPreview();
     let h = '';
     const prof = this.app.profile;
+    this.card.classList.toggle('title-card', this.screen === 'title');
+    this.card.dataset.screen = this.screen;
     switch (this.screen) {
       case 'title':
-        h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1><p>A cozy restaurant for two chefs. Cook together, keep the tables happy, and read the P&amp;L every night.</p></div>
+        h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1></div>
         <div class="choices">
-          <button class="choice" data-act="host"><h3>Host a restaurant</h3><p>Open your kitchen and get a 4-letter code for your partner. Your laptop keeps the save.</p><span class="go">Open the kitchen →</span></button>
-          <button class="choice" data-act="joinscr"><h3>Join your partner</h3><p>Type the code from the host's screen and step into their kitchen.</p><span class="go">Enter a code →</span></button>
-          <button class="choice" data-act="solo"><h3>Practice solo</h3><p>Run the place alone. Fewer guests come in so it stays manageable.</p><span class="go">Cook alone →</span></button>
+          <button class="choice" data-act="host"><h3>Host a restaurant</h3><p>Saved on this device.</p></button>
+          <button class="choice" data-act="joinscr"><h3>Join a restaurant</h3><p>Use the host's room code.</p></button>
+          <button class="choice" data-act="solo"><h3>Play solo</h3><p>Fewer guests.</p></button>
         </div>
-        <div class="lobby-foot"><div class="me">${prof && prof.name ? `Cooking as <b>${esc(prof.name)}</b>` : 'No chef yet'} <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Make your chef'}</button></div>
-        <span class="hint-line" style="margin-left:auto">WASD to move · E to grab · Space to work</span></div>`;
+        <div class="title-actions">
+          <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Create chef'}</button>
+          <button class="btn small" data-act="options">Options</button>
+        </div>
+        ${prof && prof.name ? `<div class="title-chef">${esc(prof.name)}</div>` : ''}`;
         break;
       case 'saves': {
         const saves = listSaves();
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 style="font-size:2.6rem">${this.mode === 'solo' ? 'Practice solo' : 'Host a restaurant'}</h1><p>Pick up where you left off, or open somewhere new.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Play solo' : 'Host a restaurant'}</h1></div>
         <div class="saves">${saves.map((s) => {
           const c = CUISINES[s.cuisine];
-          return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)}</b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
-        }).join('') || '<div class="hint-line">No saved restaurants on this laptop yet.</div>'}</div>
-        <div class="lobby-foot"><button class="btn primary" data-act="new">Open a new restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
+          return `<button class="save" data-act="load" data-id="${s.id}" title="Saved ${esc(new Date(s.updated).toLocaleString())}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)} <small class="mode-badge ${s.mode === 'story' ? 'story' : ''}">${s.mode === 'story' ? 'STORY' : 'ARCADE'}</small></b><span class="save-meta">Day ${s.day} · ${WEEKDAYS[(s.day - 1) % 7]} · ${money0(s.cash)}</span><span class="save-updated">${c.style} · ${new Date(s.updated).toLocaleDateString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
+        }).join('') || '<div class="hint-line">No saved restaurants.</div>'}</div>
+        <div class="lobby-foot"><button class="btn primary" data-act="new">New restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
         break;
       }
       case 'new': {
-        const c = CUISINES[this.pick];
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 style="font-size:2.6rem">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
-        <div class="cuisines">${CUISINE_ORDER.map((id) => {
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">New restaurant</h1></div>
+        <div class="mode-choices" aria-label="Game mode">
+          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600. Build as you play.</span></button>
+          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>Full space and all recipes.</span></button>
+        </div>
+        ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : ''}
+        <div class="cuisines" role="group" aria-label="Cuisine">${CUISINE_ORDER.map((id) => {
           const z = CUISINES[id];
           const p = z.palette;
           const sw = [p.wall, p.floorA, p.counter, p.accent, p.accent2].map((x) => `<i style="background:#${x.toString(16).padStart(6, '0')}"></i>`).join('');
-          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}"><div class="sw">${sw}</div><div class="tx"><small>${esc(z.style)}</small><b>${esc(z.name)}</b><p>${esc(z.blurb)}</p></div></button>`;
+          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}" aria-pressed="${this.pick === id}"><div class="sw" aria-hidden="true">${sw}</div><div class="tx"><b>${esc(z.style)}</b></div></button>`;
         }).join('')}</div>
-        <div class="field"><label>Restaurant name</label><input data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
-        <div class="hint-line">Opening menu: ${c.dishes.filter((d) => d.level <= 1).map((d) => esc(d.name)).join(' · ')}. More dishes unlock as your reputation grows.</div>
-        <div class="lobby-foot"><button class="btn primary" data-act="create">Open ${esc(this.pickName || c.name)}</button></div>`;
+        <p class="hint-line">Cuisine cannot be changed later.</p>
+        <div class="field"><label for="restaurant-name">Restaurant name</label><input id="restaurant-name" data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
+        <div class="lobby-foot"><button class="btn primary" data-act="create">Open restaurant</button></div>`;
         break;
       }
       case 'join':
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 style="font-size:2.6rem">Join your partner</h1><p>Ask them for the room code in the bottom-right corner of their screen.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">Join a restaurant</h1><p>The room code is at the bottom-right of the host's screen.</p></div>
         <div class="field" style="max-width:360px;margin:16px auto"><input class="codein" data-in="code" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" value="${esc(this.code || '')}"></div>
-        <div style="text-align:center"><button class="btn primary" data-act="join" ${this.joining ? 'disabled' : ''}>${this.joining ? '<span class="spinner"></span>Knocking on the back door…' : 'Join the kitchen'}</button><p class="err">${esc(this.err || '')}</p></div>`;
+        <div style="text-align:center"><button class="btn primary" data-act="join" ${this.joining ? 'disabled' : ''}>${this.joining ? '<span class="spinner"></span>Joining…' : 'Join'}</button><p class="err">${esc(this.err || '')}</p></div>`;
         break;
       case 'import':
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 style="font-size:2.6rem">Import a save code</h1><p>Paste a code from the Restaurant tab or the pause menu.</p></div>
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">Import a save code</h1><p>Paste a code from the Restaurant tab or the pause menu.</p></div>
         <textarea class="code" data-in="import" placeholder="TF1.…"></textarea><p class="err">${esc(this.err || '')}</p>
         <div class="lobby-foot"><button class="btn primary" data-act="doimport">Load it</button></div>`;
         break;
@@ -6513,8 +8815,27 @@ class Lobby {
         h = this.chefHtml();
         break;
     }
-    this.root.innerHTML = `<div class="lobby-card">${h}</div>`;
-    if (this.screen === 'chef') this.startPreview();
+    if (this.screen === 'chef' && this.preview) {
+      // Keep the canvas and its WebGL context when the editor changes.
+      const sectionState = new Map([...this.card.querySelectorAll('.chef-section')].map((section) => [section.dataset.section, section.open]));
+      const content = document.createElement('div');
+      content.innerHTML = h;
+      const options = content.querySelector('.opts');
+      for (const section of options.querySelectorAll('.chef-section')) section.open = sectionState.get(section.dataset.section) || false;
+      this.card.querySelector('.opts').replaceWith(options);
+    } else {
+      this.stopPreview();
+      this.card.innerHTML = h;
+      if (this.screen === 'chef') this.startPreview();
+    }
+    if (this.starting) {
+      for (const control of this.card.querySelectorAll('button, input, textarea')) control.disabled = true;
+      const status = document.createElement('p');
+      status.className = 'hint-line';
+      status.setAttribute('role', 'status');
+      status.textContent = 'Opening the kitchen…';
+      this.card.appendChild(status);
+    }
     const ci = this.root.querySelector('[data-in=code]');
     if (ci) ci.focus();
   }
@@ -6522,17 +8843,21 @@ class Lobby {
   chefHtml() {
     const p = this.chefDraft;
     const L = p.look;
-    const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}"></button>`).join('')}</div>`;
-    const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0">Off</button></span>`;
-    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 style="font-size:2.4rem">${this.firstChef ? 'Before you clock in' : 'Your chef'}</h1><p>Your partner sees this chef in their kitchen too.</p></div>
+    const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}" aria-pressed="${L[key] === c}"></button>`).join('')}</div>`;
+    const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1" aria-pressed="${L[key]}">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0" aria-pressed="${!L[key]}">Off</button></span>`;
+    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 class="small">${this.firstChef ? 'Create chef' : 'Your chef'}</h1></div>
       <div class="chef-ed"><div class="chef-prev" id="chef-prev"></div><div class="opts">
-        <div class="field" style="margin-top:0"><label>Chef name</label><input data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
-        <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>
-        <div class="opt"><label>Apron ${onoff('apron')}</label>${L.apron ? sw('apronColor', APRON_COLORS) : ''}</div>
-        <div class="opt"><label>Jacket</label>${sw('shirt', SHIRT_COLORS)}</div>
-        <div class="opt"><label>Skin</label>${sw('skin', SKIN)}</div>
-        <div class="opt"><label>Hair <span class="seg">${HAIR_STYLES.map((n, i) => `<button class="${L.hairStyle === i ? 'on' : ''}" data-act="look" data-k="hairStyle" data-v="${i}">${n}</button>`).join('')}</span></label>${L.hairStyle !== 3 ? sw('hair', HAIR) : ''}</div>
-        <button class="btn primary" data-act="chefsave">${this.firstChef ? "Let's cook" : 'Save chef'}</button><span class="err" style="margin-left:10px">${esc(this.err || '')}</span>
+        <div class="field" style="margin-top:0"><label for="chef-name">Chef name</label><input id="chef-name" data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
+        <details class="chef-section" data-section="clothes"><summary>Clothes</summary>
+          <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>
+          <div class="opt"><label>Apron ${onoff('apron')}</label>${L.apron ? sw('apronColor', APRON_COLORS) : ''}</div>
+          <div class="opt"><label>Jacket</label>${sw('shirt', SHIRT_COLORS)}</div>
+        </details>
+        <details class="chef-section" data-section="appearance"><summary>Appearance</summary>
+          <div class="opt"><label>Skin</label>${sw('skin', SKIN)}</div>
+          <div class="opt"><label>Hair <span class="seg">${HAIR_STYLES.map((n, i) => `<button class="${L.hairStyle === i ? 'on' : ''}" data-act="look" data-k="hairStyle" data-v="${i}" aria-pressed="${L.hairStyle === i}">${n}</button>`).join('')}</span></label>${L.hairStyle !== 3 ? sw('hair', HAIR) : ''}</div>
+        </details>
+        <div class="chef-actions"><button class="btn primary" data-act="chefsave">${this.firstChef ? "Let's cook" : 'Save chef'}</button>${this.err ? `<p class="err" role="alert">${esc(this.err)}</p>` : ''}</div>
       </div></div>`;
   }
 
@@ -6551,7 +8876,7 @@ class Lobby {
     if (!host) return;
     const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     r.setPixelRatio(Math.min(2, devicePixelRatio || 1));
-    r.setSize(260, 320);
+    r.setSize(210, 210);
     r.toneMapping = THREE.NeutralToneMapping;
     host.appendChild(r.domElement);
     const scene = new THREE.Scene();
@@ -6559,7 +8884,7 @@ class Lobby {
     const d = new THREE.DirectionalLight(0xffffff, 2.0);
     d.position.set(2, 4, 3);
     scene.add(d);
-    const cam = new THREE.PerspectiveCamera(30, 260 / 320, 0.1, 50);
+    const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
     cam.position.set(0, 1.55, 4.6);
     cam.lookAt(0, 1.05, 0);
     const pv = { r, scene, cam, model: null, key: '', t: 0, alive: true };
@@ -6568,7 +8893,7 @@ class Lobby {
       if (!pv.alive) return;
       const key = JSON.stringify(this.chefDraft.look);
       if (key !== pv.key) {
-        if (pv.model) scene.remove(pv.model.root);
+        if (pv.model) { scene.remove(pv.model.root); disposePreviewModel(pv.model); }
         pv.model = makePerson(this.chefDraft.look, true);
         scene.add(pv.model.root);
         pv.key = key;
@@ -6585,7 +8910,9 @@ class Lobby {
   stopPreview() {
     if (!this.preview) return;
     this.preview.alive = false;
+    if (this.preview.model) disposePreviewModel(this.preview.model);
     this.preview.r.dispose();
+    this.preview.r.forceContextLoss();
     this.preview = null;
   }
 
@@ -6607,6 +8934,8 @@ class Lobby {
       case 'joinscr': this.needChef(() => this.go('join')); break;
       case 'saves': this.go('saves'); break;
       case 'new': this.go('new'); break;
+      case 'gameMode': this.gameMode = b.dataset.id === 'arcade' ? 'arcade' : 'story'; this.render(); break;
+      case 'startCash': this.startCash = +b.dataset.cash; this.render(); break;
       case 'importscr': this.go('import'); break;
       case 'cuisine': {
         const was = CUISINES[this.pick].name;
@@ -6630,6 +8959,7 @@ class Lobby {
       case 'join': this.join(); break;
       case 'doimport': this.doImport(); break;
       case 'chef': this.openChef(() => this.go('title'), true); break;
+      case 'options': this.app.hud.openOptions(); break;
       case 'chefcancel': if (this.afterChef && this.app.profile) this.afterChef(true); else this.go('title'); break;
       case 'look': {
         const k = b.dataset.k;
@@ -6640,13 +8970,7 @@ class Lobby {
         sfx('pick');
         const name = this.root.querySelector('[data-in=cname]');
         if (name) this.chefDraft.name = name.value;
-        const keepPreview = this.preview;
-        this.preview = null;
-        const card = this.root.querySelector('.opts');
-        const tmp = document.createElement('div');
-        tmp.innerHTML = this.chefHtml();
-        card.replaceWith(tmp.querySelector('.opts'));
-        this.preview = keepPreview;
+        this.render();
         break;
       }
       case 'chefsave': {
@@ -6666,8 +8990,6 @@ class Lobby {
     const t = e.target;
     if (t.dataset.in === 'rname') {
       this.pickName = t.value;
-      const btn = this.root.querySelector('[data-act=create]');
-      if (btn) btn.textContent = 'Open ' + (t.value || CUISINES[this.pick].name);
     }
     if (t.dataset.in === 'code') { t.value = cleanCode(t.value); this.code = t.value; }
     if (t.dataset.in === 'cname' && this.chefDraft) this.chefDraft.name = t.value;
@@ -6675,7 +8997,7 @@ class Lobby {
 
   create() {
     const name = (this.pickName || '').trim() || CUISINES[this.pick].name;
-    const state = newState({ cuisine: this.pick, name });
+    const state = newState({ cuisine: this.pick, name, mode: this.gameMode, cash: this.startCash });
     this.app.start({ mode: this.mode, state, saveId: 's' + Date.now().toString(36), loaded: false });
   }
 
@@ -6708,24 +9030,29 @@ class Lobby {
   }
 }
 
+function disposePreviewModel(model) {
+  model.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  model.material.dispose();
+}
+
 return { HAT_COLORS, APRON_COLORS, SHIRT_COLORS, SKIN, HAIR, loadProfile, saveProfile, listSaves, writeSave, readSave, Lobby };
 })();
 
 // ---- src/net/session.js ----
-__m.session = (() => {
+__m.net_session = (() => {
 // A running game, from one laptop's point of view.
 //   host   runs the Sim, saves, and streams state to the partner.
 //   client mirrors the host's state and sends its own moves and presses.
 // Solo play is a host with nobody connected.
 const { CFG, TICK, BUILD } = __m.config;
-const { Sim } = __m.sim;
-const { buildGrid } = __m.world;
-const { serialize } = __m.state;
-const { Net } = __m.net;
+const { Sim } = __m.sim_sim;
+const { buildGrid } = __m.sim_world;
+const { serialize } = __m.sim_state;
+const { Net } = __m.net_net;
 const HOST_PID = 'H', CLIENT_PID = 'C';
 
 const strip = (k, v) => (k === 'path' || k === 'tx' || k === 'tz' || k === 'moving' ? undefined : v);
-const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created'];
+const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created', 'mode', 'building', 'xp', 'level', 'prestige', 'owned', 'chapter', 'chapterDay', 'storyStats', 'debt', 'debtDays'];
 
 function liveOf(state) {
   const o = {};
@@ -6762,11 +9089,11 @@ class Session {
 
   get state() { return this.role === 'client' ? this.replica : this.sim.state; }
 
-  gridFor() {
+  gridFor(area = this.state?.players[this.selfPid]?.area || 'restaurant') {
     const s = this.state;
     if (!s) return null;
-    const key = s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
-    if (key !== this.gridKey) { this.grid = buildGrid(s); this.gridKey = key; }
+    const key = area + JSON.stringify(s.building || null) + (s.mode || 'arcade') + JSON.stringify(s.owned?.areas || {}) + s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
+    if (key !== this.gridKey) { this.grid = buildGrid(s, area); this.gridKey = key; }
     return this.grid;
   }
 
@@ -6815,16 +9142,23 @@ class Session {
     });
     n.on('pose', (d, peerId) => {
       if (!this.partner || peerId !== this.partner.peerId || !Array.isArray(d)) return;
-      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2]);
-      this.sim.setWork(CLIENT_PID, !!d[3]);
+      const p = this.sim.state.players[CLIENT_PID];
+      if (!p || d[4] !== (p.area || 'restaurant') || d[5] !== (p.areaRev || 0)) return;
+      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2], d[4], d[5]);
+      this.sim.setWork(CLIENT_PID, !!d[3], d[4], d[5]);
     });
     n.on('key', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId) return;
-      if (d === 'e' || d === 'q') this.sim.press(CLIENT_PID, d);
+      if (!this.partner || peerId !== this.partner.peerId || !d) return;
+      const p = this.sim.state.players[CLIENT_PID];
+      if (!p || d.area !== (p.area || 'restaurant') || d.areaRev !== (p.areaRev || 0)) return;
+      if (d.key === 'e' || d.key === 'q') this.sim.press(CLIENT_PID, d.key, d.area, d.areaRev);
     });
     n.on('cmd', (d, peerId) => {
       if (!this.partner || peerId !== this.partner.peerId || !d || typeof d.c !== 'string') return;
       this.sim.command(CLIENT_PID, d);
+    });
+    n.on('chat', (d, peerId) => {
+      if (this.partner && peerId === this.partner.peerId && d && typeof d.text === 'string') this.fire('chat', CLIENT_PID, d.text);
     });
   }
 
@@ -6844,8 +9178,8 @@ class Session {
     if (!this.net || !this.partner) return;
     const st = this.sim.state;
     const p = {}, g = {};
-    for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot)];
-    for (const party of st.parties) for (const gu of party.guests) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
+    for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot), pl.area || 'restaurant', pl.areaRev || 0];
+    for (const party of st.parties) for (const gu of party.guests) if (!gu.exited) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
     this.net.to('fast', { p, g }, this.partner.peerId);
   }
 
@@ -6886,6 +9220,9 @@ class Session {
 
   applySlow(live) {
     const meta = this.metaIn || {};
+    const before = this.replica?.players[this.selfPid];
+    const after = live.players[this.selfPid];
+    if (!before || !after || before.area !== after.area || before.areaRev !== after.areaRev) this.pose = null;
     this.liveIn = live;
     this.replica = { ...live, ...meta };
     this.since = 0;
@@ -6901,6 +9238,7 @@ class Session {
     this.partner = { peerId: this.hostPeer };
     n.on('fast', (d, peerId) => { if (peerId === this.hostPeer && d) this.fast = d; });
     n.on('ev', (list, peerId) => { if (peerId === this.hostPeer && Array.isArray(list)) for (const e of list) this.fire('event', e); });
+    n.on('chat', (d, peerId) => { if (peerId === this.hostPeer && d && typeof d.text === 'string') this.fire('chat', HOST_PID, d.text); });
     n.on('leave', (peerId) => {
       if (peerId === this.hostPeer) { this.lost = true; this.fire('lost'); }
     });
@@ -6911,20 +9249,35 @@ class Session {
   // ------------------------------------------------------------ shared API
 
   /** Local chef pose; the host applies it directly, the client streams it. */
-  setPose(x, z, rot, space) {
+  setPose(x, z, rot, space, area = this.state?.players[this.selfPid]?.area || 'restaurant', areaRev = this.state?.players[this.selfPid]?.areaRev || 0) {
+    const p = this.state?.players[this.selfPid];
+    if (!p || area !== (p.area || 'restaurant') || areaRev !== (p.areaRev || 0)) return;
     if (this.role === 'client') {
-      this.pose = [r2(x), r2(z), r2(rot), space ? 1 : 0];
-      const p = this.replica && this.replica.players[this.selfPid];
-      if (p) { p.x = x; p.z = z; p.rot = rot; }
+      this.pose = [r2(x), r2(z), r2(rot), space ? 1 : 0, area, areaRev];
+      p.x = x; p.z = z; p.rot = rot;
     } else {
-      this.sim.setPose(this.selfPid, x, z, rot);
-      this.sim.setWork(this.selfPid, space);
+      this.sim.setPose(this.selfPid, x, z, rot, area, areaRev);
+      this.sim.setWork(this.selfPid, space, area, areaRev);
     }
   }
 
   press(key) {
-    if (this.role === 'client') this.net.to('key', key, this.hostPeer);
-    else this.sim.press(this.selfPid, key);
+    const p = this.state?.players[this.selfPid];
+    if (!p) return;
+    const area = p.area || 'restaurant', areaRev = p.areaRev || 0;
+    if (this.role === 'client') this.net.to('key', { key, area, areaRev }, this.hostPeer);
+    else this.sim.press(this.selfPid, key, area, areaRev);
+  }
+
+  /** True when a partner is connected to talk to. */
+  get canChat() { return !!(this.net && this.partner && !this.lost); }
+
+  /** Sends a chat line to the partner and shows it locally. Chat is not game state. */
+  chat(text) {
+    if (!this.canChat) return false;
+    this.net.to('chat', { text }, this.role === 'client' ? this.hostPeer : this.partner.peerId);
+    this.fire('chat', this.selfPid, text);
+    return true;
   }
 
   command(c) {
@@ -6951,6 +9304,7 @@ class Session {
       steps++;
       const evs = this.sim.drain();
       if (evs.length) {
+        if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd', 'areaChanged'].includes(e.type))) this.sendSnapshots(true);
         const mine = [], theirs = [];
         for (const e of evs) {
           if (!e.to || e.to === this.selfPid) mine.push(e);
@@ -6971,7 +9325,10 @@ class Session {
   poses() {
     if (this.role !== 'client' || !this.fast) return { poses: null, guests: null };
     const poses = {};
-    for (const [pid, a] of Object.entries(this.fast.p || {})) if (pid !== this.selfPid) poses[pid] = { x: a[0], z: a[1], rot: a[2] };
+    for (const [pid, a] of Object.entries(this.fast.p || {})) {
+      const p = this.replica.players[pid];
+      if (pid !== this.selfPid && p && a[3] === (p.area || 'restaurant') && a[4] === (p.areaRev || 0)) poses[pid] = { x: a[0], z: a[1], rot: a[2], area: a[3], areaRev: a[4] };
+    }
     const guests = {};
     for (const [id, a] of Object.entries(this.fast.g || {})) guests[id] = { x: a[0], z: a[1], rot: a[2] };
     return { poses, guests };
@@ -6986,90 +9343,26 @@ class Session {
 return { Session, HOST_PID, CLIENT_PID };
 })();
 
-// ---- src/input.js ----
-__m.input = (() => {
-// Keyboard state. Movement keys are polled; action keys fire callbacks once
-// per press (no key repeat).
-const MOVE = {
-  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
-  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
-};
-
-class Input {
-  constructor() {
-    this.held = { up: false, down: false, left: false, right: false, space: false };
-    this.handlers = {};
-    this.enabled = true;
-    window.addEventListener('keydown', (e) => this.down(e));
-    window.addEventListener('keyup', (e) => this.up(e));
-    window.addEventListener('blur', () => { for (const k of Object.keys(this.held)) this.held[k] = false; });
-  }
-
-  on(key, fn) { this.handlers[key] = fn; }
-
-  typing(e) {
-    const t = e.target;
-    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
-  }
-
-  down(e) {
-    if (this.typing(e)) return;
-    const m = MOVE[e.code];
-    if (m) {
-      if (this.enabled) { this.held[m] = true; e.preventDefault(); }
-      if (this.handlers.move) this.handlers.move();
-      return;
-    }
-    if (e.code === 'Space') {
-      e.preventDefault();
-      if (this.enabled) this.held.space = true;
-      return;
-    }
-    if (e.repeat) return;
-    const k = e.code === 'Escape' ? 'esc' : e.code === 'Tab' ? 'tab' : /^Digit\d$/.test(e.code) ? 'digit' : e.code.replace('Key', '').toLowerCase();
-    const h = this.handlers[k];
-    if (h) {
-      const used = h(e.code === 'Escape' ? null : e.code.replace('Digit', ''));
-      if (used !== false && (k === 'tab' || k === 'esc')) e.preventDefault();
-    }
-  }
-
-  up(e) {
-    const m = MOVE[e.code];
-    if (m) this.held[m] = false;
-    if (e.code === 'Space') this.held.space = false;
-  }
-
-  axis() {
-    if (!this.enabled) return { x: 0, z: 0 };
-    let x = (this.held.right ? 1 : 0) - (this.held.left ? 1 : 0);
-    let z = (this.held.down ? 1 : 0) - (this.held.up ? 1 : 0);
-    const l = Math.hypot(x, z);
-    if (l > 0) { x /= l; z /= l; }
-    return { x, z };
-  }
-}
-
-return { Input };
-})();
-
 // ---- src/main.js ----
 __m.main = (() => {
 // Wires everything together: lobby, session (host / client / solo), the
 // local chef's movement, the 3D view, HUD, office and sound.
 const { CFG } = __m.config;
-const { SPAWN_POINTS } = __m.layout;
-const { newState, deserialize, encodeSave } = __m.state;
-const { collide } = __m.world;
-const { describe } = __m.kitchen;
-const { View } = __m.scene;
-const { Overlay } = __m.overlay;
-const { Hud } = __m.hud;
-const { Office } = __m.office;
-const { Lobby, loadProfile, saveProfile, writeSave } = __m.lobby;
-const { Session } = __m.session;
-const { makeCode } = __m.net;
+const { spawnPoints } = __m.data_layout;
+const { areaObjects, movementMultiplier } = __m.data_alley;
+const { newState, deserialize, encodeSave } = __m.sim_state;
+const { collide } = __m.sim_world;
+const { describe } = __m.sim_kitchen;
+const { View } = __m.view_scene;
+const { Overlay } = __m.ui_overlay;
+const { Hud } = __m.ui_hud;
+const { Fx } = __m.ui_fx;
+const { Office } = __m.ui_office;
+const { Lobby, loadProfile, saveProfile, writeSave } = __m.ui_lobby;
+const { Session } = __m.net_session;
+const { makeCode } = __m.net_net;
 const { Input } = __m.input;
+const { ChatBox, cleanChat } = __m.ui_chat;
 const { sfx, unlockAudio, startMusic, setCrowd } = __m.audio;
 class App {
   constructor() {
@@ -7077,9 +9370,11 @@ class App {
     this.view = new View(this.root);
     this.overlay = new Overlay(document.getElementById('markers'), this.view);
     this.hud = new Hud(this);
+    this.fx = new Fx(this.root);
     this.office = new Office(this);
     this.lobby = new Lobby(this);
     this.input = new Input();
+    this.chat = new ChatBox(this.root, (text) => this.sendChat(text));
     this.profile = loadProfile();
     this.session = null;
     this.demo = newState({ cuisine: 'southern', name: 'Two Forks' });
@@ -7088,9 +9383,21 @@ class App {
     this.saveTimer = 0;
     this.bindKeys();
     this.hookModalClose();
-    this.view.renderer.domElement.addEventListener('pointerdown', (e) => this.canvasClick(e));
+    const canvas = this.view.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => this.canvasPointerDown(e));
+    canvas.addEventListener('pointermove', (e) => this.canvasPointerMove(e));
+    canvas.addEventListener('pointerup', (e) => this.canvasPointerUp(e));
+    canvas.addEventListener('pointercancel', (e) => this.canvasPointerUp(e, true));
+    window.addEventListener('wheel', (e) => {
+      if (!this.session || !this.lobby.root.hidden || this.office.open || this.hud.modalOpen) return;
+      if (e.target.closest('.rail, .keys, .morning')) return;
+      e.preventDefault();
+      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      this.view.zoomBy(Math.max(-0.25, Math.min(0.25, d * (e.ctrlKey ? 0.01 : 0.0018))));
+    }, { passive: false });
     window.addEventListener('beforeunload', () => this.autosave());
     document.getElementById('boot').remove();
+    if (document.fonts && document.fonts.load) document.fonts.load('80px "Lilita One"').then(() => { this.view.roomKey = ''; }).catch(() => {});
     this.lobby.show(this.profile && this.profile.name ? 'title' : 'title');
     requestAnimationFrame(() => this.frame());
   }
@@ -7106,14 +9413,23 @@ class App {
   // ------------------------------------------------------------ starting and leaving
 
   async start({ mode, state, saveId, loaded }) {
+    if (this.lobby.starting) return;
     unlockAudio();
     if (loaded) {
       try { state = deserialize(state); } catch (e) { alert('That save could not be loaded: ' + e.message); return; }
     }
     this.saveId = saveId;
     this.code = mode === 'host' ? makeCode() : null;
+    this.lobby.setStarting(true);
+    try {
+      this.session = await Session.host(state, this.profile, this.code, mode === 'host');
+    } catch (e) {
+      alert('The kitchen could not open: ' + e.message);
+      return;
+    } finally {
+      this.lobby.setStarting(false);
+    }
     this.lobby.hide();
-    this.session = await Session.host(state, this.profile, this.code, mode === 'host');
     if (this.session.netError) { this.hud.toast(this.session.netError, 'warn', 6000); this.code = null; }
     this.wireSession();
     this.enterGame();
@@ -7140,28 +9456,44 @@ class App {
     });
     s.on('lost', () => this.hud.toast('Lost connection to the host. Trying to reconnect…', 'bad', 6000));
     s.on('back', () => this.hud.toast('Reconnected!', 'good'));
+    s.on('chat', (pid, text) => {
+      const line = cleanChat(text);
+      if (!line) return;
+      this.overlay.say(pid, line);
+      if (pid !== this.selfPid) sfx('chat');
+    });
+  }
+
+  sendChat(text) {
+    if (!this.session || !this.session.chat(text)) this.hud.toast('Your partner is not connected.', 'warn');
+    this.focusGame();
   }
 
   enterGame() {
     const st = this.session.state;
     const me = st.players[this.selfPid];
-    const sp = me || SPAWN_POINTS[0];
-    this.local = { x: sp.x, z: sp.z, rot: Math.PI, vx: 0, vz: 0 };
+    const sp = me || spawnPoints(st)[0];
+    this.local = { x: sp.x, z: sp.z, rot: sp.rot ?? Math.PI, vx: 0, vz: 0, area: sp.area || 'restaurant', areaRev: sp.areaRev || 0 };
     this.lastPhase = st.phase;
     this.view.clear();
     this.overlay.clear();
     this.hud.show(true);
+    this.view.setInsetLeft(232);
+    this.view.setCameraMode('follow');
     startMusic();
     if (st.phase === 'office') this.office.show(st, 'report');
     this.focusGame();
   }
 
   leave() {
+    this.chat.close();
     this.autosave();
     if (this.session) this.session.close();
     this.session = null;
     this.hud.closeModal();
     this.hud.show(false);
+    this.view.setInsetLeft(0);
+    this.view.zoomTarget = 0;
     this.office.hide();
     this.overlay.clear();
     this.view.clear();
@@ -7194,23 +9526,46 @@ class App {
     const st = this.session && this.session.state;
     if (!st) return;
     if (e.to && e.to !== this.selfPid) return;
+    const area = st.players[this.selfPid]?.area || 'restaurant';
     switch (e.type) {
-      case 'sfx': sfx(e.name); break;
+      case 'sfx': if (e.x == null || area === (e.area || 'restaurant')) sfx(e.name); break;
+      case 'areaChanged': this.syncLocalArea(st); break;
       case 'toast': this.hud.toast(e.text, e.kind); if (e.kind === 'bad') sfx('bad'); break;
       case 'picker': if (!this.hud.modalOpen || this.hud.modalKind === 'picker') this.hud.openPicker(st, e.store, e.obj); break;
       case 'float': {
+        if (area !== (e.area || 'restaurant')) break;
         let a = null;
         if (e.party) {
           const p = st.parties.find((q) => q.id === e.party);
           const t = p && st.objects.find((o) => o.id === p.table);
           if (t) a = { x: t.x + (t.seats === 4 ? 1 : 1.5), y: 1.8, z: t.z + (t.seats === 4 ? 1.5 : 0.5) };
         } else if (e.x != null) a = { x: e.x, y: 1.6, z: e.z };
-        if (a) this.overlay.float(e.text, a.x, a.y, a.z, e.text.startsWith('+$') ? 'money' : '');
+        if (a) {
+          const money = e.text.startsWith('+$');
+          this.overlay.float(e.text, a.x, a.y, a.z, money ? 'money' : '');
+          if (money) { const sp = this.view.toScreen(a.x, a.y, a.z); this.fx.coins(sp.x, sp.y, 6); }
+        }
         break;
       }
-      case 'review': if (e.review.stars >= 5 || e.review.stars <= 1 || e.review.critic) this.hud.toast(`${'★'.repeat(e.review.stars)}${'☆'.repeat(5 - e.review.stars)}  "${e.review.text}"`, e.review.stars >= 4 ? 'good' : 'bad', 4200); break;
-      case 'levelUp': this.hud.levelUp(e.level, e.dishes); break;
-      case 'dayEnd': this.hud.closeModal(); this.office.show(st, 'report'); break;
+      case 'served': if (area === 'restaurant') this.overlay.float(e.cold ? 'cold…' : e.great ? '♥ yum!' : '♥', e.x, 1.7, e.z, e.cold ? '' : 'heart'); break;
+      case 'banner': this.fx.banner(e.text, e.sub, e.color, e.ms); break;
+      case 'review': {
+        const r = e.review;
+        if (e.x != null && area === 'restaurant') this.overlay.float('★'.repeat(r.stars), e.x, 2.1, e.z, 'star');
+        if (r.stars >= 5 || r.stars <= 1 || r.critic) this.hud.toast(`${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}  "${r.text}"`, r.stars >= 4 ? 'good' : 'bad', 4200);
+        break;
+      }
+      case 'chapter': this.hud.showStoryCard(e); break;
+      case 'chefLevelUp': this.hud.showLevelUp(e); this.fx.confetti(); break;
+      case 'levelUp': this.hud.levelUp(e.level, e.dishes); this.fx.confetti(); break;
+      case 'dayEnd': {
+        this.hud.closeModal();
+        const r = e.report;
+        this.fx.banner('CLOSED!', `Day ${r.day} · ${r.net >= 0 ? 'profit' : 'loss'} ${(r.net < 0 ? '−$' : '$') + Math.abs(r.net).toFixed(2)}`, r.net >= 0 ? 'green' : 'red', 2200);
+        this.office.show(st, 'report');
+        if (r.net > 0) setTimeout(() => this.fx.confetti(60), 300);
+        break;
+      }
       case 'morning': this.office.hide(); break;
       case 'save': if (this.session.role !== 'client') setTimeout(() => this.autosave(), 50); break;
     }
@@ -7221,7 +9576,7 @@ class App {
   bindKeys() {
     const inGame = () => this.session && this.lobby.root.hidden;
     const canAct = () => inGame() && !this.office.open && !(this.hud.modalOpen && this.hud.modalKind !== 'picker');
-    this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); });
+    this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); this.turnToTarget = 0.35; });
     this.input.on('q', () => { if (canAct()) this.session.press('q'); });
     this.input.on('b', () => {
       if (!inGame() || this.office.open) return;
@@ -7229,12 +9584,12 @@ class App {
     });
     this.input.on('o', () => {
       if (!inGame() || this.office.open) return;
+      if ((this.session.state.players[this.selfPid]?.area || 'restaurant') !== 'restaurant') return;
       if (this.hud.modalKind === 'picker' && this.hud.pickerState == null) this.hud.closeModal(); else this.hud.openRush(this.session.state);
     });
     this.input.on('c', () => {
       if (!inGame()) return;
-      this.view.setCameraMode(this.view.camMode === 'overview' ? 'follow' : 'overview');
-      this.hud.toast(this.view.camMode === 'follow' ? 'Close-up camera (C to switch back)' : 'Whole-room camera', '', 1500);
+      this.view.setCameraMode((this.view.zoomTarget || 0) > 0.15 ? 'overview' : 'follow');
     });
     this.input.on('tab', () => {
       if (!inGame()) return false;
@@ -7243,15 +9598,30 @@ class App {
       return true;
     });
     this.input.on('digit', (d) => { if (inGame()) this.hud.pickerKey(d); });
+    const openChat = () => {
+      if (!canAct() || !this.session.canChat) return;
+      for (const k of Object.keys(this.input.held)) this.input.held[k] = false;
+      // Next tick: the Enter that opened the box must not also submit it.
+      setTimeout(() => this.chat.show(), 0);
+    };
+    this.input.on('enter', openChat);
+    this.input.on('numpadenter', openChat);
+    this.input.on('h', () => { if (inGame()) this.hud.toggleKeys(); });
+    this.input.on('u', () => { if (inGame()) this.hud.toggleMinimal(); });
     this.input.on('esc', () => {
+      if (this.chat.open) { this.chat.close(); this.focusGame(); return; }
+      if (this.hud.modalKind === 'options') { this.hud.closeModal(); return; }
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;
-      if (this.office.layoutMode) { this.office.layoutMode = false; this.office.root.classList.remove('layout-mode'); this.layoutSel = null; this.office.render(this.session.state, true); return; }
+      if (this.office.layoutMode) { this.office.stopLayout(); return; }
       if (this.hud.modalOpen) { this.hud.closeModal(); return; }
       if (this.office.open && this.session.state.phase === 'morning') { this.closeOffice(); return; }
       this.openPause();
     });
-    this.input.on('move', () => { if (this.hud.modalKind === 'picker') this.hud.closeModal(); });
+    this.input.on('move', () => {
+      if (this.hud.modalKind === 'picker') this.hud.closeModal();
+      if (this.hud.root.contains(document.activeElement)) this.focusGame();
+    });
   }
 
   hookModalClose() {
@@ -7271,6 +9641,10 @@ class App {
 
   openOffice() {
     if (!this.session) return;
+    if ((this.session.state.players[this.selfPid]?.area || 'restaurant') !== 'restaurant') {
+      this.hud.toast('Go inside to open the office.', 'warn');
+      return;
+    }
     this.hud.closeModal();
     this.office.show(this.session.state, this.session.state.phase === 'morning' ? 'menu' : 'report');
   }
@@ -7286,21 +9660,50 @@ class App {
     if (!this.session || this.session.role === 'client') return;
     const code = await encodeSave(this.session.state);
     this.hud.openSheet('pause', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Save code</h2>
-      <div class="sub">Copy this somewhere safe. Paste it under Host → Import a save code on any laptop to continue from ${this.session.state.phase === 'service' || this.session.state.phase === 'closing' ? 'this morning' : 'here'}.</div>
+      <div class="sub">Use Host → Import a save code on another device.${this.session.state.phase === 'service' || this.session.state.phase === 'closing' ? ' Resumes from this morning.' : ''}</div>
       <textarea class="code" readonly>${code}</textarea><div class="stack"><button class="btn primary" data-act="copy">Copy</button></div>`);
     const ta = this.hud.modal.querySelector('textarea');
     ta.select();
     this.hud.modal.querySelector('[data-act=copy]').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(code); this.hud.toast('Save code copied', 'good'); };
   }
 
-  canvasClick(e) {
+  canvasPointerDown(e) {
     unlockAudio();
     if (!this.session || !this.office.layoutMode) return;
     const p = this.view.floorAt(e.clientX, e.clientY);
-    if (p) this.office.floorClick(p.x, p.z);
+    if (!p || !this.office.floorPointerDown(p.x, p.z, e.pointerId)) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.classList.add('layout-dragging');
+  }
+
+  canvasPointerMove(e) {
+    if (!this.session || !this.office.layoutMode) return;
+    const p = this.view.floorAt(e.clientX, e.clientY);
+    if (p) this.office.floorPointerMove(p.x, p.z, e.pointerId);
+  }
+
+  canvasPointerUp(e, cancelled = false) {
+    if (!this.session || !this.office.layoutMode) return;
+    const p = this.view.floorAt(e.clientX, e.clientY);
+    if (p) this.office.floorPointerUp(p.x, p.z, e.pointerId, cancelled);
+    e.currentTarget.classList.remove('layout-dragging');
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
   // ------------------------------------------------------------ frame loop
+
+  syncLocalArea(st) {
+    const p = st.players[this.selfPid];
+    if (!p) return;
+    const area = p.area || 'restaurant', areaRev = p.areaRev || 0;
+    if (this.local.area === area && this.local.areaRev === areaRev) return;
+    Object.assign(this.local, { x: p.x, z: p.z, rot: p.rot, vx: 0, vz: 0, area, areaRev });
+    this.turnToTarget = 0;
+    this.aimTarget = null;
+    if (this.hud.modalKind === 'picker') this.hud.closeModal();
+    this.overlay.clear();
+  }
 
   moveLocal(dt, st) {
     const L = this.local;
@@ -7308,7 +9711,8 @@ class App {
     const M = CFG.move;
     const frozen = st.phase === 'office' || st.paused || this.office.open || (this.hud.modalOpen && this.hud.modalKind !== 'picker') || !this.lobby.root.hidden;
     const ax = frozen ? { x: 0, z: 0 } : this.input.axis();
-    const tvx = ax.x * M.speed, tvz = ax.z * M.speed;
+    const speed = M.speed * movementMultiplier(st, st.players[this.selfPid]);
+    const tvx = ax.x * speed, tvz = ax.z * speed;
     const k = Math.min(1, M.accel * dt / M.speed);
     L.vx += (tvx - L.vx) * k;
     L.vz += (tvz - L.vz) * k;
@@ -7323,7 +9727,20 @@ class App {
       L.rot += d * Math.min(1, dt * 18);
     }
     const space = !frozen && this.input.held.space;
-    this.session.setPose(L.x, L.z, L.rot, space);
+    if (!ax.x && !ax.z && (space || this.turnToTarget > 0) && this.aimTarget) {
+      this.turnToTarget = Math.max(0, (this.turnToTarget || 0) - dt);
+      const o = this.aimTarget;
+      const w = o.type === 'table' ? (o.seats === 4 ? 2 : 3) : (o.w || 1), h = o.type === 'table' ? (o.seats === 4 ? 3 : 1) : (o.h || 1);
+      const cx = Math.max(o.x, Math.min(L.x, o.x + w)), cz = Math.max(o.z, Math.min(L.z, o.z + h));
+      if (Math.hypot(cx - L.x, cz - L.z) > 0.05) {
+        const want = Math.atan2(cx - L.x, cz - L.z);
+        let d = (want - L.rot) % (Math.PI * 2);
+        if (d > Math.PI) d -= Math.PI * 2;
+        if (d < -Math.PI) d += Math.PI * 2;
+        L.rot += d * Math.min(1, dt * 14);
+      }
+    }
+    this.session.setPose(L.x, L.z, L.rot, space, L.area, L.areaRev);
   }
 
   frame() {
@@ -7342,31 +9759,35 @@ class App {
       // The host moves everyone back to the start at the end of each day.
       if (st0.phase === 'office' || st0.phase === 'morning') {
         const me = st0.players[this.selfPid];
-        const sp = SPAWN_POINTS[me ? me.slot : 0];
+        const sp = spawnPoints(st0)[me ? me.slot : 0];
         Object.assign(this.local, { x: sp.x, z: sp.z, rot: Math.PI, vx: 0, vz: 0 });
       }
       if (st0.phase === 'office' && !this.office.open) this.office.show(st0, 'report');
       if (st0.phase !== 'office' && this.office.open && this.lastPhase === 'office') this.office.hide();
       this.lastPhase = st0.phase;
     }
+    this.syncLocalArea(st0);
     this.moveLocal(dt, st0);
     s.update(dt);
     const st = s.state;
+    this.syncLocalArea(st);
+    const area = st.players[this.selfPid]?.area || 'restaurant';
     const grid = s.gridFor();
     const ctx = s.role === 'client' ? { state: st, grid, emit() {}, time: st.t } : s.sim;
     let info = null;
     try { info = describe(ctx, this.selfPid); } catch (err) { info = null; }
     const { poses, guests } = s.poses();
     const allPoses = { ...(poses || {}) };
-    allPoses[this.selfPid] = { x: this.local.x, z: this.local.z, rot: this.local.rot };
-    this.view.sync(st, dt, { self: this.selfPid, poses: allPoses, guestPoses: guests });
-    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt });
+    allPoses[this.selfPid] = { x: this.local.x, z: this.local.z, rot: this.local.rot, area, areaRev: this.local.areaRev };
+    this.view.sync(st, dt, { self: this.selfPid, area, poses: allPoses, guestPoses: guests });
+    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, self: this.selfPid, area, target: info && (info.e || info.space || info.q) ? info.target : null });
+    this.aimTarget = info && info.target ? areaObjects(st, area).find((o) => o.id === info.target) : null;
     this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, partner: s.partner && s.role === 'host' ? s.partner.name : null, lost: s.lost }, dt);
     this.office.update(st);
     this.view.render();
     let guestsIn = 0;
     for (const p of st.parties) guestsIn += p.guests.length;
-    setCrowd(st.phase === 'service' || st.phase === 'closing' ? guestsIn : 0);
+    setCrowd(area === 'restaurant' && (st.phase === 'service' || st.phase === 'closing') ? guestsIn : 0);
   }
 }
 
