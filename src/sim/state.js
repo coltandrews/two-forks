@@ -3,12 +3,13 @@ import { BUILD, CFG } from '../config.js';
 import { CUISINES } from '../data/cuisines.js';
 import { ING } from '../data/ingredients.js';
 import { startingObjects, STORY_BUILDING } from '../data/layout.js';
+import { legacyStartingObjects } from '../data/legacy-layouts.js';
 import { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } from '../data/progression.js';
 import { dailyGoal } from './progression.js';
 import { TRASH_CAPACITY } from '../data/alley.js';
 import { footprint, validateLayout } from './world.js';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function nextId(state, prefix = 'o') {
@@ -198,20 +199,46 @@ export function serialize(state) {
   return s;
 }
 
-/** Repair only unchanged starter floors; old saves do not record furniture moves. */
-function repairStartingHost(state) {
-  if (!['italian', 'mexican', 'diner'].includes(state.cuisine)) return;
-  const defaults = startingObjects(state.cuisine);
-  const oldLayout = defaults.map((o) => o.type === 'host' ? { ...o, x: 18, z: 13 } : o);
-  const signature = (objects) => JSON.stringify(objects.map((o) => {
+function layoutSignature(objects) {
+  return JSON.stringify(objects.map((o) => {
     const f = footprint(o);
     return [o.type, f.x, f.z, f.w, f.h, o.seats || 0];
   }).sort());
-  if (signature(state.objects) !== signature(oldLayout)) return;
+}
+
+/** Repair only unchanged starter floors; old saves do not record furniture moves. */
+function repairStartingHost(state) {
+  if (!['italian', 'mexican', 'diner'].includes(state.cuisine)) return;
+  if (layoutSignature(state.objects) !== layoutSignature(legacyStartingObjects(state.cuisine, 3))) return;
   const host = state.objects.find((o) => o.type === 'host');
-  const target = defaults.find((o) => o.type === 'host');
+  const target = legacyStartingObjects(state.cuisine).find((o) => o.type === 'host');
   host.x = target.x; host.z = target.z;
   if (!validateLayout(state).ok) { host.x = 18; host.z = 13; }
+}
+
+/** Update unchanged kitchen furniture while keeping custom dining layouts. */
+function repairStartingKitchen(state) {
+  const isKitchen = (o) => o.type !== 'table' && o.type !== 'host';
+  const oldKitchen = legacyStartingObjects(state.cuisine).filter(isKitchen);
+  const kitchen = state.objects.filter(isKitchen);
+  if (layoutSignature(kitchen) !== layoutSignature(oldKitchen)) return;
+
+  const targets = new Map();
+  for (const o of startingObjects(state.cuisine).filter(isKitchen)) {
+    if (!targets.has(o.type)) targets.set(o.type, []);
+    targets.get(o.type).push(o);
+  }
+  const moves = new Map();
+  for (const old of oldKitchen) {
+    const target = targets.get(old.type)?.shift();
+    if (!target) return;
+    const object = kitchen.find((o) => o.type === old.type && o.x === old.x && o.z === old.z);
+    moves.set(object, { x: target.x, z: target.z });
+  }
+  if ([...targets.values()].some((objects) => objects.length)) return;
+  const objects = state.objects.map((o) => moves.has(o) ? { ...o, ...moves.get(o) } : o);
+  if (!validateLayout({ ...state, objects }).ok) return;
+  for (const [object, position] of moves) Object.assign(object, position);
 }
 
 export function deserialize(obj) {
@@ -219,6 +246,7 @@ export function deserialize(obj) {
   const s = obj;
   s.mode = s.mode === 'story' ? 'story' : 'arcade';
   if ((s.v || 0) < 4 && s.mode === 'arcade') repairStartingHost(s);
+  if ((s.v || 0) < 5 && s.mode === 'arcade') repairStartingKitchen(s);
   s.v = SAVE_VERSION;
   delete s.pendingPurchase;
   for (const o of s.objects) if (o.type === 'bin') {

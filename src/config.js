@@ -1,6 +1,6 @@
 // Every tuning number in one place. Times are real seconds unless noted.
 
-export const BUILD = 'tf-1.2.7-host-stand';
+export const BUILD = 'tf-1.2.8-kitchen-layouts';
 export const APP_ID = 'two-forks-bistro-game-2026';
 
 export const CFG = {

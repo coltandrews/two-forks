@@ -1,13 +1,14 @@
 // Headless test: a bot plays several full days of every cuisine through the
 // real interaction code (teleporting between stations instead of walking).
 // Run: node tools/simtest.mjs [cuisine] [days]
-import { newState, dishById, serialize, deserialize, SAVE_VERSION } from '../src/sim/state.js';
+import { newState, dishById, serialize, deserialize, initObject, nextId, numberTables, SAVE_VERSION } from '../src/sim/state.js';
 import { BUILD } from '../src/config.js';
 import { Sim } from '../src/sim/sim.js';
 import { actE, findTarget } from '../src/sim/kitchen.js';
-import { walkable, footprint, validateLayout } from '../src/sim/world.js';
+import { buildGrid, findPath, walkable, footprint, validateLayout } from '../src/sim/world.js';
 import { ING } from '../src/data/ingredients.js';
-import { frontDoor, roomSize } from '../src/data/layout.js';
+import { frontDoor, roomSize, startingObjects, spawnPoints, HEAT_TYPES, STORE_TYPES } from '../src/data/layout.js';
+import { legacyStartingObjects } from '../src/data/legacy-layouts.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
 import { ALLEY_OBJECTS, BACK_DOOR, TRASH_CAPACITY, playerArea } from '../src/data/alley.js';
 import { autofillPlan, placementStatus, tryMove } from '../src/sim/economy.js';
@@ -410,10 +411,56 @@ function cookEveryDish() {
   }
 }
 
+function verifyKitchenFlow(state) {
+  const check = (ok, reason) => { if (!ok) throw new Error(`${state.cuisine} kitchen: ${reason}`); };
+  const distance = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+  const ofType = (type) => state.objects.filter((o) => o.type === type);
+  const grid = buildGrid(state);
+  const stores = state.objects.filter((o) => STORE_TYPES.has(o.type));
+  const dock = ofType('dock')[0];
+  check(dock.x === BACK_DOOR.x + 1 && dock.z === BACK_DOOR.z + 1, 'deliveries must stay beside the back door');
+  check(stores.every((o) => o.z === 1 && distance(o, dock) <= 5), 'tall storage must stay on the back wall near deliveries');
+  check(Math.max(...stores.map((o) => o.x)) - Math.min(...stores.map((o) => o.x)) === stores.length - 1, 'storage must form one group');
+
+  const heat = state.objects.filter((o) => HEAT_TYPES.has(o.type));
+  const boards = ofType('board'), counters = ofType('counter');
+  check(heat.every((o) => o.z === 1) && Math.max(...heat.map((o) => o.x)) - Math.min(...heat.map((o) => o.x)) === heat.length - 1, 'cooking stations must form one back-wall line');
+  check(boards.every((b) => counters.some((c) => distance(b, c) <= 2)), 'each cutting board needs a nearby counter');
+  check(heat.some((h) => boards.some((b) => distance(h, b) <= 4)), 'prep must be close to the cooking line');
+  check(distance(ofType('sink')[0], ofType('bin')[0]) === 1, 'sink and bin must share one wash area');
+  check(ofType('pass').every((o) => o.z === 5 && walkable(grid, o.x, o.z - 1) && walkable(grid, o.x, o.z + 1)), 'the pass needs access from kitchen and dining room');
+
+  const remaining = new Set(ofType('well'));
+  let benches = 0;
+  while (remaining.size) {
+    const first = remaining.values().next().value, group = [first];
+    remaining.delete(first);
+    for (const cell of group) for (const next of remaining) if (distance(cell, next) === 1) { remaining.delete(next); group.push(next); }
+    benches++;
+    check(group.length >= 2 && group.some((w) => counters.some((c) => distance(w, c) <= 2)), 'prep wells need a shared bench with a nearby counter');
+  }
+  check(benches <= 2, 'prep wells must stay in one or two work benches');
+
+  for (const spawn of spawnPoints(state)) {
+    check(walkable(grid, Math.floor(spawn.x), Math.floor(spawn.z)), 'a chef spawns inside furniture');
+    for (const station of state.objects.filter((o) => o.type !== 'table' && o.type !== 'host')) {
+      const reachable = [[0, 1], [-1, 0], [1, 0], [0, -1]].some(([dx, dz]) => {
+        const x = station.x + dx, z = station.z + dz;
+        if (!walkable(grid, x, z)) return false;
+        const path = findPath(grid, spawn.x, spawn.z, x, z);
+        if (!path || path.some((p) => !walkable(grid, Math.floor(p.x), Math.floor(p.z)))) return false;
+        const chef = { x: x + 0.5, z: z + 0.5, rot: Math.atan2(-dx, -dz), area: 'restaurant' };
+        return findTarget(state, grid, chef)?.id === station.id;
+      });
+      check(reachable, `${station.type} cannot be reached and used from both chef starts`);
+    }
+  }
+}
+
 function verifyStartingLayouts() {
   const signatures = new Set();
   const hostX = { southern: 4, italian: 4, mexican: 3, diner: 3, noodle: 8 };
-  let expectedCounts = null;
+  const countsOf = (objects) => Object.fromEntries([...new Set(objects.map((o) => o.type))].sort().map((type) => [type, objects.filter((o) => o.type === type).length]));
   for (const cuisine of CUISINE_ORDER) {
     const state = newState({ cuisine, name: 'Layout test', mode: 'arcade' });
     if (JSON.stringify(roomSize(state)) !== JSON.stringify({ width: 20, height: 15 })) throw new Error(`Arcade floor size changed for ${cuisine}`);
@@ -422,9 +469,8 @@ function verifyStartingLayouts() {
     if (host.x !== hostX[cuisine] || host.z !== 13) throw new Error(`Wrong starting host stand position for ${cuisine}`);
     const status = validateLayout(state, frontDoor(state));
     if (!status.ok) throw new Error(`Invalid starting layout for ${cuisine}: ${status.reason}`);
-    const counts = Object.fromEntries([...new Set(state.objects.map((o) => o.type))].sort().map((type) => [type, state.objects.filter((o) => o.type === type).length]));
-    if (!expectedCounts) expectedCounts = counts;
-    else if (JSON.stringify(counts) !== JSON.stringify(expectedCounts)) throw new Error(`Equipment count changed for ${cuisine}`);
+    if (JSON.stringify(countsOf(state.objects)) !== JSON.stringify(countsOf(legacyStartingObjects(cuisine)))) throw new Error(`Equipment count changed for ${cuisine}`);
+    verifyKitchenFlow(state);
     signatures.add(state.objects.map((o) => `${o.type}:${o.x},${o.z}`).sort().join('|'));
   }
   if (signatures.size !== CUISINE_ORDER.length) throw new Error('Starting layouts are not unique');
@@ -440,48 +486,128 @@ function verifyStartingLayouts() {
   if (!target) throw new Error('A service item cannot move across the full floor');
   const moved = tryMove(state, drinks.id, target.x, target.z);
   if (!moved.ok || drinks.x !== target.x || drinks.z !== target.z) throw new Error('Drag placement did not move the service item');
-  console.log('checked five unique layouts, starting cash, and full-floor item movement');
+  console.log('checked five unique layouts, work areas, both chef routes, equipment counts, starting cash, and full-floor item movement');
 }
 
-function verifyHostStandSaves() {
-  for (const [cuisine, x] of [['italian', 4], ['mexican', 3], ['diner', 3]]) {
-    const old = serialize(newState({ cuisine, name: 'Saved layout', mode: 'arcade' }));
-    old.v = 3;
-    old.build = 'tf-1.2.6-menu-sizes';
-    old.day = 4;
-    old.cash = 875.25;
-    old.objects.find((o) => o.type === 'host').x = 18;
-    old.objects.find((o) => o.type === 'rack').n = 7;
-    old.objects.find((o) => o.type === 'table').dirty = 2;
-    const expected = structuredClone(old);
-    expected.v = SAVE_VERSION;
-    expected.build = BUILD;
-    expected.objects.find((o) => o.type === 'host').x = x;
-    const loaded = deserialize(structuredClone(old));
-    if (JSON.stringify(loaded) !== JSON.stringify(expected)) throw new Error(`Host stand repair changed saved state or missed the old layout for ${cuisine}`);
-    if (!validateLayout(loaded).ok) throw new Error(`Host stand repair made an invalid layout for ${cuisine}`);
-    if (JSON.stringify(deserialize(serialize(loaded))) !== JSON.stringify(loaded)) throw new Error(`Host stand repair repeated on reload for ${cuisine}`);
-
-    for (const change of ['current save', 'moved host', 'moved counter', 'extra furniture']) {
-      const custom = structuredClone(old);
-      if (change === 'current save') custom.v = 4;
-      if (change === 'moved host') custom.objects.find((o) => o.type === 'host').x = 10;
-      if (change === 'moved counter') Object.assign(custom.objects.find((o) => o.type === 'counter'), { x: 9, z: 6 });
-      if (change === 'extra furniture') custom.objects.push({ id: `o${++custom.seq}`, type: 'counter', x: 9, z: 6, slot: null });
-      const unchanged = structuredClone(custom);
-      unchanged.v = SAVE_VERSION;
-      unchanged.build = BUILD;
-      if (JSON.stringify(deserialize(custom)) !== JSON.stringify(unchanged)) throw new Error(`Host stand repair changed ${change} for ${cuisine}`);
+function verifyLayoutSaves() {
+  const isKitchen = (o) => o.type !== 'table' && o.type !== 'host';
+  const updatedSave = (save) => ({ ...structuredClone(save), v: SAVE_VERSION, build: BUILD });
+  const checkLoad = (save, expected, label) => {
+    const loaded = deserialize(structuredClone(save));
+    if (JSON.stringify(loaded) !== JSON.stringify(expected)) throw new Error(`Save repair changed saved data or missed ${label}`);
+    if (!validateLayout(loaded).ok) throw new Error(`Save repair made an invalid layout for ${label}`);
+    if (JSON.stringify(deserialize(serialize(loaded))) !== JSON.stringify(loaded)) throw new Error(`Save repair repeated on reload for ${label}`);
+    return loaded;
+  };
+  const oldSave = (cuisine, version) => {
+    const save = serialize(newState({ cuisine, name: 'Saved layout', mode: 'arcade' }));
+    save.v = version;
+    save.build = 'tf-1.2.6-menu-sizes';
+    save.seq = 0;
+    save.objects = legacyStartingObjects(cuisine, version).map((spec) => initObject({ id: nextId(save), ...spec }));
+    numberTables(save);
+    save.day = 4;
+    save.cash = 875.25;
+    save.menu.dishes[0].price += 2;
+    save.stock.tomato = [{ n: 12, cost: 0.25, exp: 8 }];
+    save.objects.forEach((o, i) => {
+      if ('slot' in o) o.slot = { k: 'ing', ing: 'tomato', st: 'raw', cost: i + 0.25, t: i, over: 0, q: 1, heat: -1 };
+      if (o.type === 'well') o.well = { ing: 'tomato', st: 'chopped', n: i + 1, cost: 0.25, day: 4 };
+      if (o.type === 'sink') { o.n = 2; o.wash = 0.5; }
+      if (o.type === 'dock') o.boxes = [{ ing: 'tomato', cases: 2 }];
+      if (o.type === 'bin') o.trash = 4;
+    });
+    save.objects.find((o) => o.type === 'rack').n = 7;
+    save.objects.find((o) => o.type === 'table').dirty = 2;
+    return save;
+  };
+  const withNewKitchen = (save) => {
+    const expected = updatedSave(save);
+    const legacy = legacyStartingObjects(save.cuisine);
+    const defaults = startingObjects(save.cuisine);
+    for (const o of expected.objects.filter(isKitchen)) {
+      const siblings = legacy.filter((old) => old.type === o.type);
+      const occurrence = siblings.findIndex((old) => old.x === o.x && old.z === o.z);
+      const target = defaults.filter((next) => next.type === o.type)[occurrence];
+      o.x = target.x; o.z = target.z;
     }
+    return expected;
+  };
+  const moveInBoth = (old, updated, type) => {
+    const object = old.objects.find((o) => o.type === type && !o.dirty);
+    for (let z = 13; z >= 6; z--) for (let x = 1; x <= 18; x++) {
+      if (x === object.x && z === object.z) continue;
+      if (!placementStatus(old, object.id, x, z).ok || !placementStatus(updated, object.id, x, z).ok) continue;
+      Object.assign(object, { x, z });
+      Object.assign(updated.objects.find((o) => o.id === object.id), { x, z });
+      return;
+    }
+    throw new Error(`No valid custom ${type} position for ${old.cuisine}`);
+  };
+
+  let blockedLayouts = 0;
+  for (const cuisine of CUISINE_ORDER) {
+    const old = oldSave(cuisine, 3);
+    const expected = withNewKitchen(old);
+    const host = expected.objects.find((o) => o.type === 'host');
+    Object.assign(host, legacyStartingObjects(cuisine).find((o) => o.type === 'host'));
+    checkLoad(old, expected, `${cuisine} version 3 host and kitchen`);
+
+    for (const type of ['host', 'table']) {
+      const custom = oldSave(cuisine, 3);
+      const customExpected = withNewKitchen(custom);
+      moveInBoth(custom, customExpected, type);
+      checkLoad(custom, customExpected, `${cuisine} version 3 custom ${type}`);
+    }
+
+    const v4 = oldSave(cuisine, 4);
+    const customDining = withNewKitchen(v4);
+    moveInBoth(v4, customDining, 'host');
+    moveInBoth(v4, customDining, 'table');
+    checkLoad(v4, customDining, `${cuisine} version 4 kitchen and custom dining`);
+    v4.objects.reverse();
+    customDining.objects.reverse();
+    checkLoad(v4, customDining, `${cuisine} reversed object order`);
+
+    for (const change of ['version 5', 'future version', 'moved counter', 'extra equipment']) {
+      const custom = oldSave(cuisine, 3);
+      if (change === 'version 5') custom.v = 5;
+      if (change === 'future version') custom.v = 6;
+      if (change === 'moved counter') {
+        const counter = custom.objects.find((o) => o.type === 'counter');
+        if (!tryMove(custom, counter.id, 9, 6).ok) throw new Error(`Invalid custom counter test for ${cuisine}`);
+      }
+      if (change === 'extra equipment') custom.objects.push(initObject({ id: nextId(custom), type: 'counter', x: 9, z: 6 }));
+      checkLoad(custom, updatedSave(custom), `${cuisine} ${change}`);
+    }
+
+    const blocked = oldSave(cuisine, 4);
+    const blockedHost = blocked.objects.find((o) => o.type === 'host');
+    const target = startingObjects(cuisine).filter(isKitchen).find((o) => placementStatus(blocked, blockedHost.id, o.x, o.z).ok);
+    if (target) {
+      Object.assign(blockedHost, { x: target.x, z: target.z });
+      if (validateLayout(withNewKitchen(blocked)).ok) throw new Error(`Blocked migration fixture did not block ${cuisine}`);
+      checkLoad(blocked, updatedSave(blocked), `${cuisine} custom host blocks the new kitchen`);
+      blockedLayouts++;
+    }
+
+    const story = serialize(newState({ cuisine, mode: 'story' }));
+    story.v = 3;
+    checkLoad(story, updatedSave(story), `${cuisine} Story floor`);
+    story.building = { width: 20, height: 15, divider: { from: 1, to: 12 } };
+    story.objects = structuredClone(old.objects);
+    story.seq = old.seq;
+    checkLoad(story, updatedSave(story), `${cuisine} legacy Story floor`);
   }
-  console.log('checked host stand save repair, saved data, custom layouts, and reloads');
+  if (!blockedLayouts) throw new Error('No saved layout checked the blocked kitchen migration');
+  console.log('checked host and kitchen save repairs, contents, custom floors, version gates, Story, and reloads');
 }
 
 const itemsMod = await import('../src/sim/items.js');
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   Math.random = seededRandom(20261018);
   verifyStartingLayouts();
-  verifyHostStandSaves();
+  verifyLayoutSaves();
   cookEveryDish();
   const only = process.argv[2];
   const days = +(process.argv[3] || 3);
