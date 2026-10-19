@@ -241,6 +241,7 @@ class App {
     this.input.on('h', () => { if (inGame()) this.hud.toggleKeys(); });
     this.input.on('u', () => { if (inGame()) this.hud.toggleMinimal(); });
     this.input.on('esc', () => {
+      if (this.hud.modalKind === 'options') { this.hud.closeModal(); return; }
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;
       if (this.office.layoutMode) { this.office.stopLayout(); return; }

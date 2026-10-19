@@ -94,6 +94,7 @@ export class Lobby {
   render() {
     let h = '';
     const prof = this.app.profile;
+    this.card.classList.toggle('title-card', this.screen === 'title');
     switch (this.screen) {
       case 'title':
         h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1></div>
@@ -102,7 +103,11 @@ export class Lobby {
           <button class="choice" data-act="joinscr"><h3>Join a restaurant</h3><p>Use the host's room code.</p></button>
           <button class="choice" data-act="solo"><h3>Play solo</h3><p>Fewer guests.</p></button>
         </div>
-        <div class="lobby-foot"><div class="me">${prof && prof.name ? `<b>${esc(prof.name)}</b>` : ''} <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Create chef'}</button></div></div>`;
+        <div class="title-actions">
+          <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Create chef'}</button>
+          <button class="btn small" data-act="options">Options</button>
+        </div>
+        ${prof && prof.name ? `<div class="title-chef">${esc(prof.name)}</div>` : ''}`;
         break;
       case 'saves': {
         const saves = listSaves();
@@ -283,6 +288,7 @@ export class Lobby {
       case 'join': this.join(); break;
       case 'doimport': this.doImport(); break;
       case 'chef': this.openChef(() => this.go('title'), true); break;
+      case 'options': this.app.hud.openOptions(); break;
       case 'chefcancel': if (this.afterChef && this.app.profile) this.afterChef(true); else this.go('title'); break;
       case 'look': {
         const k = b.dataset.k;

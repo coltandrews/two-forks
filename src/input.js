@@ -62,7 +62,7 @@ export class Input {
       } else { const { done } = this.capture; this.capture = null; done(null); }
       return;
     }
-    if (this.typing(e)) return;
+    if (this.typing(e) && e.code !== 'Escape') return;
     if (e.code === 'Space' && e.target?.closest?.('button, summary')) return;
     // Let the focused ticket list use normal browser scrolling.
     if (e.target?.closest?.('.rail') && ['ArrowUp', 'ArrowDown', 'Space', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.code)) return;

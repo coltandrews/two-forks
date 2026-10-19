@@ -467,6 +467,8 @@ export class Hud {
   get modalOpen() { return !this.modal.hidden; }
 
   closeModal() {
+    const options = this.modalKind === 'options';
+    if (options || this.modalKind === 'pause') this.app.input.capture = null;
     if (this.modalKind === 'purchase-confirm') {
       this.purchaseSig = null;
       const purchase = this.app.session && this.app.session.state.pendingPurchase;
@@ -478,6 +480,7 @@ export class Hud {
     this.modalKind = null;
     this.pickerState = null;
     this.app.focusGame();
+    if (options) this.app.lobby.root.querySelector('[data-act=options]')?.focus();
   }
 
   openSheet(kind, html, light = false) {
@@ -593,16 +596,43 @@ export class Hud {
     });
   }
 
-  openPause(state, info) {
+  optionsHtml() {
     const v = volumes();
+    return `<label class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></label>
+      <label class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></label>
+      <div class="section-title">Movement keys</div>
+      <div class="binds">${['up', 'left', 'down', 'right'].map((d) => `<label>${d}<button class="btn small" data-bind="${d}">${keyName(this.app.input.binds[d])}</button></label>`).join('')}<button class="btn small ghost" data-bind="reset">Reset</button></div>
+      <div class="hint-line">Arrow keys always work too. Click a key, then press the new one.</div>`;
+  }
+
+  bindOptions(refresh) {
+    const kind = this.modalKind;
+    this.modal.querySelectorAll('input[data-vol]').forEach((inp) => { inp.oninput = () => setVolume(inp.dataset.vol, +inp.value); });
+    this.modal.querySelectorAll('button[data-bind]').forEach((b) => {
+      b.onclick = () => {
+        const d = b.dataset.bind;
+        if (d === 'reset') { this.app.input.capture = null; this.app.input.resetBinds(); refresh(); this.refreshKeys(); return; }
+        b.textContent = 'Press a key…';
+        this.app.input.rebind(d, (code, reserved) => {
+          if (!this.modalOpen || this.modalKind !== kind) return;
+          if (reserved) this.toast('That key is already used for something else.', 'warn');
+          refresh();
+          this.refreshKeys();
+        });
+      };
+    });
+  }
+
+  openOptions() {
+    this.openSheet('options', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Options</h2>${this.optionsHtml()}`);
+    this.bindOptions(() => this.openOptions());
+  }
+
+  openPause(state, info) {
     const host = info.role !== 'client';
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${state.paused ? 'Paused' : 'Menu'}</h2>
       ${host ? '' : '<div class="sub">Service continues while this menu is open.</div>'}
-      <div class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></div>
-      <div class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></div>
-      <div class="section-title">Movement keys</div>
-      <div class="binds">${['up', 'left', 'down', 'right'].map((d) => `<label>${d}<button class="btn small" data-bind="${d}">${keyName(this.app.input.binds[d])}</button></label>`).join('')}<button class="btn small ghost" data-bind="reset">Reset</button></div>
-      <div class="hint-line">Arrow keys always work too. Click a key, then press the new one.</div>
+      ${this.optionsHtml()}
       <div class="stack">
         <button class="btn primary" data-act="resume">Back to the kitchen</button>
         <button class="btn" data-act="chef">Change my chef</button>
@@ -610,19 +640,7 @@ export class Hud {
         <button class="btn ghost" data-act="leave">${host ? 'Save and quit to title' : 'Leave the kitchen'}</button>
       </div>`;
     this.openSheet('pause', html);
-    this.modal.querySelectorAll('input[data-vol]').forEach((inp) => { inp.oninput = () => setVolume(inp.dataset.vol, +inp.value); });
-    this.modal.querySelectorAll('button[data-bind]').forEach((b) => {
-      b.onclick = () => {
-        const d = b.dataset.bind;
-        if (d === 'reset') { this.app.input.resetBinds(); this.openPause(state, info); this.refreshKeys(); return; }
-        b.textContent = 'Press a key…';
-        this.app.input.rebind(d, (code, reserved) => {
-          if (reserved) this.toast('That key is already used for something else.', 'warn');
-          this.openPause(state, info);
-          this.refreshKeys();
-        });
-      };
-    });
+    this.bindOptions(() => this.openPause(state, info));
     this.modal.querySelectorAll('button[data-act]').forEach((b) => {
       b.onclick = () => {
         const a = b.dataset.act;

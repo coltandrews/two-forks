@@ -331,8 +331,8 @@ kbd {
 .recipe li .how { min-width: 0; color: var(--ink-3); font-size: 0.8rem; text-align: right; font-weight: 700; }
 .section-title { font: 0.95rem var(--display); text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin: 16px 0 8px; }
 
-.pause { width: min(460px, 92vw); text-align: center; }
-.sheet.pause:has(> .close) > h2 { padding-inline: 34px; }
+.pause, .sheet.options { width: min(460px, 92vw); text-align: center; }
+.sheet.pause:has(> .close) > h2, .sheet.options:has(> .close) > h2 { padding-inline: 34px; }
 .pause .stack { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .slider { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin: 8px 0; font-weight: 900; }
 .slider input { flex: 1; min-width: 0; accent-color: var(--accent); }
@@ -510,23 +510,26 @@ textarea.code { width: 100%; height: 90px; font: 12px var(--mono); border-radius
 /* ---------------------------------------------------------- lobby */
 #lobby { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 20px; background: radial-gradient(ellipse at 50% 35%, rgba(28,16,8,0.1), rgba(20,10,4,0.72)); overflow: auto; }
 .lobby-card { width: min(1000px, 100%); background: var(--cream); border: 4px solid var(--ink); border-radius: 26px; box-shadow: 0 8px 0 var(--ink), 0 30px 60px rgba(0,0,0,0.4); padding: 26px 30px; position: relative; max-height: 100%; overflow: auto; }
+.lobby-card.title-card { width: min(480px, 100%); }
+.title-card .title h1 { font-size: clamp(3.1rem, 8vw, 4.8rem); }
 .title { text-align: center; margin-bottom: 20px; }
 .title h1 { font: clamp(3.4rem, 8vw, 6rem)/0.95 var(--display); margin: 0; letter-spacing: 0.02em; color: var(--yellow); -webkit-text-stroke: 3px var(--ink); text-shadow: 0 7px 0 var(--ink); rotate: -2deg; }
 .title h1 .amp { color: var(--red); }
 .title h1.small { font-size: 2.6rem; color: var(--ink); -webkit-text-stroke: 0; text-shadow: none; rotate: 0deg; }
 .title p { margin: 12px 0 0; color: var(--ink-2); font-size: 1.05rem; font-weight: 800; }
-.choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-@media (max-width: 760px) { .choices { grid-template-columns: 1fr; } }
-.choice { border: var(--outline); border-radius: 18px; padding: 18px; background: #fff; text-align: left; display: flex; flex-direction: column; gap: 7px; box-shadow: 0 5px 0 var(--ink); transition: transform 0.12s; color: #fff; }
+.choices { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.choice { border: var(--outline); border-radius: 14px; padding: 14px; background: #fff; text-align: center; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 5px 0 var(--ink); transition: transform 0.12s; color: #fff; }
 .choice:nth-child(1) { background: var(--red); }
 .choice:nth-child(2) { background: var(--blue); }
 .choice:nth-child(3) { background: var(--green-d); }
 .choice:hover { transform: translateY(-4px) rotate(-1deg); }
 .choice:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
-.choice h3 { margin: 0; font: 1.75rem var(--display); letter-spacing: 0.02em; text-shadow: 0 3px 0 rgba(0,0,0,0.25); }
+.choice h3 { margin: 0; font: 1.5rem var(--display); letter-spacing: 0.02em; text-shadow: 0 3px 0 rgba(0,0,0,0.25); }
 .choice p { margin: 0; font-size: 0.95rem; font-weight: 700; opacity: 0.95; }
+.title-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.title-actions .btn { min-width: 0; min-height: 40px; }
+.title-chef { margin-top: 14px; text-align: center; color: var(--ink-2); font-size: 0.88rem; overflow-wrap: anywhere; }
 .lobby-foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; flex-wrap: wrap; font-weight: 800; }
-.lobby-foot .me { display: flex; align-items: center; gap: 10px; }
 .back { position: absolute; left: 16px; top: 16px; }
 .lobby-card > .back + .title { padding-inline: 70px; }
 .saves { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 18px; }
