@@ -4,6 +4,7 @@
 //   drink       { k:'drink', id, cost }
 //   box         { k:'box', ing }            one supplier case
 //   dirty       { k:'dirty', n }            a stack of dirty plates
+//   trash       { k:'trash', n }            a sealed bag of bin waste
 // heat is -1 for food that was never cooked, otherwise seconds since it left
 // the heat. top holds pizza toppings riding on raw dough.
 import { CFG } from '../config.js';
@@ -58,6 +59,7 @@ export function itemLabel(state, it) {
     case 'drink': { const d = drinkById(state, it.id); return d ? d.name : 'Drink'; }
     case 'box': return `Case of ${ING[it.ing].name.toLowerCase()}`;
     case 'dirty': return it.n > 1 ? `${it.n} dirty plates` : 'Dirty plate';
+    case 'trash': return 'Trash bag';
   }
   return '';
 }
@@ -135,6 +137,7 @@ export function plateQuality(plate) {
 /** True if an item may sit on a station of this type. */
 export function stationAccepts(type, it) {
   if (!it) return false;
+  if (it.k === 'trash') return false;
   if (type === 'counter' || type === 'pass') return true;
   if (it.k !== 'ing' || it.st === 'burnt') return false;
   if (type === 'board') return ING[it.ing].steps.some((s) => s.from === it.st && s.at === 'board') && !it.top;
@@ -157,6 +160,7 @@ export function itemSig(it) {
     case 'drink': return 'd:' + it.id;
     case 'box': return 'b:' + it.ing;
     case 'dirty': return 'x:' + it.n;
+    case 'trash': return 'trash:' + it.n;
   }
   return '?';
 }

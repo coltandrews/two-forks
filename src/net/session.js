@@ -48,11 +48,11 @@ export class Session {
 
   get state() { return this.role === 'client' ? this.replica : this.sim.state; }
 
-  gridFor() {
+  gridFor(area = this.state?.players[this.selfPid]?.area || 'restaurant') {
     const s = this.state;
     if (!s) return null;
-    const key = JSON.stringify(s.building || null) + (s.mode || 'arcade') + JSON.stringify(s.owned?.areas || {}) + s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
-    if (key !== this.gridKey) { this.grid = buildGrid(s); this.gridKey = key; }
+    const key = area + JSON.stringify(s.building || null) + (s.mode || 'arcade') + JSON.stringify(s.owned?.areas || {}) + s.objects.map((o) => o.id + o.x + ',' + o.z).join('|');
+    if (key !== this.gridKey) { this.grid = buildGrid(s, area); this.gridKey = key; }
     return this.grid;
   }
 
@@ -101,12 +101,16 @@ export class Session {
     });
     n.on('pose', (d, peerId) => {
       if (!this.partner || peerId !== this.partner.peerId || !Array.isArray(d)) return;
-      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2]);
-      this.sim.setWork(CLIENT_PID, !!d[3]);
+      const p = this.sim.state.players[CLIENT_PID];
+      if (!p || d[4] !== (p.area || 'restaurant') || d[5] !== (p.areaRev || 0)) return;
+      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2], d[4], d[5]);
+      this.sim.setWork(CLIENT_PID, !!d[3], d[4], d[5]);
     });
     n.on('key', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId) return;
-      if (d === 'e' || d === 'q') this.sim.press(CLIENT_PID, d);
+      if (!this.partner || peerId !== this.partner.peerId || !d) return;
+      const p = this.sim.state.players[CLIENT_PID];
+      if (!p || d.area !== (p.area || 'restaurant') || d.areaRev !== (p.areaRev || 0)) return;
+      if (d.key === 'e' || d.key === 'q') this.sim.press(CLIENT_PID, d.key, d.area, d.areaRev);
     });
     n.on('cmd', (d, peerId) => {
       if (!this.partner || peerId !== this.partner.peerId || !d || typeof d.c !== 'string') return;
@@ -130,7 +134,7 @@ export class Session {
     if (!this.net || !this.partner) return;
     const st = this.sim.state;
     const p = {}, g = {};
-    for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot)];
+    for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot), pl.area || 'restaurant', pl.areaRev || 0];
     for (const party of st.parties) for (const gu of party.guests) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
     this.net.to('fast', { p, g }, this.partner.peerId);
   }
@@ -172,6 +176,9 @@ export class Session {
 
   applySlow(live) {
     const meta = this.metaIn || {};
+    const before = this.replica?.players[this.selfPid];
+    const after = live.players[this.selfPid];
+    if (!before || !after || before.area !== after.area || before.areaRev !== after.areaRev) this.pose = null;
     this.liveIn = live;
     this.replica = { ...live, ...meta };
     this.since = 0;
@@ -197,20 +204,24 @@ export class Session {
   // ------------------------------------------------------------ shared API
 
   /** Local chef pose; the host applies it directly, the client streams it. */
-  setPose(x, z, rot, space) {
+  setPose(x, z, rot, space, area = this.state?.players[this.selfPid]?.area || 'restaurant', areaRev = this.state?.players[this.selfPid]?.areaRev || 0) {
+    const p = this.state?.players[this.selfPid];
+    if (!p || area !== (p.area || 'restaurant') || areaRev !== (p.areaRev || 0)) return;
     if (this.role === 'client') {
-      this.pose = [r2(x), r2(z), r2(rot), space ? 1 : 0];
-      const p = this.replica && this.replica.players[this.selfPid];
-      if (p) { p.x = x; p.z = z; p.rot = rot; }
+      this.pose = [r2(x), r2(z), r2(rot), space ? 1 : 0, area, areaRev];
+      p.x = x; p.z = z; p.rot = rot;
     } else {
-      this.sim.setPose(this.selfPid, x, z, rot);
-      this.sim.setWork(this.selfPid, space);
+      this.sim.setPose(this.selfPid, x, z, rot, area, areaRev);
+      this.sim.setWork(this.selfPid, space, area, areaRev);
     }
   }
 
   press(key) {
-    if (this.role === 'client') this.net.to('key', key, this.hostPeer);
-    else this.sim.press(this.selfPid, key);
+    const p = this.state?.players[this.selfPid];
+    if (!p) return;
+    const area = p.area || 'restaurant', areaRev = p.areaRev || 0;
+    if (this.role === 'client') this.net.to('key', { key, area, areaRev }, this.hostPeer);
+    else this.sim.press(this.selfPid, key, area, areaRev);
   }
 
   command(c) {
@@ -237,7 +248,7 @@ export class Session {
       steps++;
       const evs = this.sim.drain();
       if (evs.length) {
-        if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd'].includes(e.type))) this.sendSnapshots(true);
+        if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd', 'areaChanged'].includes(e.type))) this.sendSnapshots(true);
         const mine = [], theirs = [];
         for (const e of evs) {
           if (!e.to || e.to === this.selfPid) mine.push(e);
@@ -258,7 +269,10 @@ export class Session {
   poses() {
     if (this.role !== 'client' || !this.fast) return { poses: null, guests: null };
     const poses = {};
-    for (const [pid, a] of Object.entries(this.fast.p || {})) if (pid !== this.selfPid) poses[pid] = { x: a[0], z: a[1], rot: a[2] };
+    for (const [pid, a] of Object.entries(this.fast.p || {})) {
+      const p = this.replica.players[pid];
+      if (pid !== this.selfPid && p && a[3] === (p.area || 'restaurant') && a[4] === (p.areaRev || 0)) poses[pid] = { x: a[0], z: a[1], rot: a[2], area: a[3], areaRev: a[4] };
+    }
     const guests = {};
     for (const [id, a] of Object.entries(this.fast.g || {})) guests[id] = { x: a[0], z: a[1], rot: a[2] };
     return { poses, guests };

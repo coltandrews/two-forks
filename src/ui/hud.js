@@ -4,6 +4,7 @@ import { CFG } from '../config.js';
 import { ING, stateInfo } from '../data/ingredients.js';
 import { CUISINES } from '../data/cuisines.js';
 import { STATION_NAMES } from '../data/layout.js';
+import { playerArea, hasSmokeBoost } from '../data/alley.js';
 import { XP_LEVELS, ingredientAllowed } from '../data/progression.js';
 import { dishById, drinkById, WEEKDAYS, menuIngredients, courseSlot } from '../sim/state.js';
 import { storeList } from '../sim/kitchen.js';
@@ -49,7 +50,9 @@ export class Hud {
     this.toasts = document.getElementById('toasts');
     this.root.innerHTML = `
       <div class="hud-left">
-        <div class="hud-tl"><div class="rname"></div><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
+        <div class="hud-tl"><div class="rname"></div><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div>
+          <span class="smoke-boost" hidden tabindex="0" role="img" aria-label="Movement speed +10%. Cooking time −20%." title="Movement speed +10% · Cooking time −20%"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M19 15c-5-4 5-5 0-10M25 15c-4-3 4-4 1-8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><rect x="4" y="20" width="24" height="5" rx="1" fill="#fff8ea" stroke="#40372e" stroke-width="1.2"/><path d="M5 20.6h6v3.8H5z" fill="#bd874f"/><path d="M26 20.5h2v4h-2z" fill="#ed8858"/></svg></span>
+        </div>
         <div class="morning" hidden></div>
         <div class="hud-bl"><div class="rail" aria-label="Order tickets" tabindex="-1"></div><button class="keys-toggle" data-act="keys" aria-expanded="false">Keys <kbd>H</kbd></button><div class="keys" hidden>
           <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
@@ -66,7 +69,7 @@ export class Hud {
     const q = (s) => this.root.querySelector(s);
     this.el = {
       rname: q('.rname'), dn: q('.day .dn'), wk: q('.day .wk'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'), sun: q('.hud-tl .bar b'),
-      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'), goal: q('.story-goal'),
+      cash: q('.cash'), rating: q('.rating'), lvl: q('.lvl'), lvlBar: q('.hud-tr .bar i'), goal: q('.story-goal'), smokeBoost: q('.smoke-boost'),
       rail: q('.rail'), prompt: q('.prompt'), need: q('.need'), br: q('.hud-br'), morning: q('.morning'), closing: q('.closing'), keys: q('.keys'),
     };
     this.slowAcc = 0;
@@ -133,6 +136,9 @@ export class Hud {
 
   update(state, info, dt) {
     const e = this.el;
+    const outside = playerArea(state.players[info.self]) === 'alley';
+    e.rail.hidden = outside;
+    e.smokeBoost.hidden = !hasSmokeBoost(state, state.players[info.self]);
     const cz = CUISINES[state.cuisine];
     if (this.cuisine !== state.cuisine) {
       this.cuisine = state.cuisine;
@@ -215,7 +221,9 @@ export class Hud {
 
     // Recipe helper while plating.
     let need = '';
-    if (p && p.hand && p.hand.k === 'plate' && p.hand.items.length) {
+    if (playerArea(p) === 'alley') {
+      need = '';
+    } else if (p && p.hand && p.hand.k === 'plate' && p.hand.items.length) {
       need = this.plateHelp(state, p.hand);
     } else if (p && p.hand && p.hand.k === 'ing' && p.hand.ing === 'dough' && p.hand.st === 'raw') {
       need = this.doughHelp(state, p.hand);
@@ -351,7 +359,7 @@ export class Hud {
 
   updateMorning(state, info) {
     const m = this.el.morning;
-    if (state.phase !== 'morning') { m.hidden = true; return; }
+    if (state.phase !== 'morning' || playerArea(state.players[info.self]) === 'alley') { m.hidden = true; return; }
     m.hidden = false;
     const dock = state.objects.find((o) => o.type === 'dock');
     const notes = [];
@@ -393,7 +401,7 @@ export class Hud {
   levelUp(level, dishes) {
     const d = document.createElement('div');
     d.className = 'panel levelup';
-    d.innerHTML = `<h2>Reputation level ${level}!</h2><p>${dishes.length ? 'New dishes to put on the menu: <b>' + dishes.map(esc).join(', ') + '</b>' : 'Word is getting around. More guests are coming.'}</p>`;
+    d.innerHTML = `<h2>Reputation level ${level}!</h2><p>${dishes.length ? 'New dishes: <b>' + dishes.map(esc).join(', ') + '</b>' : 'More guests are coming.'}</p>`;
     this.app.root.appendChild(d);
     setTimeout(() => d.remove(), 4200);
   }
@@ -402,7 +410,7 @@ export class Hud {
     const d = document.createElement('div');
     d.className = 'panel levelup';
     d.setAttribute('role', 'status');
-    d.innerHTML = `<h2>Chef Level ${level}</h2><p>${unlocks.length ? 'Now available: <b>' + unlocks.map(esc).join(', ') + '</b>' : 'Your restaurant has earned a new level.'}</p><p>See the Unlocks tab in the office.</p>`;
+    d.innerHTML = `<h2>Chef Level ${level}</h2>${unlocks.length ? '<p>New unlocks: <b>' + unlocks.map(esc).join(', ') + '</b></p>' : ''}`;
     this.app.root.appendChild(d);
     setTimeout(() => d.remove(), 5000);
   }
@@ -413,7 +421,7 @@ export class Hud {
     if (this.modalKind === 'pause') this.closeModal();
     chapter = chapter || (this.app.session && this.app.session.state.chapter) || 1;
     const nextLabel = chapter === 1 ? 'Enter the restaurant' : 'Back to the restaurant';
-    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><div class="chapter-label">${chapter > 4 ? 'Story complete' : `Chapter ${chapter}`}</div><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">${nextLabel}</button>`);
+    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">${nextLabel}</button>`);
     this.modal.querySelector('.story-next').onclick = () => this.closeModal();
   }
 
@@ -439,7 +447,7 @@ export class Hud {
     if (this.modalKind === 'pause') this.closeModal();
     const approved = purchase.approved.includes(this.app.selfPid);
     const names = purchase.required.map((id) => `${state.players[id] ? state.players[id].name : 'Chef'}${purchase.approved.includes(id) ? ' ✓' : ''}`);
-    this.openSheet('purchase-confirm', `<h2>Approve this purchase?</h2><p>${esc(purchase.name)}</p><div class="purchase-price">${money0(purchase.price)}</div><div class="sub">Cash after purchase: ${money(state.cash - purchase.price)}<br>Every chef must approve. ${purchase.approved.length}/${purchase.required.length} approved.</div><p>${names.map(esc).join(' · ')}</p><div class="actions"><button class="btn primary" data-vote="yes" ${approved ? 'disabled' : ''}>${approved ? 'Approved · waiting' : 'Approve'}</button><button class="btn ghost" data-vote="no">Cancel purchase</button></div>`);
+    this.openSheet('purchase-confirm', `<h2>Approve this purchase?</h2><p>${esc(purchase.name)}</p><div class="purchase-price">${money0(purchase.price)}</div><div class="sub">Cash after: ${money(state.cash - purchase.price)}<br>Approvals: ${purchase.approved.length}/${purchase.required.length} chefs</div><p>${names.map(esc).join(' · ')}</p><div class="actions"><button class="btn primary" data-vote="yes" ${approved ? 'disabled' : ''}>${approved ? 'Approved · waiting' : 'Approve'}</button><button class="btn ghost" data-vote="no">Cancel purchase</button></div>`);
     this.modal.onclick = null;
     this.modal.querySelectorAll('[data-vote]').forEach((b) => {
       b.onclick = () => this.app.command({ c: 'approvePurchase', id: purchase.id, approve: b.dataset.vote === 'yes' });
@@ -494,14 +502,14 @@ export class Hud {
         const d = drinkById(state, m.id);
         return { key: m.id, name: d.name, sw: hex(d.color), ct: pending[m.id] ? `${pending[m.id]} waiting` : '', need: !!pending[m.id] };
       });
-      sub = 'Pour one, then carry it to the table that ordered it.';
+      sub = '';
     } else {
       title = STATION_NAMES[store];
       list = storeList(state, store).map((x) => ({ key: x.ing, name: x.name, sw: hex(ING[x.ing].look.color), ct: `${x.n} left`, low: x.n <= 3, need: wanted.has(x.ing) }));
       const p = state.players[this.app.selfPid];
-      sub = p && p.hand && p.hand.k === 'plate' ? 'Goes straight onto your plate.' : 'Take one. Press Q at the same spot to grab another.';
+      sub = p && p.hand && p.hand.k === 'plate' ? 'Adds to your plate.' : 'Press Q here to take another.';
     }
-    const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2><div class="sub">${sub}</div>
+    const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${esc(title)}</h2>${sub ? `<div class="sub">${sub}</div>` : ''}
       <div class="grid">${list.length ? list.map((x, i) => `<button class="pick ${x.need ? 'wanted' : ''}" data-key="${x.key}"><span class="sw" style="background:${x.sw}"></span><span><span class="nm">${esc(x.name)}</span><br><span class="ct ${x.low ? 'low' : ''}">${x.ct}</span></span>${i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : ''}</button>`).join('') : '<div class="empty">Nothing in here. Unpack deliveries or order more.</div>'}</div>`;
     const sheet = this.modal.querySelector('.sheet');
     if (!sheet || sheet._html === html) return;
@@ -537,16 +545,15 @@ export class Hud {
       const d = dishById(state, m.id);
       groups[courseSlot(d.course)].push({ d, m });
     }
-    const card = ({ d, m }) => `<div class="recipe"><div class="course">${d.course}</div><h4>${esc(d.name)} <small>${money(m.price)}</small></h4><ol>${d.comps.map(([i, s]) => {
+    const card = ({ d, m }) => `<div class="recipe"><h4>${esc(d.name)} <small>${money(m.price)}</small></h4><ol>${d.comps.map(([i, s]) => {
       const info = stateInfo(i, s);
       const how = i === 'dough' ? 'add toppings on raw dough, then oven ' + ING.dough.steps[0].t + 's' : howTo(i, s);
       return `<li><span class="sw" style="background:${hex(info.color)}"></span>${esc(info.label)}<span class="how">${esc(how)}</span></li>`;
     }).join('')}</ol></div>`;
     const drinks = state.menu.drinks.filter((m) => m.on).map((m) => drinkById(state, m.id).name).join(' · ');
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>Cookbook</h2>
-      <div class="sub">Everything on tonight's menu. Build each plate on a counter: grab a plate from the rack, then add each part. Pot and fryer take several portions at once.</div>
       ${['main', 'starter', 'dessert'].map((k) => groups[k].length ? `<div class="section-title">${k === 'starter' ? 'Starters & sides' : k + 's'}</div><div class="cols">${groups[k].map(card).join('')}</div>` : '').join('')}
-      <div class="section-title">Drinks</div><div>${esc(drinks)} (pour at the drink station)</div>`;
+      <div class="section-title">Drinks</div><div>${esc(drinks)}</div>`;
     this.openSheet('cookbook', html);
   }
 
@@ -559,7 +566,7 @@ export class Hud {
     }).join('');
     const pending = (state.rush || []).map((r) => `${ING[r.ing].name} in ${Math.max(0, Math.ceil(r.at - state.t))}s`).join(' · ');
     this.openSheet('picker', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Call the supplier</h2>
-      <div class="sub">Rush delivery: arrives at the back door in ${CFG.money.rushDelay} seconds, at ${Math.round((CFG.money.rushMarkup - 1) * 100)}% over the usual price.${pending ? '<br>On the way: ' + esc(pending) : ''}</div><div class="grid">${rows}</div>`);
+      <div class="sub">Back-door delivery · ${CFG.money.rushDelay}s · ${Math.round((CFG.money.rushMarkup - 1) * 100)}% extra${pending ? '<br>On the way: ' + esc(pending) : ''}</div><div class="grid">${rows}</div>`);
     this.modal.querySelectorAll('.pick').forEach((b) => {
       b.onclick = () => { this.app.command({ c: 'rush', ing: b.dataset.ing, cases: 1 }); sfx('ui'); this.closeModal(); };
     });
@@ -569,7 +576,7 @@ export class Hud {
     const v = volumes();
     const host = info.role !== 'client';
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>${state.paused ? 'Paused' : 'Menu'}</h2>
-      <div class="sub">${host ? 'The game pauses for both of you while this is open.' : 'The kitchen keeps running while this is open.'}</div>
+      ${host ? '' : '<div class="sub">Service continues while this menu is open.</div>'}
       <div class="slider"><span>Music</span><input type="range" min="0" max="1" step="0.05" value="${v.music}" data-vol="music"></div>
       <div class="slider"><span>Sounds</span><input type="range" min="0" max="1" step="0.05" value="${v.sfx}" data-vol="sfx"></div>
       <div class="section-title">Movement keys</div>
@@ -578,7 +585,7 @@ export class Hud {
       <div class="stack">
         <button class="btn primary" data-act="resume">Back to the kitchen</button>
         <button class="btn" data-act="chef">Change my chef</button>
-        ${host ? '<button class="btn" data-act="code">Save code (backup / move to another laptop)</button>' : ''}
+        ${host ? '<button class="btn" data-act="code">Export save code</button>' : ''}
         <button class="btn ghost" data-act="leave">${host ? 'Save and quit to title' : 'Leave the kitchen'}</button>
       </div>`;
     this.openSheet('pause', html);

@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Two Forks: a cozy co-op restaurant game for two laptops.",
   "scripts": {
-    "test": "node tools/simtest.mjs && node tools/storytest.mjs"
+    "test": "node tools/simtest.mjs && node tools/storytest.mjs && node tools/alleytest.mjs && node tools/alleynettest.mjs"
   }
 }

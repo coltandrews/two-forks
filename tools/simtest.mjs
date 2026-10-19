@@ -8,6 +8,7 @@ import { walkable, footprint, validateLayout } from '../src/sim/world.js';
 import { ING } from '../src/data/ingredients.js';
 import { frontDoor, roomSize } from '../src/data/layout.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
+import { ALLEY_OBJECTS, BACK_DOOR, TRASH_CAPACITY, playerArea } from '../src/data/alley.js';
 import { autofillPlan, placementStatus, tryMove } from '../src/sim/economy.js';
 import { pathToFileURL } from 'node:url';
 
@@ -57,7 +58,7 @@ function step(n = 1) {
 const fmtClock = (m) => `${Math.floor(m / 60)}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
 
 function face(o) {
-  const g = sim.grid;
+  const g = sim.gridFor(playerArea(P()));
   const f = footprint(o);
   let best = null, bd = Infinity;
   for (let dz = -1; dz <= f.h; dz++) {
@@ -75,15 +76,33 @@ function face(o) {
   const px = best.x + 0.5, pz = best.z + 0.5;
   const rot = Math.atan2(best.tx + 0.5 - px, best.tz + 0.5 - pz);
   sim.setPose(PID, px, pz, rot);
-  const t = findTarget(sim.state, sim.grid, sim.state.players[PID]);
+  const t = findTarget(sim.state, g, sim.state.players[PID]);
   if (!t || t.id !== o.id) throw new Error(`Facing ${o.type} ${o.id} but target is ${t && t.type}`);
 }
 
 function E(o) {
+  if (o.type === 'bin' && o.trash >= TRASH_CAPACITY && P().hand && !['trash', 'dirty'].includes(P().hand.k)) {
+    const counter = sim.state.objects.find((item) => ['counter', 'pass'].includes(item.type) && !item.slot);
+    if (!counter) throw new Error('No clear surface while emptying the bin');
+    E(counter);
+    emptyBin();
+    E(counter);
+  }
   face(o);
   const r = actE(sim, PID, false);
   for (const e of sim.drain()) if (e.type === 'picker') pickerQueue.push(e);
   return r;
+}
+
+function emptyBin() {
+  const bin = objs('bin')[0];
+  if (P().hand || bin.trash < TRASH_CAPACITY) return false;
+  E(bin);
+  E(BACK_DOOR);
+  E(ALLEY_OBJECTS.find((o) => o.type === 'dumpster'));
+  E(ALLEY_OBJECTS.find((o) => o.type === 'backdoor'));
+  if (P().hand || playerArea(P()) !== 'restaurant') throw new Error('Could not dispose of trash');
+  return true;
 }
 const P = () => sim.state.players[PID];
 const objs = (type) => sim.state.objects.filter((o) => o.type === type);
@@ -222,6 +241,7 @@ const tableOf = (p) => sim.state.objects.find((o) => o.id === p.table);
 
 function serviceTick({ kitchen = true } = {}) {
   const S = sim.state;
+  if (!P().hand && !S.parties.some((p) => p.leader === PID && p.state === 'following') && emptyBin()) return true;
   // Settle and take orders first.
   for (const p of S.parties) {
     if (!P().hand && ['ordering', 'dessertReady', 'paying'].includes(p.state)) {

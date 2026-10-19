@@ -5,9 +5,10 @@ import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { dailyGoal } from './progression.js';
 import { CFG } from '../config.js';
 import { spawnPoints } from '../data/layout.js';
+import { playerArea } from '../data/alley.js';
 import { ING } from '../data/ingredients.js';
 import { buildGrid, collide } from './world.js';
-import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId } from './state.js';
+import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } from './state.js';
 import {
   actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
 } from './kitchen.js';
@@ -26,6 +27,10 @@ export class Sim {
     this.time = state.t || 0;
     this.layoutRev = 0;
     this.announcedLevel = state.level || 1;
+    for (const p of Object.values(state.players)) {
+      p.area = playerArea(p);
+      p.areaRev ||= 0;
+    }
     this.rebuild();
     if (!state.today) state.today = freshToday();
     if (state.phase === 'morning' && !state.morningDone) this.beginMorning(true);
@@ -33,9 +38,12 @@ export class Sim {
 
   rebuild() {
     this.grid = buildGrid(this.state);
+    this.alleyGrid = buildGrid(this.state, 'alley');
     this.layoutRev++;
     this.state.layoutRev = (this.state.layoutRev || 0) + 1;
   }
+
+  gridFor(area = 'restaurant') { return area === 'alley' ? this.alleyGrid : this.grid; }
 
   emit(e) { this.events.push(e); }
 
@@ -47,15 +55,19 @@ export class Sim {
 
   addPlayer(pid, profile) {
     const S = this.state;
+    const previous = S.players[pid];
+    if (previous) dropHeld(this, pid);
     if (S.pendingPurchase && !S.players[pid]) {
       delete S.pendingPurchase;
       this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
     }
-    const slot = Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0;
+    const slot = previous?.slot ?? (Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0);
     const sp = spawnPoints(S)[slot];
     S.players[pid] = {
       id: pid, slot, name: (profile.name || 'Chef').slice(0, 16), look: sanitizeLook(profile.look),
       x: sp.x, z: sp.z, rot: Math.PI, hand: null, tips: 0, last: {}, working: null,
+      area: 'restaurant', areaRev: previous ? (previous.areaRev || 0) + 1 : 0, smoking: null,
+      smokeBoostUntil: previous?.smokeBoostUntil || 0,
     };
     this.emit({ type: 'toast', text: `${S.players[pid].name} clocked in.`, kind: 'good' });
     return S.players[pid];
@@ -83,21 +95,25 @@ export class Sim {
     this.emit({ type: 'toast', text: `${name} left the kitchen.`, kind: 'warn' });
   }
 
-  setPose(pid, x, z, rot) {
+  setPose(pid, x, z, rot, area, areaRev) {
     const p = this.state.players[pid];
     if (!p) return;
+    if ((area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
     if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(rot)) return;
-    const position = collide(this.grid, { x, z }, CFG.move.radius);
+    const position = collide(this.gridFor(playerArea(p)), { x, z }, CFG.move.radius);
     p.x = position.x; p.z = position.z; p.rot = rot;
   }
 
-  setWork(pid, on) {
+  setWork(pid, on, area, areaRev) {
     const p = this.state.players[pid];
-    if (p) p.space = !!on;
+    if (!p || (area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
+    p.space = playerArea(p) === 'restaurant' && !!on;
   }
 
-  press(pid, key) {
+  press(pid, key, area, areaRev) {
     const S = this.state;
+    const p = S.players[pid];
+    if (!p || (area !== undefined && area !== playerArea(p)) || (areaRev !== undefined && areaRev !== (p.areaRev || 0))) return;
     if (S.paused) return;
     if (S.phase === 'office') return;
     if (key === 'e') actE(this, pid, false);
@@ -109,6 +125,7 @@ export class Sim {
   command(pid, c) {
     const S = this.state;
     if (!S.players[pid] || !c || typeof c.c !== 'string') return { ok: false };
+    if (playerArea(S.players[pid]) !== 'restaurant' && !['profile', 'pause', 'approvePurchase'].includes(c.c)) return { ok: false, reason: 'Go inside first.' };
     let r;
     if (c.c === 'approvePurchase') r = this.approvePurchase(pid, c);
     else {
@@ -224,6 +241,7 @@ export class Sim {
 
   setReady(pid, on) {
     const S = this.state;
+    if (playerArea(S.players[pid]) !== 'restaurant') return { ok: false, reason: 'Go inside first.' };
     if (S.phase !== 'morning' && S.phase !== 'office') return null;
     if (S.pendingPurchase) return { ok: false, reason: 'Approve or cancel the pending purchase first.' };
     if (on) S.ready[pid] = true; else delete S.ready[pid];
@@ -298,6 +316,9 @@ export class Sim {
     for (const p of Object.values(S.players)) {
       const sp = spawnPoints(S)[p.slot];
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
+      p.area = 'restaurant'; p.areaRev = (p.areaRev || 0) + 1;
+      p.space = false; p.working = null; p.smoking = null;
+      this.emit({ type: 'areaChanged', to: p.id, area: p.area, areaRev: p.areaRev });
     }
     if (S.marketing && S.marketing.days > 0) { S.marketing.days -= 1; if (S.marketing.days <= 0) S.marketing = null; }
     this.syncProgression();
@@ -312,6 +333,7 @@ export class Sim {
     S.today = freshToday();
     if (isStory(S)) S.goal = dailyGoal(S);
     const sp = spoil(S);
+    addTrash(S, sp.lines.reduce((n, line) => n + line.n, 0));
     S.today.waste.spoiled = sp.total;
     S.today.spoiledLines = sp.lines;
     const n = deliverOrders(S);
@@ -344,6 +366,10 @@ export class Sim {
     // Held Space.
     for (const [pid, p] of Object.entries(S.players)) {
       p.working = null;
+      if (p.smoking) {
+        p.smoking.left -= dt;
+        if (p.smoking.left <= 0) p.smoking = null;
+      }
       if (p.space) actSpace(this, pid, dt, false);
     }
 

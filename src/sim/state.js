@@ -5,6 +5,7 @@ import { ING } from '../data/ingredients.js';
 import { startingObjects, STORY_BUILDING } from '../data/layout.js';
 import { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } from '../data/progression.js';
 import { dailyGoal } from './progression.js';
+import { TRASH_CAPACITY } from '../data/alley.js';
 
 export const SAVE_VERSION = 3;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -88,7 +89,8 @@ export function initObject(o) {
     case 'sink': o.n = 0; o.wash = 0; break;
     case 'dock': o.boxes = []; break;            // [{ ing, cases }]
     case 'table': o.dirty = 0; o.party = null; o.num = 0; break;
-    case 'fridge': case 'freezer': case 'pantry': case 'host': case 'drinks': case 'bin': break;
+    case 'bin': o.trash = 0; break;
+    case 'fridge': case 'freezer': case 'pantry': case 'host': case 'drinks': break;
     default: o.slot = null;
   }
   return o;
@@ -165,9 +167,25 @@ export function freshToday() {
   };
 }
 
+/** Routine waste fills the bin. A full bin must be emptied before discards. */
+export function addTrash(state, units) {
+  const bin = state.objects.find((o) => o.type === 'bin');
+  if (!bin || !Number.isFinite(units) || units <= 0) return;
+  if ((bin.trash || 0) < TRASH_CAPACITY) bin.trash = Math.min(TRASH_CAPACITY, (bin.trash || 0) + Math.ceil(units));
+}
+
+/** Preserve carried bags when a chef leaves or a save removes live players. */
+export function returnTrashBag(state, bag) {
+  const bin = state.objects.find((o) => o.type === 'bin');
+  if (!bin || bag?.k !== 'trash') return;
+  const units = Number.isFinite(bag.n) && bag.n > 0 ? Math.min(TRASH_CAPACITY, Math.ceil(bag.n)) : TRASH_CAPACITY;
+  bin.trash = (bin.trash || 0) + units;
+}
+
 /** Plain JSON copy for saving. Players and live guests are dropped. */
 export function serialize(state) {
   const s = JSON.parse(JSON.stringify(state));
+  for (const p of Object.values(s.players || {})) if (p.hand?.k === 'trash') returnTrashBag(s, p.hand);
   s.players = {};
   s.parties = [];
   s.tickets = [];
@@ -185,6 +203,11 @@ export function deserialize(obj) {
   s.mode = s.mode === 'story' ? 'story' : 'arcade';
   s.v = SAVE_VERSION;
   delete s.pendingPurchase;
+  for (const o of s.objects) if (o.type === 'bin') {
+    const units = Number(o.trash);
+    o.trash = Number.isFinite(units) ? Math.max(0, Math.ceil(units)) : 0;
+  }
+  for (const p of Object.values(s.players || {})) if (p.hand?.k === 'trash') returnTrashBag(s, p.hand);
   if (isStory(s)) {
     // Old saves keep the original footprint and all furniture coordinates.
     s.building ||= { width: 20, height: 15, divider: { from: 1, to: 12 } };

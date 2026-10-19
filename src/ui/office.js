@@ -2,7 +2,7 @@
 // upgrades, marketing, the layout editor, and save codes.
 import { CFG } from '../config.js';
 import { ING, stateInfo, statesOf } from '../data/ingredients.js';
-import { CUISINES, BUILDER } from '../data/cuisines.js';
+import { BUILDER } from '../data/cuisines.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } from '../data/layout.js';
 import { isOwned, recipeRequirements, drinkRequirements, ingredientAllowed, unlockList, chapterInfo } from '../data/progression.js';
@@ -89,7 +89,7 @@ export class Office {
     const scroll = this.root.querySelector('.office-body');
     const top = scroll ? scroll.scrollTop : 0;
     this.root.innerHTML = `<div class="office">
-      <div class="office-head"><div class="office-title"><h1>${esc(state.name)}</h1><div class="meta">${CUISINES[state.cuisine].style} · Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]} · ${state.phase === 'office' ? 'after hours' : 'morning'}</div></div>
+      <div class="office-head"><div class="office-title"><h1>${esc(state.name)}</h1></div>
         <div class="tabs" aria-label="Office sections">${TABS.filter(([k]) => k !== 'unlocks' || state.mode === 'story').map(([k, n]) => `<button data-tab="${k}" aria-pressed="${this.tab === k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
       <div class="office-body">${this.body(state)}</div>
       <div class="office-foot">${this.foot(state)}</div></div>`;
@@ -137,7 +137,7 @@ export class Office {
 
   report(state) {
     const r = state.report;
-    if (!r) return '<div class="empty">No service yet. Your first P&L shows up here after closing.</div>';
+    if (!r) return '<div class="empty">Your first report will be ready after closing.</div>';
     const line = (label, v, cls = '') => `<tr class="${cls}"><td>${label}</td><td class="${v < 0 ? 'neg' : ''}">${money(v)}</td></tr>`;
     const f = r.fixed;
     const pl = `<table class="pl">
@@ -165,7 +165,7 @@ export class Office {
     const spoiled = (r.spoiled || []).length ? `<div class="tip">Spoiled this morning: ${r.spoiled.map((s) => `${s.n} ${ING[s.ing].name.toLowerCase()}${s.well ? ' (prep well)' : ''}`).join(', ')}</div>` : '';
     const progress = r.progression;
     const xp = state.mode === 'story' && progress ? `<div class="card xp-report"><h3>Chef Level ${progress.level} <span class="xp-total">+${progress.xp} XP</span></h3><div class="xp-lines">${(progress.lines || []).map((x) => `<span>${esc(x.label)} <b>+${x.amount} XP</b></span>`).join('')}</div>${progress.goal ? `<p>${progress.goal.done ? '✓ Goal met' : 'Goal not met'}: ${esc(progress.goal.label)}${progress.goal.done ? ` · +${progress.goal.xp} XP` : ''}</p>` : ''}${progress.relief ? `<p>The bank lent you ${money(progress.relief)} to keep the restaurant open. Total loan balance: ${money(progress.debt)}. This loan is not sales income.</p>` : progress.debtDays ? `<p class="neg">Cash is below zero for ${progress.debtDays} day${progress.debtDays === 1 ? '' : 's'}. The bank allows three days before loan terms change.</p>` : ''}</div>` : '';
-    const crew = (r.crew || []).length ? `<div class="card" style="margin-top:14px"><h3>The crew</h3><div class="tip">Everyone shares the restaurant's progress.</div><table class="crew-report"><tr><th>Chef</th><th>Plated</th><th>Served</th><th>Tables cleared</th></tr>${r.crew.map((chef) => `<tr><td>${esc(chef.name)}</td><td>${chef.plated}</td><td>${chef.served}</td><td>${chef.bused}</td></tr>`).join('')}</table></div>` : '';
+    const crew = (r.crew || []).length ? `<div class="card" style="margin-top:14px"><h3>Crew</h3><table class="crew-report"><tr><th>Chef</th><th>Plated</th><th>Served</th><th>Tables cleared</th></tr>${r.crew.map((chef) => `<tr><td>${esc(chef.name)}</td><td>${chef.plated}</td><td>${chef.served}</td><td>${chef.bused}</td></tr>`).join('')}</table></div>` : '';
     return `${kpis}${xp}<div class="cols2">
       <div class="card receipt"><h3>Day ${r.day} · Profit &amp; Loss</h3>${pl}<div class="tip" style="margin-top:8px">Cash on hand ${money(r.cashEnd)}. Groceries bought today: ${money(r.purchases)} (counted as cost only when cooked and sold, or wasted).</div>${spoiled}</div>
       <div style="display:flex;flex-direction:column;gap:14px">
@@ -173,8 +173,8 @@ export class Office {
         <div class="card"><h3>Reviews</h3><div class="reviews">${reviews.length ? reviews.map((v) => `<div class="review ${v.critic ? 'critic' : ''}"><span class="st">${'★'.repeat(v.stars)}${'☆'.repeat(5 - v.stars)}</span> ${esc(v.text)} <span class="who">${esc(v.name)}${v.critic ? ', food critic' : ''}</span></div>`).join('') : '<div class="tip">No reviews today.</div>'}</div></div>
         <div class="card"><h3>Tip jar</h3>${tipsToday.length ? tipsToday.map(([n, v]) => `<div>${esc(n)}: <b>${money(v)}</b> today</div>`).join('') : '<div class="tip">Tips go to whoever settles the bill.</div>'}${jar.length ? `<div class="tip">All time: ${jar.map(([n, v]) => `${esc(n)} ${money(v)}`).join(' · ')}</div>` : ''}</div>
       </div></div>
-      ${crew}${isOwned(state, 'features', 'menu_report') ? `<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><div class="tip" style="margin-bottom:6px">Popularity is compared to a fair share of orders (70% rule); profit is each dish's margin against the average. Hover a tag for advice.</div>
-      <div class="table-scroll"><table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Available at Chef Level 5. Open the Unlocks tab to get this report.</p></div>'}`;
+      ${crew}${isOwned(state, 'features', 'menu_report') ? `<div class="card" style="margin-top:14px"><h3>Menu engineering</h3>
+      <div class="table-scroll"><table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th title="Popularity uses the 70% rule. Profit compares each dish's margin with the average.">Class</th></tr>${meRows}</table></div></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Chef Level 5</p></div>'}`;
   }
 
   // ------------------------------------------------------------ menu
@@ -201,7 +201,7 @@ export class Office {
     };
     const group = (slot, title) => {
       const items = state.menu.dishes.filter((m) => courseSlot(dishById(state, m.id).course) === slot);
-      return `<div class="section-title">${title} · ${used[slot]}/${lim[slot]} on the menu</div><div class="menu-list">${items.map(row).join('')}</div>`;
+      return `<div class="section-title">${title} · ${used[slot]}/${lim[slot]}</div><div class="menu-list">${items.map(row).join('')}</div>`;
     };
     const drinks = state.menu.drinks.map((m) => {
       const d = drinkById(state, m.id);
@@ -210,15 +210,14 @@ export class Office {
         <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5" aria-label="Lower ${esc(d.name)} price">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}" aria-label="${esc(d.name)} price"><button data-act="dprice" data-id="${m.id}" data-d="0.5" aria-label="Raise ${esc(d.name)} price">+</button></div>
         <div class="n">${money(d.cost)}<br><span class="fc">${pct(d.cost / m.price)} cost</span></div><div class="n">fair ${money0(d.price)}</div><div></div></div>`;
     }).join('');
-    return `<div class="tip">Guests compare your price with what they think a dish is worth ("fair"). Charge more and fewer people order it, and fewer people come in at all. Food cost around 25 to 35% is healthy.</div>
-      <div class="mhead" style="margin-top:10px"><span>On</span><span>Dish</span><span>Price</span><span>Food cost</span><span>Value</span><span></span></div>
+    return `<div class="mhead"><span>On</span><span>Dish</span><span>Price</span><span title="Aim for 25–35% food cost.">Food cost</span><span title="What guests will pay. Higher prices reduce demand.">Value</span><span></span></div>
       ${group('main', 'Mains')}${group('starter', 'Starters & sides')}${group('dessert', 'Desserts')}
       <div class="section-title">Drinks</div><div class="menu-list">${drinks}</div>
       ${this.builder(state)}`;
   }
 
   builder(state) {
-    if (!isOwned(state, 'features', 'house_dish')) return '<div class="card" style="margin-top:16px"><h3>Create a house dish</h3><p>Available at Chef Level 6. Open the Unlocks tab to get this tool.</p></div>';
+    if (!isOwned(state, 'features', 'house_dish')) return '<div class="card" style="margin-top:16px"><h3>Create a house dish</h3><p>Chef Level 6</p></div>';
     const dr = this.draft;
     const tpl = BUILDER[dr.tpl];
     const r = dr.comps.length ? rateCustom(dr.comps) : null;
@@ -230,7 +229,7 @@ export class Office {
     const custom = (state.custom || []).length;
     const requirements = recipeRequirements(state, { id: '', custom: true, comps: dr.comps });
     return `<div class="card builder" style="margin-top:16px"><h3>Create a house dish (${custom}/8)</h3>
-      <div class="tip" style="margin-bottom:8px">Pick a type, start with its base, then add up to ${tpl.max} components in total. Classic pairings (bacon + cheddar, avocado + lime, salmon + teriyaki…) make guests like it more. ${state.mode === 'story' ? 'Your supplier licenses decide which ingredients you can use.' : 'Every ingredient can be ordered from the supplier.'}</div>
+      <div class="tip" style="margin-bottom:8px">Up to ${tpl.max} components. Good pairings increase appeal.</div>
       <div class="row"><input type="text" placeholder="Dish name" maxlength="28" value="${esc(dr.name)}" data-draft="name">
         <select data-draft="course">${['main', 'starter', 'side', 'dessert'].map((c) => `<option ${dr.course === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
         <select data-draft="tpl">${Object.entries(BUILDER).map(([k, b]) => `<option value="${k}" ${dr.tpl === k ? 'selected' : ''}>${b.name}</option>`).join('')}</select></div>
@@ -272,11 +271,11 @@ export class Office {
     const total = state.orders.reduce((s, o) => s + o.cases * casePrice(o.ing), 0);
     const planCost = plan.reduce((s, p) => s + p.cases * casePrice(p.ing), 0);
     return `<div class="supplier-summary">
-      <div><div class="card"><b>Forecast for ${state.phase === 'office' ? 'tomorrow' : 'today'}:</b> about ${Math.round(parties)} parties (${Math.round(parties * 2.35)} guests) on a ${WEEKDAYS[(tomorrow - 1) % 7]}. Orders arrive on the pallet by the back door the next morning. Fresh food spoils; check the shelf life column.</div></div>
+      <div><b>${WEEKDAYS[(tomorrow - 1) % 7]} forecast: ${Math.round(parties)} parties · ${Math.round(parties * 2.35)} guests</b><p class="tip">Delivery: next morning, back door.</p></div>
       <div class="supplier-order"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
       <span class="hint-line">Tonight's order: <b>${money(total)}</b></span></div></div>
       <div class="table-scroll"><table class="sup"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table></div>
-      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show only what the menu uses' : state.mode === 'story' ? 'Show all licensed ingredients' : 'Show every ingredient (for house dishes)'}</button>${state.mode === 'story' ? '<p class="hint-line">Buy supplier licenses in the Unlocks tab to order more ingredients.</p>' : ''}`;
+      <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show menu ingredients' : state.mode === 'story' ? 'Show licensed ingredients' : 'Show all ingredients'}</button>`;
   }
 
   // ------------------------------------------------------------ upgrades
@@ -285,15 +284,21 @@ export class Office {
     const floor = roomSize(state);
     const entries = unlockList(state);
     const chapter = chapterInfo(state);
-    const card = (item) => `<div class="unlock-card ${item.owned ? 'owned' : item.level > state.level ? 'locked' : ''}"><span class="unlock-kind">${esc(item.kind)} · Chef Level ${item.level}</span><h4>${esc(item.name)}</h4><p>${esc(item.desc)}</p>${item.owned ? '<b>✓ Owned</b>' : `<span class="unlock-price">${item.price ? money0(item.price) : 'Free'}</span><button class="btn small ${item.can ? 'primary' : ''}" data-act="unlock" data-kind="${esc(item.kind)}" data-id="${esc(item.id)}" ${item.can && !state.pendingPurchase ? '' : 'disabled'}>${item.can ? (item.price ? 'Buy' : 'Get') : esc(item.reason || `Needs Chef Level ${item.level}`)}</button>`}</div>`;
+    const card = (item) => {
+      let desc = '';
+      if (item.kind === 'areas') desc = `+${FLOOR_EXPANSION_WIDTH} × ${floor.height - 2} floor cells`;
+      if (item.kind === 'recipes') desc = recipeRequirements(state, dishById(state, item.id)).join(' · ');
+      if (item.kind === 'licenses' && item.id === 'bar') desc = item.desc;
+      return `<div class="unlock-card ${item.owned ? 'owned' : item.level > state.level ? 'locked' : ''}"><h4>${esc(item.name)}${item.kind === 'licenses' ? ' license' : ''}</h4>${desc ? `<p>${esc(desc)}</p>` : ''}${item.owned ? '' : `<span class="unlock-price">${item.price ? money0(item.price) : 'Free'}</span><button class="btn small ${item.can ? 'primary' : ''}" data-act="unlock" data-kind="${esc(item.kind)}" data-id="${esc(item.id)}" ${item.can && !state.pendingPurchase ? '' : 'disabled'}>${item.can ? (item.price ? 'Buy' : 'Get') : esc(item.reason || `Needs Chef Level ${item.level}`)}</button>`}</div>`;
+    };
     const groups = [
       ['Owned', entries.filter((x) => x.owned)],
       ['Buy now', entries.filter((x) => !x.owned && x.level <= state.level)],
-      ['Coming at higher levels', entries.filter((x) => !x.owned && x.level > state.level)],
+      ['Locked', entries.filter((x) => !x.owned && x.level > state.level)],
     ];
-    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><p>${esc(chapter.text)}</p><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? (chapter.area ? 'Buy floor expansion' : 'Complete chapter') : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Your restaurant is open</h3><p>The story is complete. Keep serving, improve the room, and earn prestige stars.</p></div>';
+    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? (chapter.area ? 'Buy floor expansion' : 'Complete chapter') : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Story complete</h3></div>';
     const tables = UPGRADES.filter((u) => u.table).map((u) => this.upgradeCard(state, u)).join('');
-    return `<div class="unlock-summary"><div><h3>Chef Level ${state.level}</h3><span class="tip">Levels make items available. Cash buys them. Your crew shares all progress.</span><p>Current floor: <b>${floor.width - 2} × ${floor.height - 2}</b> cells. Each expansion adds ${FLOOR_EXPANSION_WIDTH} × ${floor.height - 2} cells.</p></div><b>${money(state.cash)} available</b></div>${gate}<div class="section-title">Tables</div><p class="tip">Open more dining space to add tables. Each table must have a clear path to the door.</p><div class="ups">${tables}</div><div class="section-title">More unlocks</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">Nothing here yet.</div>'}</section>`).join('')}</div>`;
+    return `<div class="unlock-summary"><h3>Chef Level ${state.level}</h3><span>Floor: <b>${floor.width - 2} × ${floor.height - 2}</b> cells</span></div>${gate}<div class="section-title">Tables</div><div class="ups">${tables}</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">None</div>'}</section>`).join('')}</div>`;
   }
 
   upgradeCard(state, upgrade) {
@@ -313,7 +318,7 @@ export class Office {
     }).join('');
     const kitchen = UPGRADES.filter((u) => u.group === 'Kitchen').map((u) => this.upgradeCard(state, u)).join('');
     const dining = UPGRADES.filter((u) => u.group === 'Dining room').map((u) => this.upgradeCard(state, u)).join('');
-    return `<div class="tip">New stations and tables are placed automatically. Rearrange them in the Layout tab. Every heat station adds $${CFG.money.utilityPerStation} a day to utilities.</div>
+    return `<div class="tip">Each heat station adds $${CFG.money.utilityPerStation}/day to utilities.</div>
       <div class="section-title">Kitchen</div><div class="ups">${kitchen}</div>
       <div class="section-title">Dining room</div><div class="ups">${dining}</div>
       <div class="section-title">Marketing${state.marketing ? ` · ${esc(state.marketing.name)}: ${state.marketing.days} day${state.marketing.days > 1 ? 's' : ''} left` : ''}</div><div class="ups">${mk}</div>`;
@@ -322,14 +327,13 @@ export class Office {
   // ------------------------------------------------------------ layout
 
   layoutTab(state) {
-    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. ${state.mode === 'story' ? 'Buy floor expansions in the Unlocks tab. Each purchase moves the outside wall and adds usable floor.' : 'You can use the full floor.'} The grid will show if the new place is safe. You can move items within the current walls.</p>
-      <button class="btn primary" data-act="layout">Open floor planner</button></div>`;
+    return `<div class="card"><button class="btn primary" data-act="layout">Open floor planner</button></div>`;
   }
 
   renderLayoutBar(state, force) {
     const sel = this.app.layoutSel;
     const o = sel && state.objects.find((x) => x.id === sel);
-    const html = `<div class="panel layout-bar"><p>${o ? `Move <b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''}. Drag it, or click a cell to place it.` : 'Drag any item to a grid cell. Green means valid.'}</p>
+    const html = `<div class="panel layout-bar"><p>${o ? `<b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''} · Drag or click a cell.` : 'Drag items to grid cells. Green means valid.'}</p>
       ${o ? '<button class="btn small ghost" data-act="unsel">Cancel</button>' : ''}<button class="btn small primary" data-act="layoutdone">Done</button></div>`;
     if (!force && html === this.lastBar) return;
     this.lastBar = html;
@@ -339,14 +343,13 @@ export class Office {
   // ------------------------------------------------------------ restaurant
 
   house(state) {
-    const c = CUISINES[state.cuisine];
     const host = this.app.session.role !== 'client';
     const L = state.lifetime;
-    return `<div class="cols2"><div class="card"><h3>${esc(state.name)}</h3><p>${esc(c.style)}. ${esc(c.blurb)}</p>
+    return `<div class="cols2"><div class="card"><h3>Statistics</h3>
       <p>Open ${L.days} day${L.days === 1 ? '' : 's'} · ${L.guests} guests served · ${money0(L.revenue)} lifetime revenue · best day ${money(L.bestDay)}</p>
       <p><span class="mode-badge ${state.mode === 'story' ? 'story' : ''}">${state.mode === 'story' ? 'STORY' : 'ARCADE'}</span> Average rating ${avgRating(state) ? avgRating(state).toFixed(2) + '★' : '–'}${state.mode === 'story' ? ` · Chef Level ${state.level} · ${state.xp} XP` : ''}</p>
       <button class="btn" data-act="chef">Change my chef</button></div>
-      <div class="card"><h3>Save</h3>${host ? `<p>The game saves on this laptop after every day. A save code is a backup you can paste into any browser (Host → Import a save code).</p><button class="btn" data-act="code">Show save code</button>` : '<p>Your partner\'s laptop keeps the save. Only the host can export it.</p>'}</div></div>`;
+      <div class="card"><h3>Save</h3>${host ? `<p>Saved on this laptop each day. Use a save code to move to another browser.</p><button class="btn" data-act="code">Show save code</button>` : '<p>Saved on the host\'s laptop. Only the host can export it.</p>'}</div></div>`;
   }
 
   // ------------------------------------------------------------ events

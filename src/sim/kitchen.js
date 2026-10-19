@@ -10,7 +10,9 @@ import { creditWork } from './progression.js';
 import { CFG } from '../config.js';
 import { ING, stateInfo, stepFor } from '../data/ingredients.js';
 import { HEAT_TYPES, STORE_TYPES, STATION_NAMES } from '../data/layout.js';
-import { drinkById } from './state.js';
+import { ALLEY_SPAWN, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, cookingMultiplier, playerArea, areaObjects } from '../data/alley.js';
+import { drinkById, addTrash, returnTrashBag } from './state.js';
+import { buildGrid, walkable } from './world.js';
 import {
   ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts,
   stationCapacity, PLATE_MAX,
@@ -25,6 +27,8 @@ export function objById(state, id) { return state.objects.find((o) => o.id === i
 
 /** The object a chef is facing within reach, preferring what is straight ahead. */
 export function findTarget(state, grid, p) {
+  const area = playerArea(p);
+  if (grid.area !== area) grid = buildGrid(state, area);
   const { width: W, height: H } = grid;
   const fx = Math.sin(p.rot), fz = Math.cos(p.rot);
   const reach = CFG.move.reach;
@@ -48,7 +52,7 @@ export function findTarget(state, grid, p) {
       if (s < bs) { bs = s; best = id; }
     }
   }
-  return best ? objById(state, best) : null;
+  return best ? areaObjects(state, area).find((o) => o.id === best) || null : null;
 }
 
 function rack(state) { return state.objects.find((o) => o.type === 'rack'); }
@@ -70,6 +74,35 @@ function waste(ctx, it, why = 'binned') {
   if (c > 0) ctx.state.today.waste[why] = round2(ctx.state.today.waste[why] + c);
   if (it && it.k === 'ing' && it.st === 'burnt') ctx.state.today.burnt++;
   if (it && it.k === 'plate') for (const x of it.items) if (x.st === 'burnt') ctx.state.today.burnt++;
+  addTrash(ctx.state, trashUnits(it));
+}
+
+function trashUnits(it) {
+  if (!it) return 0;
+  if (it.k === 'ing') return it.n || 1;
+  if (it.k === 'plate') return it.items.reduce((n, item) => n + trashUnits(item), 0);
+  if (it.k === 'drink' || it.k === 'box') return 1;
+  return 0;
+}
+
+function changeArea(ctx, p) {
+  const area = playerArea(p) === 'alley' ? 'restaurant' : 'alley';
+  let spawn = ALLEY_SPAWN;
+  if (area === 'restaurant') {
+    const grid = ctx.grid;
+    let best = null, distance = Infinity;
+    // Old saves can have furniture in front of the back door.
+    for (let z = 1; z < grid.height - 1; z++) for (let x = 1; x < grid.width - 1; x++) {
+      if (!walkable(grid, x, z)) continue;
+      const d = (x - BACK_DOOR.x - 1) ** 2 + (z - BACK_DOOR.z) ** 2;
+      if (d < distance) { distance = d; best = { x: x + 0.5, z: z + 0.5, rot: Math.PI / 2 }; }
+    }
+    if (!best) return null;
+    spawn = best;
+  }
+  Object.assign(p, spawn, { area, areaRev: (p.areaRev || 0) + 1, space: false, working: null });
+  ctx.emit({ type: 'areaChanged', to: p.id, area, areaRev: p.areaRev });
+  return 'ok';
 }
 
 function sfx(ctx, name, o) { ctx.emit({ type: 'sfx', name, x: o ? o.x + 0.5 : undefined, z: o ? o.z + 0.5 : undefined }); }
@@ -155,11 +188,43 @@ export function actE(ctx, pid, dry, target) {
   const p = S.players[pid];
   if (!p) return null;
   const o = target !== undefined ? target : findTarget(S, ctx.grid, p);
+  if (p.smoking && (!o || o.type === 'smoking')) {
+    if (dry) return 'Put out cigarette';
+    p.smoking = null;
+    return 'ok';
+  }
   if (!o) {
     return null;
   }
   const h = p.hand;
   const t = o.type;
+  const area = playerArea(p);
+  if (!areaObjects(S, area).some((item) => item.id === o.id)) return null;
+
+  if (t === 'backdoor') {
+    if (area === 'restaurant' && followingParty(S, pid)) return dry ? { blocked: 'Seat your guests first' } : null;
+    if (dry) return area === 'alley' ? 'Enter restaurant' : 'Go outside';
+    return changeArea(ctx, p);
+  }
+  if (area === 'alley') {
+    if (t === 'dumpster') {
+      if (h?.k !== 'trash') return dry ? { blocked: h ? 'Only trash bags go here' : 'No trash bag'} : null;
+      if (dry) return 'Dispose of trash bag';
+      p.hand = null;
+      ctx.emit({ type: 'sfx', name: 'bin', x: o.x + 0.5, z: o.z + 0.5, area: 'alley' });
+      return 'ok';
+    }
+    if (t === 'smoking') {
+      if (h) return dry ? { blocked: 'Put down what you are carrying' } : null;
+      if (dry) return 'Smoke';
+      p.smoking = { left: SMOKE_SECONDS, x: p.x, z: p.z };
+      p.smokeBoostUntil = (S.t || 0) + SMOKE_BOOST_SECONDS;
+      p.space = false;
+      return 'ok';
+    }
+    return null;
+  }
+  if (h?.k === 'trash' && t !== 'bin') return dry ? { blocked: 'Take the trash bag to the alley dumpster' } : null;
 
   if (STORE_TYPES.has(t)) {
     if (h && h.k === 'box') {
@@ -167,6 +232,7 @@ export function actE(ctx, pid, dry, target) {
       if (d.store !== t) return dry ? { blocked: `That case goes in the ${name(d.store).toLowerCase()}` } : null;
       if (dry) return `Unpack ${d.case} × ${d.name.toLowerCase()}`;
       addLot(S, h.ing, d.case, d.cost);
+      addTrash(S, 1);
       p.hand = null;
       sfx(ctx, 'unpack', o);
       ctx.emit({ type: 'float', text: `+${d.case} ${d.name.toLowerCase()}`, x: o.x + 0.5, z: o.z + 0.5, to: pid });
@@ -355,16 +421,30 @@ export function actE(ctx, pid, dry, target) {
   }
 
   if (t === 'bin') {
-    if (!h) return null;
+    if (!h) {
+      if ((o.trash || 0) < TRASH_CAPACITY) return dry ? { blocked: `Bin ${(o.trash || 0)}/${TRASH_CAPACITY}` } : null;
+      if (dry) return 'Take out trash bag';
+      p.hand = { k: 'trash', n: TRASH_CAPACITY };
+      o.trash -= TRASH_CAPACITY;
+      sfx(ctx, 'pick', o);
+      return 'ok';
+    }
+    if (h.k === 'trash') {
+      if (dry) return 'Return trash bag';
+      returnTrashBag(S, h);
+      p.hand = null;
+      return 'ok';
+    }
+    if (h.k === 'dirty') return dry ? { blocked: 'Dirty plates go to the sink' } : null;
+    if (h.k === 'plate' && !h.items.length) return dry ? { blocked: 'Put clean plates back on the rack' } : null;
+    if ((o.trash || 0) >= TRASH_CAPACITY) return dry ? { blocked: 'Bin full. Take the bag out first.' } : null;
     if (h.k === 'plate') {
-      if (!h.items.length) return dry ? { blocked: 'Put clean plates back on the rack' } : null;
       if (dry) return 'Scrape the plate into the bin';
       waste(ctx, h);
       h.items = [];
       sfx(ctx, 'bin', o);
       return 'ok';
     }
-    if (h.k === 'dirty') return dry ? { blocked: 'Dirty plates go to the sink' } : null;
     if (dry) return `Throw away ${lc(itemLabel(S, h))}`;
     waste(ctx, h);
     p.hand = null;
@@ -417,6 +497,7 @@ export function actE(ctx, pid, dry, target) {
       if (h && h.n + o.dirty > 8) return dry ? { blocked: 'Too many plates to carry' } : null;
       if (dry) return `Clear ${o.dirty} dirty plate${o.dirty > 1 ? 's' : ''}`;
       creditWork(S, pid, 'bused', o.dirty);
+      addTrash(S, o.dirty);
       if (h) h.n += o.dirty; else p.hand = { k: 'dirty', n: o.dirty };
       o.dirty = 0;
       sfx(ctx, 'plateclink', o);
@@ -449,7 +530,7 @@ function wellPortion(o) {
 export function actSpace(ctx, pid, dt, dry, target) {
   const S = ctx.state;
   const p = S.players[pid];
-  if (!p) return null;
+  if (!p || playerArea(p) !== 'restaurant' || p.hand?.k === 'trash') return null;
   const o = target !== undefined ? target : findTarget(S, ctx.grid, p);
   if (!o) return null;
   if (o.type === 'board' && o.slot && o.slot.k === 'ing') {
@@ -457,7 +538,7 @@ export function actSpace(ctx, pid, dt, dry, target) {
     if (!step) return null;
     if (dry) return `Hold to ${chopVerb(step)}`;
     const speed = S.upgrades.knife ? CFG.chopSpeedKnife : 1;
-    o.slot.t += dt * speed;
+    o.slot.t += dt * speed * cookingMultiplier(S);
     p.working = o.id;
     if (o.slot.t >= step.t) {
       o.slot.st = step.to;
@@ -523,7 +604,7 @@ export function takeFromStore(ctx, pid, objId, ing) {
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
-  if (!p || !o || !STORE_TYPES.has(o.type) || !near(ctx, p, o)) return false;
+  if (!p || playerArea(p) !== 'restaurant' || !o || !STORE_TYPES.has(o.type) || !near(ctx, p, o)) return false;
   if (!ING[ing] || ING[ing].store !== o.type) return false;
   if (!canReceive(p)) return false;
   const cost = takeStock(S, ing);
@@ -542,7 +623,7 @@ export function takeDrink(ctx, pid, objId, id) {
   const S = ctx.state;
   const p = S.players[pid];
   const o = objById(S, objId);
-  if (!p || !o || o.type !== 'drinks' || !near(ctx, p, o) || p.hand) return false;
+  if (!p || playerArea(p) !== 'restaurant' || !o || o.type !== 'drinks' || !near(ctx, p, o) || p.hand) return false;
   const d = drinkById(S, id);
   const m = S.menu.drinks.find((x) => x.id === id);
   if (!d || !m || !m.on) return false;
@@ -556,7 +637,7 @@ export function takeDrink(ctx, pid, objId, id) {
 export function actQ(ctx, pid, dry) {
   const S = ctx.state;
   const p = S.players[pid];
-  if (!p) return null;
+  if (!p || playerArea(p) !== 'restaurant' || p.hand?.k === 'trash') return null;
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
   const last = p.last && p.last[o.type];
@@ -581,7 +662,7 @@ export function describe(ctx, pid) {
   const p = S.players[pid];
   if (!p) return null;
   const o = findTarget(S, ctx.grid, p);
-  const e = o ? actE(ctx, pid, true, o) : null;
+  const e = o || p.smoking ? actE(ctx, pid, true, o) : null;
   const sp = o ? actSpace(ctx, pid, 0, true, o) : null;
   const q = o ? actQ(ctx, pid, true) : null;
   return { target: o ? o.id : null, type: o ? o.type : null, e, space: sp, q };
@@ -592,6 +673,7 @@ export function describe(ctx, pid) {
 export function tickStations(ctx, dt) {
   const S = ctx.state;
   const lampMult = S.upgrades.lamp ? CFG.coldAfter / CFG.coldAfterLamp : 1;
+  const cookSpeed = cookingMultiplier(S);
   for (const o of S.objects) {
     const it = o.slot;
     if (!it) continue;
@@ -600,7 +682,7 @@ export function tickStations(ctx, dt) {
       const step = stepFor(it.ing, it.st, o.type);
       it.heat = 0;
       if (step) {
-        it.t += dt;
+        it.t += dt * cookSpeed;
         if (it.t >= step.t) {
           it.st = step.to;
           it.t = 0;
@@ -642,6 +724,7 @@ export function dropHeld(ctx, pid) {
   if (!p || !p.hand) return;
   const h = p.hand;
   p.hand = null;
+  if (h.k === 'trash') { returnTrashBag(S, h); return; }
   if (h.k === 'box') { S.objects.find((o) => o.type === 'dock').boxes.push({ ing: h.ing }); return; }
   if (h.k === 'dirty') { S.objects.find((o) => o.type === 'sink').n += h.n; return; }
   if (h.k === 'plate' && !h.items.length) { rack(S).n += 1; return; }
@@ -661,20 +744,23 @@ export function cleanup(ctx) {
     if (o.slot) {
       const it = o.slot;
       wasted += itemCost(it);
+      if (it.k !== 'box') addTrash(S, trashUnits(it));
       if (it.k === 'plate') r.n += 1;
       if (it.k === 'dirty') dirty += it.n;
       if (it.k === 'box') { S.objects.find((q) => q.type === 'dock').boxes.push({ ing: it.ing }); wasted -= itemCost(it); }
       o.slot = null;
     }
-    if (o.type === 'table') { dirty += o.dirty || 0; o.dirty = 0; o.plates = 0; o.served = []; o.party = null; }
+    if (o.type === 'table') { addTrash(S, o.dirty || 0); dirty += o.dirty || 0; o.dirty = 0; o.plates = 0; o.served = []; o.party = null; }
     if (o.type === 'sink') { dirty += o.n; o.n = 0; o.wash = 0; }
   }
   for (const p of Object.values(S.players)) {
     if (!p.hand) continue;
     const h = p.hand;
-    if (h.k === 'box') S.objects.find((q) => q.type === 'dock').boxes.push({ ing: h.ing });
+    if (h.k === 'trash') returnTrashBag(S, h);
+    else if (h.k === 'box') S.objects.find((q) => q.type === 'dock').boxes.push({ ing: h.ing });
     else {
       wasted += itemCost(h);
+      addTrash(S, trashUnits(h));
       if (h.k === 'plate') r.n += 1;
       if (h.k === 'dirty') dirty += h.n;
     }

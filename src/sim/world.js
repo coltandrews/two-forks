@@ -1,6 +1,7 @@
 // Tile grid, collision, pathfinding and placement rules. Pure functions over
 // the game state; no rendering here.
 import { TABLE_SIZE, roomSize, layoutTile, frontDoor } from '../data/layout.js';
+import { ALLEY_SIZE, ALLEY_OBSTACLES, BACK_DOOR, areaObjects } from '../data/alley.js';
 
 export function isWallChar(c) { return c === '#' || c === 'B'; }
 
@@ -11,18 +12,21 @@ export function footprint(o) {
     const s = TABLE_SIZE[o.seats];
     return { x: o.x, z: o.z, w: s.w, h: s.h };
   }
-  return { x: o.x, z: o.z, w: 1, h: 1 };
+  return { x: o.x, z: o.z, w: o.w || 1, h: o.h || 1 };
 }
 
 /** Builds the blocked grid and the tile -> object lookup. */
-export function buildGrid(state) {
-  const { width: W, height: H } = roomSize(state);
+export function buildGrid(state, area = 'restaurant') {
+  const alley = area === 'alley';
+  const { width: W, height: H } = alley ? ALLEY_SIZE : roomSize(state);
   const blocked = new Uint8Array(W * H);
   const owner = new Array(W * H).fill(null);
   for (let z = 0; z < H; z++) {
-    for (let x = 0; x < W; x++) if (isWallTile(state, x, z)) blocked[z * W + x] = 1;
+    for (let x = 0; x < W; x++) {
+      if (alley ? x === 0 || z === 0 || x === W - 1 || z === H - 1 : isWallTile(state, x, z)) blocked[z * W + x] = 1;
+    }
   }
-  for (const o of state.objects) {
+  for (const o of [...areaObjects(state, area), ...(alley ? ALLEY_OBSTACLES : [])]) {
     const f = footprint(o);
     for (let dz = 0; dz < f.h; dz++) {
       for (let dx = 0; dx < f.w; dx++) {
@@ -30,11 +34,11 @@ export function buildGrid(state) {
         if (x < 0 || z < 0 || x >= W || z >= H) continue;
         const i = z * W + x;
         blocked[i] = 1;
-        owner[i] = o.id;
+        owner[i] = o.id || null;
       }
     }
   }
-  return { width: W, height: H, blocked, owner };
+  return { width: W, height: H, blocked, owner, area: alley ? 'alley' : 'restaurant' };
 }
 
 export function walkable(grid, x, z) {
@@ -159,6 +163,7 @@ export function validateLayout(state, door = frontDoor(state)) {
     }
   }
   const grid = buildGrid(state);
+  if (!walkable(grid, BACK_DOOR.x + 1, BACK_DOOR.z)) return { ok: false, reason: 'Keep the back door clear.' };
   const seen = new Uint8Array(W * H);
   const q = [door.z * W + door.x];
   seen[q[0]] = 1;

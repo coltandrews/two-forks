@@ -2,6 +2,7 @@
 // local chef's movement, the 3D view, HUD, office and sound.
 import { CFG } from './config.js';
 import { spawnPoints } from './data/layout.js';
+import { areaObjects, movementMultiplier } from './data/alley.js';
 import { newState, deserialize, encodeSave } from './sim/state.js';
 import { collide } from './sim/world.js';
 import { describe } from './sim/kitchen.js';
@@ -113,7 +114,7 @@ class App {
     const st = this.session.state;
     const me = st.players[this.selfPid];
     const sp = me || spawnPoints(st)[0];
-    this.local = { x: sp.x, z: sp.z, rot: Math.PI, vx: 0, vz: 0 };
+    this.local = { x: sp.x, z: sp.z, rot: sp.rot ?? Math.PI, vx: 0, vz: 0, area: sp.area || 'restaurant', areaRev: sp.areaRev || 0 };
     this.lastPhase = st.phase;
     this.view.clear();
     this.overlay.clear();
@@ -165,11 +166,14 @@ class App {
     const st = this.session && this.session.state;
     if (!st) return;
     if (e.to && e.to !== this.selfPid) return;
+    const area = st.players[this.selfPid]?.area || 'restaurant';
     switch (e.type) {
-      case 'sfx': sfx(e.name); break;
+      case 'sfx': if (e.x == null || area === (e.area || 'restaurant')) sfx(e.name); break;
+      case 'areaChanged': this.syncLocalArea(st); break;
       case 'toast': this.hud.toast(e.text, e.kind); if (e.kind === 'bad') sfx('bad'); break;
       case 'picker': if (!this.hud.modalOpen || this.hud.modalKind === 'picker') this.hud.openPicker(st, e.store, e.obj); break;
       case 'float': {
+        if (area !== (e.area || 'restaurant')) break;
         let a = null;
         if (e.party) {
           const p = st.parties.find((q) => q.id === e.party);
@@ -183,11 +187,11 @@ class App {
         }
         break;
       }
-      case 'served': this.overlay.float(e.cold ? 'cold…' : e.great ? '♥ yum!' : '♥', e.x, 1.7, e.z, e.cold ? '' : 'heart'); break;
+      case 'served': if (area === 'restaurant') this.overlay.float(e.cold ? 'cold…' : e.great ? '♥ yum!' : '♥', e.x, 1.7, e.z, e.cold ? '' : 'heart'); break;
       case 'banner': this.fx.banner(e.text, e.sub, e.color, e.ms); break;
       case 'review': {
         const r = e.review;
-        if (e.x != null) this.overlay.float('★'.repeat(r.stars), e.x, 2.1, e.z, 'star');
+        if (e.x != null && area === 'restaurant') this.overlay.float('★'.repeat(r.stars), e.x, 2.1, e.z, 'star');
         if (r.stars >= 5 || r.stars <= 1 || r.critic) this.hud.toast(`${'★'.repeat(r.stars)}${'☆'.repeat(5 - r.stars)}  "${r.text}"`, r.stars >= 4 ? 'good' : 'bad', 4200);
         break;
       }
@@ -220,6 +224,7 @@ class App {
     });
     this.input.on('o', () => {
       if (!inGame() || this.office.open) return;
+      if ((this.session.state.players[this.selfPid]?.area || 'restaurant') !== 'restaurant') return;
       if (this.hud.modalKind === 'picker' && this.hud.pickerState == null) this.hud.closeModal(); else this.hud.openRush(this.session.state);
     });
     this.input.on('c', () => {
@@ -266,6 +271,10 @@ class App {
 
   openOffice() {
     if (!this.session) return;
+    if ((this.session.state.players[this.selfPid]?.area || 'restaurant') !== 'restaurant') {
+      this.hud.toast('Go inside to open the office.', 'warn');
+      return;
+    }
     this.hud.closeModal();
     this.office.show(this.session.state, this.session.state.phase === 'morning' ? 'menu' : 'report');
   }
@@ -281,7 +290,7 @@ class App {
     if (!this.session || this.session.role === 'client') return;
     const code = await encodeSave(this.session.state);
     this.hud.openSheet('pause', `<button class="icon-btn close" aria-label="Close">✕</button><h2>Save code</h2>
-      <div class="sub">Copy this somewhere safe. Paste it under Host → Import a save code on any laptop to continue from ${this.session.state.phase === 'service' || this.session.state.phase === 'closing' ? 'this morning' : 'here'}.</div>
+      <div class="sub">Use Host → Import a save code on another device.${this.session.state.phase === 'service' || this.session.state.phase === 'closing' ? ' Resumes from this morning.' : ''}</div>
       <textarea class="code" readonly>${code}</textarea><div class="stack"><button class="btn primary" data-act="copy">Copy</button></div>`);
     const ta = this.hud.modal.querySelector('textarea');
     ta.select();
@@ -314,13 +323,26 @@ class App {
 
   // ------------------------------------------------------------ frame loop
 
+  syncLocalArea(st) {
+    const p = st.players[this.selfPid];
+    if (!p) return;
+    const area = p.area || 'restaurant', areaRev = p.areaRev || 0;
+    if (this.local.area === area && this.local.areaRev === areaRev) return;
+    Object.assign(this.local, { x: p.x, z: p.z, rot: p.rot, vx: 0, vz: 0, area, areaRev });
+    this.turnToTarget = 0;
+    this.aimTarget = null;
+    if (this.hud.modalKind === 'picker') this.hud.closeModal();
+    this.overlay.clear();
+  }
+
   moveLocal(dt, st) {
     const L = this.local;
     const grid = this.session.gridFor();
     const M = CFG.move;
     const frozen = st.phase === 'office' || st.paused || this.office.open || (this.hud.modalOpen && this.hud.modalKind !== 'picker') || !this.lobby.root.hidden;
     const ax = frozen ? { x: 0, z: 0 } : this.input.axis();
-    const tvx = ax.x * M.speed, tvz = ax.z * M.speed;
+    const speed = M.speed * movementMultiplier(st, st.players[this.selfPid]);
+    const tvx = ax.x * speed, tvz = ax.z * speed;
     const k = Math.min(1, M.accel * dt / M.speed);
     L.vx += (tvx - L.vx) * k;
     L.vz += (tvz - L.vz) * k;
@@ -338,7 +360,7 @@ class App {
     if (!ax.x && !ax.z && (space || this.turnToTarget > 0) && this.aimTarget) {
       this.turnToTarget = Math.max(0, (this.turnToTarget || 0) - dt);
       const o = this.aimTarget;
-      const w = o.type === 'table' ? (o.seats === 4 ? 2 : 3) : 1, h = o.type === 'table' ? (o.seats === 4 ? 3 : 1) : 1;
+      const w = o.type === 'table' ? (o.seats === 4 ? 2 : 3) : (o.w || 1), h = o.type === 'table' ? (o.seats === 4 ? 3 : 1) : (o.h || 1);
       const cx = Math.max(o.x, Math.min(L.x, o.x + w)), cz = Math.max(o.z, Math.min(L.z, o.z + h));
       if (Math.hypot(cx - L.x, cz - L.z) > 0.05) {
         const want = Math.atan2(cx - L.x, cz - L.z);
@@ -348,7 +370,7 @@ class App {
         L.rot += d * Math.min(1, dt * 14);
       }
     }
-    this.session.setPose(L.x, L.z, L.rot, space);
+    this.session.setPose(L.x, L.z, L.rot, space, L.area, L.areaRev);
   }
 
   frame() {
@@ -374,25 +396,28 @@ class App {
       if (st0.phase !== 'office' && this.office.open && this.lastPhase === 'office') this.office.hide();
       this.lastPhase = st0.phase;
     }
+    this.syncLocalArea(st0);
     this.moveLocal(dt, st0);
     s.update(dt);
     const st = s.state;
+    this.syncLocalArea(st);
+    const area = st.players[this.selfPid]?.area || 'restaurant';
     const grid = s.gridFor();
     const ctx = s.role === 'client' ? { state: st, grid, emit() {}, time: st.t } : s.sim;
     let info = null;
     try { info = describe(ctx, this.selfPid); } catch (err) { info = null; }
     const { poses, guests } = s.poses();
     const allPoses = { ...(poses || {}) };
-    allPoses[this.selfPid] = { x: this.local.x, z: this.local.z, rot: this.local.rot };
-    this.view.sync(st, dt, { self: this.selfPid, poses: allPoses, guestPoses: guests });
-    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, target: info && (info.e || info.space || info.q) ? info.target : null });
-    this.aimTarget = info && info.target ? st.objects.find((o) => o.id === info.target) : null;
+    allPoses[this.selfPid] = { x: this.local.x, z: this.local.z, rot: this.local.rot, area, areaRev: this.local.areaRev };
+    this.view.sync(st, dt, { self: this.selfPid, area, poses: allPoses, guestPoses: guests });
+    this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, self: this.selfPid, area, target: info && (info.e || info.space || info.q) ? info.target : null });
+    this.aimTarget = info && info.target ? areaObjects(st, area).find((o) => o.id === info.target) : null;
     this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, partner: s.partner && s.role === 'host' ? s.partner.name : null, lost: s.lost }, dt);
     this.office.update(st);
     this.view.render();
     let guestsIn = 0;
     for (const p of st.parties) guestsIn += p.guests.length;
-    setCrowd(st.phase === 'service' || st.phase === 'closing' ? guestsIn : 0);
+    setCrowd(area === 'restaurant' && (st.phase === 'service' || st.phase === 'closing') ? guestsIn : 0);
   }
 }
 

@@ -3,11 +3,13 @@
 import * as THREE from 'three';
 import { CUISINES } from '../data/cuisines.js';
 import { roomSize, layoutTile } from '../data/layout.js';
+import { ALLEY_SIZE, ALLEY_OBJECTS, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, playerArea } from '../data/alley.js';
 import { footprint, seatsOf, buildGrid, walkable, isWallTile } from '../sim/world.js';
 import { itemSig } from '../sim/items.js';
 import { stepFor } from '../data/ingredients.js';
 import { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } from './models.js';
 import { buildRoom, skyColor, disposeRoom } from './room.js';
+import { buildAlley, trashBagModel, cigaretteModel } from './alley.js';
 import { itemMesh, potContents } from './food.js';
 import { Shape, MAT, meshOf } from './shape.js';
 import { mix } from './shape.js';
@@ -23,6 +25,7 @@ export class View {
   constructor(container) {
     this.container = container;
     this.dimensions = roomSize({ mode: 'arcade' });
+    this.area = 'restaurant';
     const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     r.shadowMap.enabled = true;
@@ -97,15 +100,16 @@ export class View {
 
   /** Places the overview camera so the whole room fits between the HUD bars. */
   fitOverview() {
-    const { width: RW, height: RH } = this.dimensions;
-    const pitch = THREE.MathUtils.degToRad(54);
-    const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
+    const outside = this.area === 'alley';
+    const { width: RW, height: RH } = outside ? ALLEY_SIZE : this.dimensions;
+    const pitch = THREE.MathUtils.degToRad(outside ? 49 : 54);
+    const dir = new THREE.Vector3(outside ? -0.24 : 0, Math.sin(pitch), Math.cos(pitch)).normalize();
     const cam = this.camera;
     cam.far = Math.max(120, Math.hypot(RW, RH) * 8);
     cam.updateProjectionMatrix();
     const pts = [];
     for (const x of [-0.05, RW + 0.05]) {
-      pts.push(new THREE.Vector3(x, 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, 0.5, RH + 0.05), new THREE.Vector3(x, 0, RH + 0.05));
+      pts.push(new THREE.Vector3(x, outside ? 3.75 : 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, outside ? 3.75 : 0.5, RH + 0.05), new THREE.Vector3(x, 0, RH + 0.05));
     }
     const W = this.container.clientWidth || 1;
     const mt = 0.1, mb = 0.09, ms = 0.03, ml = Math.min(0.3, (this.insetLeft || 0) / W);
@@ -176,7 +180,13 @@ export class View {
       this.world.add(this.room.root);
       this.roomKey = roomKey;
       this.layoutKey = '';
-      this.placeLights(size);
+      this.placeLights(this.area === 'alley' ? ALLEY_SIZE : size);
+    }
+    if (this.alleyKey !== state.cuisine) {
+      if (this.alley) { this.world.remove(this.alley.root); disposeTree(this.alley.root); }
+      this.alley = buildAlley(CUISINES[state.cuisine]);
+      this.world.add(this.alley.root);
+      this.alleyKey = state.cuisine;
     }
     this.layoutGuide.setState(state);
     const key = `${size.width}:${size.height}|` + state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
@@ -246,16 +256,35 @@ export class View {
 
   sync(state, dt, opts = {}) {
     this.t += dt;
+    const area = opts.area === 'alley' ? 'alley' : 'restaurant';
+    const areaChanged = area !== this.area;
+    if (areaChanged) {
+      if (area === 'alley') this.restaurantZoom = this.zoomTarget;
+      this.area = area;
+      this.zoom = this.zoomTarget = area === 'alley' ? 1 : (this.restaurantZoom ?? DEFAULT_ZOOM);
+      this.camMode = this.zoomTarget > 0.02 ? 'follow' : 'overview';
+      this.snapCamera = true;
+    }
     this.ensureLayout(state);
     this.state = state;
+    if (areaChanged) {
+      this.placeLights(area === 'alley' ? ALLEY_SIZE : this.dimensions);
+      this.fitOverview();
+      this.camPos.copy(this.overview.pos);
+      this.camLook.copy(this.overview.look);
+    }
+    const inside = this.area === 'restaurant';
+    this.room.root.visible = inside;
+    this.alley.root.visible = !inside;
+    this.contacts.staticLayer.visible = inside;
     for (const o of state.objects) {
       const e = this.objs.get(o.id);
-      if (e) this.syncObject(e, o, state, dt);
+      if (e) { e.group.visible = inside; this.syncObject(e, o, state, dt); }
     }
     this.syncPeople(state, dt, opts);
     this.contacts.syncPeople(this.chefs, this.guests);
     this.syncLighting(state, dt);
-    this.particles.update(dt);
+    this.particles.update(dt, this.area);
     this.updateCamera(dt, opts);
   }
 
@@ -284,7 +313,7 @@ export class View {
         if (e.dyn.glow) e.dyn.glow.material.opacity += ((active ? 0.85 + Math.sin(t * 9) * 0.1 : 0) - e.dyn.glow.material.opacity) * Math.min(1, dt * 6);
         if (e.dyn.basket) e.dyn.basket.position.y = COUNTER_H + (active ? -0.08 : 0.03);
         if (o.type === 'oven' && e.item) e.item.visible = true;
-        if (active) {
+        if (active && this.area === 'restaurant') {
           const burning = it.over > 0 && o.type !== 'pot' && it.q < 1;
           e.puff = (e.puff || 0) - dt;
           if (e.puff <= 0) {
@@ -292,7 +321,7 @@ export class View {
             const p = e.group.position;
             this.particles.puff(p.x + (Math.random() - 0.5) * 0.3, e.slotY + 0.15, p.z + (Math.random() - 0.5) * 0.3, burning ? 0x3a3432 : 0xf4f0ea, burning ? 0.7 : 0.45);
           }
-        } else if (it && it.st === 'burnt') {
+        } else if (it && it.st === 'burnt' && this.area === 'restaurant') {
           e.puff = (e.puff || 0) - dt;
           if (e.puff <= 0) { e.puff = 0.1; const p = e.group.position; this.particles.puff(p.x, e.slotY + 0.2, p.z, 0x2a2624, 0.9); }
         }
@@ -342,7 +371,21 @@ export class View {
           e.item = o.n ? itemMesh(state, { k: 'dirty', n: Math.min(o.n, 8) }, 1) : null;
           if (e.item) { e.item.position.set(0, -0.02, 0.05); e.slot.add(e.item); }
         }
-        if (o.wash > 0 && Math.random() < dt * 8) { const p = e.group.position; this.particles.puff(p.x, COUNTER_H + 0.1, p.z, 0xd8eef8, 0.3, true); }
+        if (this.area === 'restaurant' && o.wash > 0 && Math.random() < dt * 8) { const p = e.group.position; this.particles.puff(p.x, COUNTER_H + 0.1, p.z, 0xd8eef8, 0.3, true); }
+        break;
+      }
+      case 'bin': {
+        const full = (o.trash || 0) >= TRASH_CAPACITY;
+        if (e.sig !== String(full)) {
+          e.sig = String(full);
+          if (e.item) { e.slot.remove(e.item); disposeTree(e.item); e.item = null; }
+          if (full) {
+            e.item = trashBagModel();
+            e.item.scale.setScalar(0.7);
+            e.item.position.y = 0.65;
+            e.slot.add(e.item);
+          }
+        }
         break;
       }
       case 'dock': {
@@ -407,7 +450,12 @@ export class View {
         c = { m, lookKey, x: p.x, z: p.z, rot: p.rot, sig: '', item: null };
         this.chefs.set(pid, c);
       }
-      const pose = poses[pid] || p;
+      const area = playerArea(p);
+      const pose = poses[pid] && playerArea(poses[pid]) === area ? poses[pid] : p;
+      if (c.area !== area || c.areaRev !== p.areaRev) { c.x = pose.x; c.z = pose.z; c.rot = pose.rot; }
+      c.area = area;
+      c.areaRev = p.areaRev;
+      c.m.root.visible = area === this.area;
       const px = c.x, pz = c.z;
       const k = pid === opts.self ? 1 : Math.min(1, dt * 14);
       c.x += (pose.x - c.x) * k;
@@ -419,10 +467,56 @@ export class View {
       const sig = p.hand ? itemSig(p.hand) : '';
       if (sig !== c.sig) {
         c.sig = sig;
-        if (c.item) { c.m.hand.remove(c.item); c.item = null; }
-        if (p.hand) { c.item = itemMesh(state, p.hand, 1.05); c.m.hand.add(c.item); }
+        if (c.item) { c.m.hand.remove(c.item); disposeTree(c.item); c.item = null; }
+        if (p.hand) { c.item = p.hand.k === 'trash' ? trashBagModel() : itemMesh(state, p.hand, 1.05); c.m.hand.add(c.item); }
       }
       animatePerson(c.m, { speed, dt, carrying: !!p.hand, working: !!p.working, t: this.t });
+      const arm = c.m.arms[1];
+      arm.rotation.z = 0;
+      arm.scale.y = 1;
+      if (!c.cigarette) {
+        c.cigarette = cigaretteModel();
+        c.m.body.add(c.cigarette);
+      }
+      c.cigarette.visible = !!p.smoking;
+      if (p.smoking) {
+        const age = Math.max(0, SMOKE_SECONDS - p.smoking.left);
+        const cycle = age % 6, cycleId = Math.floor(age / 6);
+        const canGesture = !p.hand && !p.working;
+        c.cigarette.position.set(0.025, c.m.top + 0.71, 0.15);
+        c.cigarette.rotation.set(-0.08, 0, -0.06);
+        if (canGesture && cycle >= 2.4 && cycle < 5.8) {
+          const reach = THREE.MathUtils.smoothstep(cycle, 2.4, 3) * (1 - THREE.MathUtils.smoothstep(cycle, 5.2, 5.8));
+          const away = THREE.MathUtils.smoothstep(cycle, 3, 3.6) * (1 - THREE.MathUtils.smoothstep(cycle, 4.6, 5.2));
+          arm.rotation.x = THREE.MathUtils.lerp(arm.rotation.x, -2.46 + away * 1.25, reach);
+          arm.rotation.z = (-0.83 + away * 0.68) * reach;
+          arm.scale.y = 1 - 0.23 * reach;
+          if (cycle >= 3 && cycle < 5.2) {
+            arm.updateWorldMatrix(true, false);
+            arm.localToWorld(_v.set(0, -0.47, 0.015));
+            c.m.body.worldToLocal(_v);
+            c.cigarette.position.copy(_v);
+          }
+        }
+        if (c.m.root.visible) {
+          c.smokePuff = (c.smokePuff || 0) - dt;
+          if (c.smokePuff <= 0) {
+            c.smokePuff = 0.45;
+            c.cigarette.updateWorldMatrix(true, false);
+            c.cigarette.localToWorld(_v.set(0, 0, 0.27));
+            this.particles.puff(_v.x, _v.y, _v.z, 0xe2ded4, 0.25, false, area);
+          }
+          if (cycle >= 3.6 && c.exhaleCycle !== cycleId) {
+            c.exhaleCycle = cycleId;
+            c.m.body.updateWorldMatrix(true, false);
+            c.m.body.localToWorld(_v.set(0, c.m.top + 0.72, 0.24));
+            this.particles.exhale(_v.x, _v.y, _v.z, c.rot, area);
+          }
+        }
+      } else {
+        c.exhaleCycle = null;
+        c.smokePuff = 0;
+      }
     }
     for (const [pid, c] of this.chefs) if (!seen.has(pid)) { this.world.remove(c.m.root); disposeTree(c.m.root); this.chefs.delete(pid); }
 
@@ -441,6 +535,7 @@ export class View {
           this.guests.set(g.id, c);
         }
         const pose = (gpos && gpos[g.id]) || g;
+        c.m.root.visible = this.area === 'restaurant';
         const px = c.x, pz = c.z;
         const k = Math.min(1, dt * 12);
         c.x += (pose.x - c.x) * k;
@@ -465,7 +560,8 @@ export class View {
     const target = 1.2 - evening * 0.35;
     this.hemi.intensity += (target - this.hemi.intensity) * Math.min(1, dt * 2);
     this.sun.intensity += ((2.0 - evening * 1.35) - this.sun.intensity) * Math.min(1, dt * 2);
-    for (const l of this.lamps) l.intensity += ((evening * 12) - l.intensity) * Math.min(1, dt * 2);
+    for (const l of this.lamps) l.intensity += ((this.area === 'restaurant' ? evening * 12 : 0) - l.intensity) * Math.min(1, dt * 2);
+    for (const l of this.alley.lights) l.intensity = 2 + evening * 5;
   }
 
   setCameraMode(mode) {
@@ -481,7 +577,7 @@ export class View {
 
   updateCamera(dt, opts) {
     if (!this.overview) return;
-    const { width: RW, height: RH } = this.dimensions;
+    const { width: RW, height: RH } = this.area === 'alley' ? ALLEY_SIZE : this.dimensions;
     if (this.zoom == null) { this.zoom = 0; }
     if (this.zoomTarget == null) this.zoomTarget = DEFAULT_ZOOM;
     this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, dt * 8);
@@ -506,7 +602,8 @@ export class View {
       : THREE.MathUtils.lerp(followDistance, closeDistance, (z - DEFAULT_ZOOM) / (1 - DEFAULT_ZOOM));
     const pos = this._pos || (this._pos = new THREE.Vector3());
     pos.copy(look).addScaledVector(dir, dist);
-    const k = Math.min(1, dt * 6);
+    const k = this.snapCamera ? 1 : Math.min(1, dt * 6);
+    this.snapCamera = false;
     this.camPos.lerp(pos, k);
     this.camLook.lerp(look, k);
     this.camera.position.copy(this.camPos);
@@ -570,6 +667,11 @@ export class View {
 
   /** World position of an object's slot (for overlay markers). */
   anchorOf(id) {
+    if (this.area === 'alley') {
+      const o = ALLEY_OBJECTS.find((item) => item.id === id);
+      return o ? { x: o.x + (o.type === 'backdoor' ? 0.1 : (o.w || 1) / 2), y: o.type === 'backdoor' ? 2.5 : 1.8, z: o.z + (o.h || 1) / 2 } : null;
+    }
+    if (id === BACK_DOOR.id) return { x: BACK_DOOR.x + 0.95, y: 2.5, z: BACK_DOOR.z + 0.5 };
     const e = this.objs.get(id);
     if (!e) return null;
     if (e.type === 'table') {
@@ -583,22 +685,25 @@ export class View {
 
   chefAnchor(pid) {
     const c = this.chefs.get(pid);
-    return c ? { x: c.x, y: 2.35, z: c.z } : null;
+    return c && c.m.root.visible ? { x: c.x, y: 2.35, z: c.z } : null;
   }
 
   guestAnchor(id) {
     const c = this.guests.get(id);
-    return c ? { x: c.x, y: 1.9, z: c.z } : null;
+    return c && c.m.root.visible ? { x: c.x, y: 1.9, z: c.z } : null;
   }
 
   clear() {
     for (const [, e] of this.objs) { this.world.remove(e.group); disposeTree(e.group); }
     this.objs.clear();
-    for (const [, c] of this.chefs) this.world.remove(c.m.root);
+    for (const [, c] of this.chefs) { this.world.remove(c.m.root); disposeTree(c.m.root); }
     this.chefs.clear();
-    for (const [, c] of this.guests) this.world.remove(c.m.root);
+    for (const [, c] of this.guests) { this.world.remove(c.m.root); disposeTree(c.m.root); }
     this.guests.clear();
     if (this.room) { this.world.remove(this.room.root); disposeRoom(this.room); this.room = null; }
+    if (this.alley) { this.world.remove(this.alley.root); disposeTree(this.alley.root); this.alley = null; }
+    this.alleyKey = '';
+    this.particles.clear();
     this.contacts.clear();
     this.layoutKey = ''; this.roomKey = '';
   }
@@ -747,6 +852,7 @@ class ContactShadows {
     let n = 0;
     for (const people of [chefs, guests]) {
       for (const [, person] of people) {
+        if (!person.m.root.visible) continue;
         if (n >= this.peopleLayer.instanceMatrix.count) break;
         this.set(this.peopleLayer, n++, person.x, person.z, 0.62, 0.42);
       }
@@ -769,41 +875,63 @@ class Particles {
     this.pool = [];
     this.live = [];
     this.geo = new THREE.IcosahedronGeometry(0.09, 0);
+    this.smokeGeo = new THREE.SphereGeometry(0.09, 7, 5);
     this.scene = scene;
   }
-  puff(x, y, z, color, size = 0.5, small = false) {
+  puff(x, y, z, color, size = 0.5, small = false, area = 'restaurant') {
     let p = this.pool.pop();
     if (!p) {
       p = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false }));
       this.scene.add(p);
     }
     p.material.color.setHex(color);
+    p.geometry = this.geo;
     p.visible = true;
     p.position.set(x, y, z);
     p.userData.life = 0;
+    p.userData.area = area;
     p.userData.max = small ? 0.5 : 1.2;
     p.userData.size = size * (small ? 0.5 : 1);
+    p.userData.opacity = 0.48;
+    p.userData.rise = 0.58;
     p.userData.vx = (Math.random() - 0.5) * 0.2;
     p.userData.vz = (Math.random() - 0.5) * 0.2;
     p.userData.wobble = Math.random() * Math.PI * 2;
     p.userData.spin = (Math.random() - 0.5) * 1.8;
     this.live.push(p);
   }
-  update(dt) {
+  exhale(x, y, z, rot, area) {
+    for (let i = 0; i < 3; i++) {
+      this.puff(x + Math.sin(rot) * i * 0.05, y + i * 0.035, z + Math.cos(rot) * i * 0.05, 0xe5e3d9, 1.15 - i * 0.12, false, area);
+      const p = this.live[this.live.length - 1];
+      p.geometry = this.smokeGeo;
+      p.userData.max = 1.8;
+      p.userData.opacity = 0.22;
+      p.userData.rise = 0.65;
+      p.userData.vx = Math.sin(rot) * 0.18 + (i - 1) * 0.05;
+      p.userData.vz = Math.cos(rot) * 0.18;
+    }
+  }
+  update(dt, area) {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const p = this.live[i];
       const u = p.userData;
+      p.visible = u.area === area;
       u.life += dt;
       const t = u.life / u.max;
       if (t >= 1) { p.visible = false; this.live.splice(i, 1); this.pool.push(p); continue; }
       p.position.x += u.vx * dt;
       p.position.z += u.vz * dt;
-      p.position.y += dt * (0.58 + t * 0.25);
+      p.position.y += dt * (u.rise + t * 0.25);
       p.position.x += Math.sin(u.life * 5 + u.wobble) * dt * 0.035;
       p.rotation.y += u.spin * dt;
       const grow = u.size * (0.55 + t * 1.45);
       p.scale.set(grow * (0.82 + t * 0.18), grow * (1.0 + t * 0.55), grow * (0.82 + t * 0.18));
-      p.material.opacity = 0.48 * (1 - t) * (smallFade(t));
+      p.material.opacity = u.opacity * (1 - t) * (smallFade(t));
     }
+  }
+  clear() {
+    for (const p of this.live) { p.visible = false; this.pool.push(p); }
+    this.live.length = 0;
   }
 }

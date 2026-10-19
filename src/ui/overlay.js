@@ -3,6 +3,7 @@
 import { CFG } from '../config.js';
 import { stepFor } from '../data/ingredients.js';
 import { HEAT_TYPES } from '../data/layout.js';
+import { playerArea, TRASH_CAPACITY, cookingMultiplier } from '../data/alley.js';
 
 const ICON = {
   menu: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2"/></svg>',
@@ -64,10 +65,11 @@ export class Overlay {
   /** extra: seconds since the last snapshot, so client rings move smoothly. */
   update(state, opts = {}) {
     this.frame++;
+    const area = opts.area || playerArea(state.players[opts.self]);
     const extra = opts.extra || 0;
     const showAll = state.phase !== 'office';
     for (const o of state.objects) {
-      if (!showAll) break;
+      if (!showAll || area === 'alley') break;
       const a = this.view.anchorOf(o.id);
       if (!a) continue;
       if (HEAT_TYPES.has(o.type) && o.slot && o.slot.k === 'ing') {
@@ -78,7 +80,7 @@ export class Overlay {
         else {
           const step = stepFor(it.ing, it.st, o.type);
           if (step) {
-            const p = Math.min(1, (it.t + extra) / step.t);
+            const p = Math.min(1, (it.t + extra * cookingMultiplier(state)) / step.t);
             e.style.setProperty('--p', (p * 100).toFixed(1));
             cls += ' cooking';
             h = it.n > 1 ? `<b>${it.n}</b>` : '';
@@ -118,6 +120,10 @@ export class Overlay {
         const e = this.el(o.id, 'badge dockb');
         this.html(e, `${o.boxes.length} case${o.boxes.length > 1 ? 's' : ''}`);
         this.place(e, { ...a, y: 1.2 + Math.min(3, Math.ceil(o.boxes.length / 4)) * 0.3 });
+      } else if (o.type === 'bin' && o.trash >= TRASH_CAPACITY) {
+        const e = this.el(o.id, 'badge low');
+        this.html(e, 'Trash full');
+        this.place(e, a);
       } else if (o.type === 'rack' && o.n <= 3) {
         const e = this.el(o.id, 'badge low');
         this.html(e, o.n ? `${o.n} plates` : 'No plates!');
@@ -148,6 +154,7 @@ export class Overlay {
     }
     // Chef name tags.
     for (const [pid, p] of Object.entries(state.players)) {
+      if (playerArea(p) !== area) continue;
       const e = this.el('chef:' + pid, 'tag');
       const col = p.look.apron ? p.look.apronColor : p.look.shirt;
       this.html(e, `<span style="--c:${col}">${esc(p.name)}</span>`);
@@ -155,6 +162,7 @@ export class Overlay {
     }
     // Following parties show above their first guest.
     for (const party of state.parties) {
+      if (area === 'alley') break;
       if (party.state !== 'following') continue;
       const e = this.el('follow:' + party.id, 'bubble small');
       this.html(e, `<span class="ic">${ICON.dots}</span><span>Party of ${party.size}</span>`);

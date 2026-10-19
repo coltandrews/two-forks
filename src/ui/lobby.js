@@ -96,48 +96,46 @@ export class Lobby {
     const prof = this.app.profile;
     switch (this.screen) {
       case 'title':
-        h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1><p>A cozy restaurant for two chefs. Cook together, keep the tables happy, and read the P&amp;L every night.</p></div>
+        h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1></div>
         <div class="choices">
-          <button class="choice" data-act="host"><h3>Host a restaurant</h3><p>Open your kitchen and get a 4-letter code for your partner. Your laptop keeps the save.</p><span class="go">Open the kitchen →</span></button>
-          <button class="choice" data-act="joinscr"><h3>Join your partner</h3><p>Type the code from the host's screen and step into their kitchen.</p><span class="go">Enter a code →</span></button>
-          <button class="choice" data-act="solo"><h3>Practice solo</h3><p>Run the place alone. Fewer guests come in so it stays manageable.</p><span class="go">Cook alone →</span></button>
+          <button class="choice" data-act="host"><h3>Host a restaurant</h3><p>Saved on this device.</p></button>
+          <button class="choice" data-act="joinscr"><h3>Join a restaurant</h3><p>Use the host's room code.</p></button>
+          <button class="choice" data-act="solo"><h3>Play solo</h3><p>Fewer guests.</p></button>
         </div>
-        <div class="lobby-foot"><div class="me">${prof && prof.name ? `Cooking as <b>${esc(prof.name)}</b>` : 'No chef yet'} <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Make your chef'}</button></div>
-        <span class="hint-line" style="margin-left:auto">WASD to move · E to grab · Space to work</span></div>`;
+        <div class="lobby-foot"><div class="me">${prof && prof.name ? `<b>${esc(prof.name)}</b>` : ''} <button class="btn small" data-act="chef">${prof && prof.name ? 'Change chef' : 'Create chef'}</button></div></div>`;
         break;
       case 'saves': {
         const saves = listSaves();
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Practice solo' : 'Host a restaurant'}</h1><p>Pick up where you left off, or open somewhere new.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Play solo' : 'Host a restaurant'}</h1></div>
         <div class="saves">${saves.map((s) => {
           const c = CUISINES[s.cuisine];
           return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)} <small class="mode-badge ${s.mode === 'story' ? 'story' : ''}">${s.mode === 'story' ? 'STORY' : 'ARCADE'}</small></b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
-        }).join('') || '<div class="hint-line">No saved restaurants on this laptop yet.</div>'}</div>
+        }).join('') || '<div class="hint-line">No saved restaurants.</div>'}</div>
         <div class="lobby-foot"><button class="btn primary" data-act="new">Open a new restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
         break;
       }
       case 'new': {
         const c = CUISINES[this.pick];
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">New restaurant</h1><p>Cuisine cannot be changed later.</p></div>
         <div class="mode-choices" aria-label="Game mode">
-          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600, a kitchen, and a small dining room. Earn XP, buy equipment, and expand your floor space.</span></button>
-          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>The full building and menu are open. Design and run your restaurant at your own pace.</span></button>
+          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start small with $600. Unlock recipes, equipment, and floor space.</span></button>
+          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>Full floor space and all recipes unlocked.</span></button>
         </div>
-        ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : '<p class="hint-line">Four chapters · About 20 days · Shared progress · Setbacks without a game over</p>'}
+        ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : ''}
         <div class="cuisines">${CUISINE_ORDER.map((id) => {
           const z = CUISINES[id];
           const p = z.palette;
           const sw = [p.wall, p.floorA, p.counter, p.accent, p.accent2].map((x) => `<i style="background:#${x.toString(16).padStart(6, '0')}"></i>`).join('');
-          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}"><div class="sw">${sw}</div><div class="tx"><small>${esc(z.style)}</small><b>${esc(z.name)}</b><p>${esc(z.blurb)}</p></div></button>`;
+          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}"><div class="sw">${sw}</div><div class="tx"><b>${esc(z.style)}</b></div></button>`;
         }).join('')}</div>
         <div class="field"><label>Restaurant name</label><input data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
-        <div class="hint-line">${this.gameMode === 'story' ? 'Start with two mains, one starter, and two drinks. Earn Chef Levels to open more recipes and equipment.' : 'Every recipe is available from day one. Choose which dishes to put on your menu.'}</div>
         <div class="lobby-foot"><button class="btn primary" data-act="create">Open ${esc(this.pickName || c.name)}</button></div>`;
         break;
       }
       case 'join':
-        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">Join your partner</h1><p>Ask them for the room code in the bottom-right corner of their screen.</p></div>
+        h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">Join a restaurant</h1><p>The room code is at the bottom-right of the host's screen.</p></div>
         <div class="field" style="max-width:360px;margin:16px auto"><input class="codein" data-in="code" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false" value="${esc(this.code || '')}"></div>
-        <div style="text-align:center"><button class="btn primary" data-act="join" ${this.joining ? 'disabled' : ''}>${this.joining ? '<span class="spinner"></span>Knocking on the back door…' : 'Join the kitchen'}</button><p class="err">${esc(this.err || '')}</p></div>`;
+        <div style="text-align:center"><button class="btn primary" data-act="join" ${this.joining ? 'disabled' : ''}>${this.joining ? '<span class="spinner"></span>Joining…' : 'Join'}</button><p class="err">${esc(this.err || '')}</p></div>`;
         break;
       case 'import':
         h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">Import a save code</h1><p>Paste a code from the Restaurant tab or the pause menu.</p></div>
@@ -175,7 +173,7 @@ export class Lobby {
     const L = p.look;
     const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}"></button>`).join('')}</div>`;
     const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0">Off</button></span>`;
-    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 class="small">${this.firstChef ? 'Before you clock in' : 'Your chef'}</h1><p>Your partner sees this chef in their kitchen too.</p></div>
+    return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 class="small">${this.firstChef ? 'Create chef' : 'Your chef'}</h1></div>
       <div class="chef-ed"><div class="chef-prev" id="chef-prev"></div><div class="opts">
         <div class="field" style="margin-top:0"><label>Chef name</label><input data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
         <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>
