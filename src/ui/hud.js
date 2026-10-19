@@ -31,7 +31,7 @@ function stepTime(step, state) {
   const base = step.t / (step.at === 'board' && state.upgrades.knife ? CFG.chopSpeedKnife : 1);
   const speed = cookingMultiplier(state), time = base / speed;
   const seconds = (value) => Math.round(value * 10) / 10;
-  return `${seconds(time)}s${speed > 1 ? ` (−${seconds(base - time)}s smoking)` : ''}`;
+  return `${seconds(time)}s${speed > 1 ? ` (−${seconds(base - time)}s 🚬)` : ''}`;
 }
 
 /** Station steps from raw to a state, as readable text. */
