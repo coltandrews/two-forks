@@ -18,7 +18,7 @@ export const UPGRADES = [
   { id: 'table4', name: 'Extra 4-top table', price: 400, max: 3, table: 4, desc: 'Seats four more guests per turn.', group: 'Dining room' },
   { id: 'menu_board', name: 'Bigger menu board', price: 300, max: 1, desc: 'Two more mains and one more starter on the menu.', group: 'Dining room' },
   { id: 'decor1', name: 'Plants and art', price: 250, max: 1, desc: 'Guests start 4 points happier.', group: 'Dining room', decor: 1 },
-  { id: 'decor2', name: 'Lighting and music', price: 600, max: 1, desc: 'Guests start another 4 points happier.', group: 'Dining room', decor: 2, needs: 'decor1' },
+  { id: 'decor2', name: 'Music system', price: 600, max: 1, desc: 'Guests start another 4 points happier.', group: 'Dining room', decor: 2, needs: 'decor1' },
   { id: 'decor3', name: 'Full renovation', price: 1200, max: 1, desc: 'Guests start another 4 points happier and tip a bit more.', group: 'Dining room', decor: 3, needs: 'decor2' },
 ];
 

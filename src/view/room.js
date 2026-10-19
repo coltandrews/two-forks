@@ -1,4 +1,4 @@
-// The building shell: floors, walls, windows, the name sign, lights and the
+// The building shell: floors, walls, windows, the name sign and the
 // cuisine's decor. Rebuilt when the layout or decor upgrades change.
 import * as THREE from 'three';
 import { Shape, MAT, meshOf, shade, mix } from './shape.js';
@@ -130,7 +130,6 @@ export function buildRoom(cuisine, name, upgrades, state) {
         if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
         else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
       }
-      glow.box(width * 0.86, 0.05, 0.08, 0xfffbf0, cx, 2.72, 1.1);
     }
   }
 
@@ -166,7 +165,7 @@ export function buildRoom(cuisine, name, upgrades, state) {
   s.box(0.06, 0.6, 0.06, 0x5a4a3a, door.x + 1.05, 0.75, door.z + 0.5);
 
   // Cuisine decor and upgrades.
-  decor(s, glow, cuisine, pal, upgrades, W, H, state.mode === 'story' ? (state.building?.divider?.to || 12) : 12);
+  decor(s, glow, cuisine, pal, upgrades, W, H);
 
   root.add(meshOf(s, MAT.solid, false, true));
   if (glow.parts.length) root.add(new THREE.Mesh(glow.build(), MAT.glow));
@@ -204,35 +203,22 @@ function plant(s, x, z, big = 1) {
   }
 }
 
-function decor(s, glow, cuisine, pal, up, W, H, openingEnd) {
+function decor(s, glow, cuisine, pal, up, W, H) {
   const id = cuisine.id;
   const L = 1.02, R = W - 1.02;
   // Move accents with the walls; keep each primitive at its original scale.
-  const X = (x) => 1 + (x - 1) * (W - 2) / 18;
   const Z = (z) => 6 + (z - 6) * (H - 7) / 8;
   frame(s, L, 1.7, Z(9), 0.9, 0.7, pal.accent, 1);
   frame(s, R, 1.7, Z(9), 0.9, 0.7, pal.accent2, -1);
   if (id === 'southern') {
     for (const z of [6.4, 12.6]) plant(s, 1.4, Z(z), 0.9);
-    for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, X(x), 2.55, Z(9.6)); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, X(x), 2.25, Z(9.6)); }
-    for (const x of [6, 14]) {
-      s.cyl(0.035, 0.035, 0.3, 7, 0x594435, X(x), 2.62, Z(10.6));
-      s.cyl(0.11, 0.13, 0.08, 8, 0x6f5038, X(x), 2.45, Z(10.6));
-      s.box(1.35, 0.045, 0.14, 0x7b593e, X(x), 2.43, Z(10.6), 0, 0.28);
-      s.box(1.35, 0.045, 0.14, 0x7b593e, X(x), 2.43, Z(10.6), 0, Math.PI / 2 + 0.28);
-    }
     s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, Z(12.4));
   } else if (id === 'italian') {
-    const bulbs = Math.ceil(W * 0.9);
-    for (let i = 0; i < bulbs; i++) { const t = i / (bulbs - 1); glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * (W - 3), 2.6 - Math.sin(t * Math.PI) * 0.35, Z(6.4)); }
     for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, Z(12.15) + (j - 1) * 0.15, 0, 0, Math.PI / 2);
     s.box(0.04, 1.3, 0.6, 0x6a4a2a, R, 1.35, Z(12.15));
-    for (const x of [6, 10, 14]) { s.cyl(0.012, 0.012, 0.38, 5, 0x3b3029, X(x), 2.62, Z(10.4)); glow.cone(0.17, 0.18, 10, 0xffcf82, X(x), 2.35, Z(10.4)); }
     for (const z of [6.7, 11.8]) { s.box(0.045, 1.15, 0.66, 0x6d4a31, L, 1.5, Z(z)); s.torus(0.32, 0.035, pal.accent, L + 0.025, 2.05, Z(z), 0, Math.PI / 2, 0, Math.PI, 12); }
   } else if (id === 'mexican') {
     const colors = [0xe0407a, 0xf2c030, 0x2a9a8e, 0xf07830, 0x8a4ac8];
-    const flags = Math.max(4, Math.floor((W - 4) / 1.05));
-    for (const zz of [7, 10, 12.6]) for (let i = 0; i < flags; i++) s.box(0.3, 0.3, 0.018, colors[i % 5], 2 + i * (W - 4) / (flags - 1), 2.45, Z(zz), 0, 0, Math.PI / 4);
     for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 0.18, 0.3, colors[i % 5], x, 0.72, Z(6.3 + i * 0.5));
     plant(s, 1.4, Z(6.4), 0.8);
     s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, Z(12.8));
@@ -242,15 +228,7 @@ function decor(s, glow, cuisine, pal, up, W, H, openingEnd) {
     s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, Z(6.4));
     glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1, Z(6.4) + 0.26);
     for (const x of [L, R]) { s.box(0.05, 0.06, 7.1 * (H - 7) / 8, 0xc8d0d3, x, 0.8, Z(9.7)); s.box(0.052, 0.035, 7.1 * (H - 7) / 8, pal.accent, x, 0.88, Z(9.7)); }
-    for (const x of [5.5, 10, 14.5]) glow.box(1.8, 0.045, 0.1, 0xfff0cf, X(x), 2.58, Z(10.4));
   } else if (id === 'noodle') {
-    for (const [x, z] of [[4, 8.5], [10, 8.5], [16, 8.5], [7, 11.5], [13, 11.5]]) {
-      s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, X(x), 2.6, Z(z));
-      glow.sphere(0.2, 0xff5a3a, X(x), 2.25, Z(z), 1, 1.25, 1, 8);
-      s.cyl(0.12, 0.12, 0.04, 8, 0x2a1e18, X(x), 2.5, Z(z));
-    }
-    // The opening stays in the same place when the room expands.
-    for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, openingEnd - 1.75 + i * 0.5, 2, 5.5);
     for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, Z(6.3 + i * 0.52));
     for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, Z(z)); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, Z(z)); }
   }
@@ -260,15 +238,8 @@ function decor(s, glow, cuisine, pal, up, W, H, openingEnd) {
     frame(s, L, 1.6, Z(12.2), 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
   }
   if (up.decor2) {
-    for (const x of [5, 9, 13, 17]) {
-      s.cyl(0.004, 0.004, 0.45, 3, 0x2a2a2a, X(x), 2.6, Z(11.2));
-      glow.cone(0.16, 0.14, 8, 0xffd890, X(x), 2.32, Z(11.2));
-    }
-    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.25, 2.3, Z(6.3));
-  }
-  if (up.decor3) {
-    glow.sphere(0.25, 0xfff0c0, W / 2, 2.3, Z(9.2), 1, 0.6, 1, 8);
-    s.cyl(0.4, 0.3, 0.1, 10, 0xc8a050, W / 2, 2.45, Z(9.2));
+    // The speaker meets the side wall; the room has no visible ceiling.
+    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.125, 2.3, Z(6.3));
   }
 }
 

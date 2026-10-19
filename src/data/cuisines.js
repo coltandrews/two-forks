@@ -81,7 +81,7 @@ export const CUISINES = {
     id: 'mexican',
     name: 'Dos Tenedores Taquería',
     style: 'Taquería',
-    blurb: 'Tacos four ways, elote off the grill and churros with chocolate under papel picado.',
+    blurb: 'Tacos four ways, elote off the grill and churros with chocolate among bright tile accents.',
     palette: {
       wall: 0xf4e3c4, trim: 0x2a9a8e, floorA: 0xc87048, floorB: 0xb8623e, kitchenA: 0xf0e8dc, kitchenB: 0x7ac0b8,
       counter: 0x2a8a80, top: 0xf2ece0, accent: 0xe0407a, accent2: 0xf2c030, table: 0x8a5a34, cloth: null, chair: 0x2a8a80,
@@ -152,7 +152,7 @@ export const CUISINES = {
     id: 'noodle',
     name: 'Two Chopsticks Noodle Bar',
     style: 'Noodle bar',
-    blurb: 'Ramen bowls, crispy gyoza and katsu curry under red paper lanterns.',
+    blurb: 'Ramen bowls, crispy gyoza and katsu curry with warm wood walls.',
     palette: {
       wall: 0xe8dcc6, trim: 0x3a2a22, floorA: 0x7a5a3e, floorB: 0x6a4c34, kitchenA: 0xe6e2da, kitchenB: 0xa8a29a,
       counter: 0x3a2a22, top: 0xd8c8a8, accent: 0xc8302a, accent2: 0x2a4a5a, table: 0x5a4030, cloth: null, chair: 0x2a1e18,
