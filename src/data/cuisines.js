@@ -119,9 +119,9 @@ export const CUISINES = {
     style: 'Classic diner',
     blurb: 'Burgers, pancakes all day, patty melts and pie under neon and chrome.',
     palette: {
-      wall: 0xf2ece0, trim: 0xc8282e, floorA: 0xf2ede4, floorB: 0x24262a, kitchenA: 0xe8eaec, kitchenB: 0xb8c0c8,
-      counter: 0xc8282e, top: 0xd8dde2, accent: 0xc8282e, accent2: 0x3ab0c8, table: 0xd8dde2, cloth: null, chair: 0xc8282e,
-      lamp: 0xfff0d0, ui: '#c8282e', uiDark: '#1e2228',
+      wall: 0xe1d9c9, trim: 0x5e7d78, floorA: 0xc9c2b4, floorB: 0xa5afa8, kitchenA: 0xd8d9cf, kitchenB: 0xbfc7c3,
+      counter: 0x557e7b, top: 0xc7ccca, accent: 0xa75f54, accent2: 0x789995, table: 0xcdd1cc, cloth: null, chair: 0xa75f54,
+      lamp: 0xe2c68d, ui: '#95564d', uiDark: '#344b49',
     },
     decor: 'diner',
     drinks: [

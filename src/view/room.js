@@ -223,11 +223,11 @@ function decor(s, glow, cuisine, pal, up, W, H) {
     plant(s, 1.4, Z(6.4), 0.8);
     s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, Z(12.8));
   } else if (id === 'diner') {
-    glow.box(0.04, 0.5, Math.min(2, H - 9), 0xff3a4a, R - 0.03, 2.2, Z(12));
-    glow.box(0.04, 0.06, Math.min(2.2, H - 8.8), 0x3ad0f0, R - 0.035, 1.9, Z(12));
-    s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, Z(6.4));
-    glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1, Z(6.4) + 0.26);
-    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1 * (H - 7) / 8, 0xc8d0d3, x, 0.8, Z(9.7)); s.box(0.052, 0.035, 7.1 * (H - 7) / 8, pal.accent, x, 0.88, Z(9.7)); }
+    glow.box(0.04, 0.5, Math.min(2, H - 9), mix(pal.accent, pal.wall, 0.25), R - 0.03, 2.2, Z(12));
+    glow.box(0.04, 0.06, Math.min(2.2, H - 8.8), mix(pal.accent2, pal.wall, 0.25), R - 0.035, 1.9, Z(12));
+    s.box(0.7, 1.4, 0.5, pal.accent, R - 0.4, 0.7, Z(6.4));
+    glow.box(0.5, 0.4, 0.02, mix(pal.lamp, pal.wall, 0.3), R - 0.4, 1, Z(6.4) + 0.26);
+    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1 * (H - 7) / 8, pal.top, x, 0.8, Z(9.7)); s.box(0.052, 0.035, 7.1 * (H - 7) / 8, pal.accent, x, 0.88, Z(9.7)); }
   } else if (id === 'noodle') {
     for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, Z(6.3 + i * 0.52));
     for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, Z(z)); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, Z(z)); }
