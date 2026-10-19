@@ -95,6 +95,7 @@ export class Lobby {
     let h = '';
     const prof = this.app.profile;
     this.card.classList.toggle('title-card', this.screen === 'title');
+    this.card.dataset.screen = this.screen;
     switch (this.screen) {
       case 'title':
         h = `<div class="title"><h1>Two <span class="amp">Forks</span></h1></div>
@@ -114,27 +115,27 @@ export class Lobby {
         h = `<button class="btn small ghost back" data-act="title">← Back</button><div class="title"><h1 class="small">${this.mode === 'solo' ? 'Play solo' : 'Host a restaurant'}</h1></div>
         <div class="saves">${saves.map((s) => {
           const c = CUISINES[s.cuisine];
-          return `<button class="save" data-act="load" data-id="${s.id}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)} <small class="mode-badge ${s.mode === 'story' ? 'story' : ''}">${s.mode === 'story' ? 'STORY' : 'ARCADE'}</small></b><span>${c.style} · Day ${s.day} (${WEEKDAYS[(s.day - 1) % 7]}) · ${money0(s.cash)} · saved ${new Date(s.updated).toLocaleString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
+          return `<button class="save" data-act="load" data-id="${s.id}" title="Saved ${esc(new Date(s.updated).toLocaleString())}"><span class="sw" style="background:${c.palette.ui}"></span><span><b>${esc(s.name)} <small class="mode-badge ${s.mode === 'story' ? 'story' : ''}">${s.mode === 'story' ? 'STORY' : 'ARCADE'}</small></b><span class="save-meta">Day ${s.day} · ${WEEKDAYS[(s.day - 1) % 7]} · ${money0(s.cash)}</span><span class="save-updated">${c.style} · ${new Date(s.updated).toLocaleDateString()}</span></span><span class="icon-btn del" data-act="del" data-id="${s.id}" title="Delete save">🗑</span></button>`;
         }).join('') || '<div class="hint-line">No saved restaurants.</div>'}</div>
-        <div class="lobby-foot"><button class="btn primary" data-act="new">Open a new restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
+        <div class="lobby-foot"><button class="btn primary" data-act="new">New restaurant</button><button class="btn ghost" data-act="importscr">Import a save code</button></div>`;
         break;
       }
       case 'new': {
-        const c = CUISINES[this.pick];
-        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">New restaurant</h1><p>Cuisine cannot be changed later.</p></div>
+        h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">New restaurant</h1></div>
         <div class="mode-choices" aria-label="Game mode">
-          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start small with $600. Unlock recipes, equipment, and floor space.</span></button>
-          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>Full floor space and all recipes unlocked.</span></button>
+          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600. Build as you play.</span></button>
+          <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>Full space and all recipes.</span></button>
         </div>
         ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : ''}
-        <div class="cuisines">${CUISINE_ORDER.map((id) => {
+        <div class="cuisines" role="group" aria-label="Cuisine">${CUISINE_ORDER.map((id) => {
           const z = CUISINES[id];
           const p = z.palette;
           const sw = [p.wall, p.floorA, p.counter, p.accent, p.accent2].map((x) => `<i style="background:#${x.toString(16).padStart(6, '0')}"></i>`).join('');
-          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}"><div class="sw">${sw}</div><div class="tx"><b>${esc(z.style)}</b></div></button>`;
+          return `<button class="cuisine ${this.pick === id ? 'sel' : ''}" data-act="cuisine" data-id="${id}" aria-pressed="${this.pick === id}"><div class="sw" aria-hidden="true">${sw}</div><div class="tx"><b>${esc(z.style)}</b></div></button>`;
         }).join('')}</div>
-        <div class="field"><label>Restaurant name</label><input data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
-        <div class="lobby-foot"><button class="btn primary" data-act="create">Open ${esc(this.pickName || c.name)}</button></div>`;
+        <p class="hint-line">Cuisine cannot be changed later.</p>
+        <div class="field"><label for="restaurant-name">Restaurant name</label><input id="restaurant-name" data-in="rname" maxlength="32" value="${esc(this.pickName)}"></div>
+        <div class="lobby-foot"><button class="btn primary" data-act="create">Open restaurant</button></div>`;
         break;
       }
       case 'join':
@@ -153,9 +154,12 @@ export class Lobby {
     }
     if (this.screen === 'chef' && this.preview) {
       // Keep the canvas and its WebGL context when the editor changes.
+      const sectionState = new Map([...this.card.querySelectorAll('.chef-section')].map((section) => [section.dataset.section, section.open]));
       const content = document.createElement('div');
       content.innerHTML = h;
-      this.card.querySelector('.opts').replaceWith(content.querySelector('.opts'));
+      const options = content.querySelector('.opts');
+      for (const section of options.querySelectorAll('.chef-section')) section.open = sectionState.get(section.dataset.section) || false;
+      this.card.querySelector('.opts').replaceWith(options);
     } else {
       this.stopPreview();
       this.card.innerHTML = h;
@@ -176,17 +180,21 @@ export class Lobby {
   chefHtml() {
     const p = this.chefDraft;
     const L = p.look;
-    const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}"></button>`).join('')}</div>`;
-    const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0">Off</button></span>`;
+    const sw = (key, list) => `<div class="swatches">${list.map((c) => `<button class="swatch ${L[key] === c ? 'sel' : ''}" style="background:${c}" data-act="look" data-k="${key}" data-v="${c}" aria-label="${c}" aria-pressed="${L[key] === c}"></button>`).join('')}</div>`;
+    const onoff = (key) => `<span class="seg"><button class="${L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="1" aria-pressed="${L[key]}">On</button><button class="${!L[key] ? 'on' : ''}" data-act="look" data-k="${key}" data-v="0" aria-pressed="${!L[key]}">Off</button></span>`;
     return `${this.chefBack ? '<button class="btn small ghost back" data-act="chefcancel">← Back</button>' : ''}<div class="title"><h1 class="small">${this.firstChef ? 'Create chef' : 'Your chef'}</h1></div>
       <div class="chef-ed"><div class="chef-prev" id="chef-prev"></div><div class="opts">
-        <div class="field" style="margin-top:0"><label>Chef name</label><input data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
-        <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>
-        <div class="opt"><label>Apron ${onoff('apron')}</label>${L.apron ? sw('apronColor', APRON_COLORS) : ''}</div>
-        <div class="opt"><label>Jacket</label>${sw('shirt', SHIRT_COLORS)}</div>
-        <div class="opt"><label>Skin</label>${sw('skin', SKIN)}</div>
-        <div class="opt"><label>Hair <span class="seg">${HAIR_STYLES.map((n, i) => `<button class="${L.hairStyle === i ? 'on' : ''}" data-act="look" data-k="hairStyle" data-v="${i}">${n}</button>`).join('')}</span></label>${L.hairStyle !== 3 ? sw('hair', HAIR) : ''}</div>
-        <button class="btn primary" data-act="chefsave">${this.firstChef ? "Let's cook" : 'Save chef'}</button><span class="err" style="margin-left:10px">${esc(this.err || '')}</span>
+        <div class="field" style="margin-top:0"><label for="chef-name">Chef name</label><input id="chef-name" data-in="cname" maxlength="16" value="${esc(p.name)}" placeholder="Your name"></div>
+        <details class="chef-section" data-section="clothes"><summary>Clothes</summary>
+          <div class="opt"><label>Chef hat ${onoff('hat')}</label>${L.hat ? sw('hatColor', HAT_COLORS) : ''}</div>
+          <div class="opt"><label>Apron ${onoff('apron')}</label>${L.apron ? sw('apronColor', APRON_COLORS) : ''}</div>
+          <div class="opt"><label>Jacket</label>${sw('shirt', SHIRT_COLORS)}</div>
+        </details>
+        <details class="chef-section" data-section="appearance"><summary>Appearance</summary>
+          <div class="opt"><label>Skin</label>${sw('skin', SKIN)}</div>
+          <div class="opt"><label>Hair <span class="seg">${HAIR_STYLES.map((n, i) => `<button class="${L.hairStyle === i ? 'on' : ''}" data-act="look" data-k="hairStyle" data-v="${i}" aria-pressed="${L.hairStyle === i}">${n}</button>`).join('')}</span></label>${L.hairStyle !== 3 ? sw('hair', HAIR) : ''}</div>
+        </details>
+        <div class="chef-actions"><button class="btn primary" data-act="chefsave">${this.firstChef ? "Let's cook" : 'Save chef'}</button>${this.err ? `<p class="err" role="alert">${esc(this.err)}</p>` : ''}</div>
       </div></div>`;
   }
 
@@ -205,7 +213,7 @@ export class Lobby {
     if (!host) return;
     const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     r.setPixelRatio(Math.min(2, devicePixelRatio || 1));
-    r.setSize(260, 320);
+    r.setSize(210, 210);
     r.toneMapping = THREE.NeutralToneMapping;
     host.appendChild(r.domElement);
     const scene = new THREE.Scene();
@@ -213,7 +221,7 @@ export class Lobby {
     const d = new THREE.DirectionalLight(0xffffff, 2.0);
     d.position.set(2, 4, 3);
     scene.add(d);
-    const cam = new THREE.PerspectiveCamera(30, 260 / 320, 0.1, 50);
+    const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
     cam.position.set(0, 1.55, 4.6);
     cam.lookAt(0, 1.05, 0);
     const pv = { r, scene, cam, model: null, key: '', t: 0, alive: true };
@@ -319,8 +327,6 @@ export class Lobby {
     const t = e.target;
     if (t.dataset.in === 'rname') {
       this.pickName = t.value;
-      const btn = this.root.querySelector('[data-act=create]');
-      if (btn) btn.textContent = 'Open ' + (t.value || CUISINES[this.pick].name);
     }
     if (t.dataset.in === 'code') { t.value = cleanCode(t.value); this.code = t.value; }
     if (t.dataset.in === 'cname' && this.chefDraft) this.chefDraft.name = t.value;
