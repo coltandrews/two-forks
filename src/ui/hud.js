@@ -292,7 +292,7 @@ export class Hud {
       const ratio = secs / (p.grace || 90);
       const cls = 'ticket ' + (p.state === 'eating' || p.state === 'dessertEat' ? 'eating' : ratio > 1 ? 'late' : ratio > 0.6 ? 'mid' : '');
       if (el.className !== cls) el.className = cls;
-      setText(el.querySelector('.num'), `#${p.ticket} · T${t ? t.num : '?'}`);
+      setText(el.querySelector('.num'), `Table ${t ? t.num : '?'}`);
       setText(el.querySelector('.tm'), `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`);
       const body = this.ticketBody(state, p, p === firstFood);
       const b = el.querySelector('.body');

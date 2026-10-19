@@ -187,7 +187,7 @@ export class Overlay {
         const open = p.items.filter((x) => !x.served).length;
         const drinks = p.drinks.filter((x) => !x.served).length;
         icon = ICON.plate;
-        label = `#${p.ticket} · ${open} dish${open === 1 ? '' : 'es'}` + (drinks ? ` · ${drinks} drink${drinks > 1 ? 's' : ''}` : '');
+        label = `${open} dish${open === 1 ? '' : 'es'}` + (drinks ? ` · ${drinks} drink${drinks > 1 ? 's' : ''}` : '');
         cls += ' wait';
         break;
       }
