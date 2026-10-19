@@ -41,6 +41,7 @@ class App {
     canvas.addEventListener('pointercancel', (e) => this.canvasPointerUp(e, true));
     window.addEventListener('wheel', (e) => {
       if (!this.session || !this.lobby.root.hidden || this.office.open || this.hud.modalOpen) return;
+      if (e.target.closest('.rail, .keys, .morning')) return;
       e.preventDefault();
       const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       this.view.zoomBy(Math.max(-0.25, Math.min(0.25, d * (e.ctrlKey ? 0.01 : 0.0018))));
@@ -242,7 +243,10 @@ class App {
       if (this.office.open && this.session.state.phase === 'morning') { this.closeOffice(); return; }
       this.openPause();
     });
-    this.input.on('move', () => { if (this.hud.modalKind === 'picker') this.hud.closeModal(); });
+    this.input.on('move', () => {
+      if (this.hud.modalKind === 'picker') this.hud.closeModal();
+      if (this.hud.root.contains(document.activeElement)) this.focusGame();
+    });
   }
 
   hookModalClose() {

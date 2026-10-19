@@ -48,19 +48,21 @@ export class Hud {
     this.modal = document.getElementById('modal');
     this.toasts = document.getElementById('toasts');
     this.root.innerHTML = `
-      <div class="panel hud-tl"><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="rname"></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
-      <div class="panel hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div><div class="story-goal" hidden></div></div>
+      <div class="hud-left">
+        <div class="hud-tl"><div class="rname"></div><div class="day"><span class="dn"></span><span class="wk"></span></div><div class="clock"></div><div class="phase"></div><div class="bar"><i></i><b></b></div></div>
+        <div class="morning" hidden></div>
+        <div class="hud-bl"><div class="rail" aria-label="Order tickets" tabindex="-1"></div><button class="keys-toggle" data-act="keys" aria-expanded="false">Keys <kbd>H</kbd></button><div class="keys" hidden>
+          <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
+          <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
+          <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>U</kbd> hide HUD</span>
+        </div></div>
+      </div>
+      <div class="hud-tr"><div class="cash"></div><div class="rating"></div><div class="lvl"></div><div class="bar"><i></i></div><div class="story-goal" hidden></div></div>
       <div class="need" hidden></div>
       <div class="prompt"></div>
-      <div class="hud-bl"><div class="rail"></div><button class="btn small keys-toggle" data-act="keys" hidden>? Keys</button><div class="panel keys">
-        <span><kbd class="movekeys">WASD</kbd> move</span><span><kbd>E</kbd> grab / place</span><span><kbd>Space</kbd> hold to work</span>
-        <span><kbd>Q</kbd> grab another</span><span><kbd>B</kbd> cookbook</span><span><kbd>O</kbd> rush order</span>
-        <span><kbd>C</kbd> / scroll zoom</span><span><kbd>Tab</kbd> office (mornings)</span><span><kbd>Esc</kbd> menu</span><span><kbd>H</kbd> hide keys</span><span><kbd>U</kbd> hide UI</span>
-      </div></div>
-      <div class="panel hud-br"></div>
-      <div class="panel morning" hidden></div>
-      <button class="ui-toggle" data-act="ui" title="Hide or show the UI (U)"><span class="eye"></span><b>Hide UI</b><kbd>U</kbd></button>
-      <div class="panel closing" hidden></div>`;
+      <div class="hud-br"></div>
+      <button class="hud-toggle" data-act="hud" title="Hide or show the HUD (U)" aria-pressed="false"><span class="eye" aria-hidden="true"></span><b>Hide HUD</b><kbd>U</kbd></button>
+      <div class="closing" hidden></div>`;
     const q = (s) => this.root.querySelector(s);
     this.el = {
       rname: q('.rname'), dn: q('.day .dn'), wk: q('.day .wk'), clock: q('.clock'), phase: q('.phase'), dayBar: q('.hud-tl .bar i'), sun: q('.hud-tl .bar b'),
@@ -71,11 +73,11 @@ export class Hud {
     this.modalKind = null;
     let keys = null;
     try { keys = localStorage.getItem('tf-keys'); } catch { /* ignore */ }
-    if (keys === '0') this.toggleKeys(true);
+    this.toggleKeys(keys !== '1');
     let mini = null;
     try { mini = localStorage.getItem('tf-mini'); } catch { /* ignore */ }
     if (mini === '1') this.toggleMinimal(true);
-    this.root.querySelector('.ui-toggle').addEventListener('click', () => { this.toggleMinimal(); sfx('ui'); });
+    this.root.querySelector('.hud-toggle').addEventListener('click', () => { this.toggleMinimal(); sfx('ui'); });
     this.el.rail.addEventListener('click', (e) => {
       const b = e.target.closest('button.x');
       if (!b) return;
@@ -111,16 +113,19 @@ export class Hud {
   toggleKeys(force) {
     this.keysHidden = force != null ? force : !this.keysHidden;
     this.el.keys.hidden = this.keysHidden;
-    this.root.querySelector('.keys-toggle').hidden = !this.keysHidden;
+    const toggle = this.root.querySelector('.keys-toggle');
+    toggle.innerHTML = `${this.keysHidden ? 'Keys' : 'Hide keys'} <kbd>H</kbd>`;
+    toggle.setAttribute('aria-expanded', String(!this.keysHidden));
     try { localStorage.setItem('tf-keys', this.keysHidden ? '0' : '1'); } catch { /* ignore */ }
   }
 
   /** Minimal mode hides panels, tickets and key help; prompts, bubbles and toasts stay. */
   toggleMinimal(force) {
     this.minimal = force != null ? force : !this.minimal;
-    this.root.classList.toggle('ui-min', this.minimal);
-    const b = this.root.querySelector('.ui-toggle b');
-    if (b) b.textContent = this.minimal ? 'Show UI' : 'Hide UI';
+    this.root.classList.toggle('hud-min', this.minimal);
+    const toggle = this.root.querySelector('.hud-toggle');
+    toggle.querySelector('b').textContent = this.minimal ? 'Show HUD' : 'Hide HUD';
+    toggle.setAttribute('aria-pressed', String(this.minimal));
     try { localStorage.setItem('tf-mini', this.minimal ? '1' : '0'); } catch { /* ignore */ }
   }
 
@@ -135,12 +140,12 @@ export class Hud {
       document.documentElement.style.setProperty('--accent-dark', cz.palette.uiDark);
     }
     setText(e.rname, state.name);
-    setText(e.dn, `DAY ${state.day}`);
-    setText(e.wk, WEEKDAYS[(state.day - 1) % 7].toUpperCase());
+    setText(e.dn, `Day ${state.day}`);
+    setText(e.wk, WEEKDAYS[(state.day - 1) % 7]);
     const ph = state.phase;
     setText(e.clock, ph === 'morning' ? 'Prep time' : ph === 'office' ? 'After hours' : clockText(state.clock));
     setText(e.phase, state.paused ? 'Paused' : ph === 'service' ? (state.clock >= CFG.doorsLock ? 'Last seating passed' : 'Open for business') : ph === 'closing' ? 'Closing up' : ph === 'morning' ? 'Doors closed' : 'Office');
-    e.phase.className = 'phase ' + (ph === 'service' ? 'open' : ph === 'closing' ? 'closing' : '');
+    e.phase.className = 'phase ' + (ph === 'service' ? 'open' : ph === 'closing' ? 'closing-phase' : '');
     const frac = ph === 'service' ? (state.clock - CFG.serviceStart) / (CFG.serviceEnd - CFG.serviceStart) : ph === 'closing' || ph === 'office' ? 1 : 0;
     e.dayBar.style.width = (frac * 100).toFixed(1) + '%';
     e.sun.style.left = (frac * 100).toFixed(1) + '%';
@@ -155,7 +160,7 @@ export class Hud {
     }
     e.cash.classList.toggle('neg', state.cash < 0);
     const avg = avgRating(state);
-    const rh = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : '<span class="stars">☆☆☆☆☆</span> no reviews yet';
+    const rh = avg ? `<span class="stars">${stars(avg)}</span> ${avg.toFixed(1)}` : 'No reviews yet';
     if (rh !== e.rating._h) { e.rating.innerHTML = rh; e.rating._h = rh; }
     const story = state.mode === 'story';
     e.lvl.hidden = !story;
@@ -266,13 +271,12 @@ export class Hud {
   updateRail(state) {
     const parties = state.parties.filter((p) => p.ticket && (p.items.some((x) => !x.served) || p.drinks.some((x) => !x.served)) && ['waitingFood', 'dessertWait', 'eating', 'dessertEat'].includes(p.state));
     parties.sort((a, b) => a.ticket - b.ticket);
-    const max = 12;
     const firstFood = parties.find((p) => p.items.some((x) => !x.served));
-    const shown = parties.slice(0, max);
+    this.el.rail.tabIndex = parties.length ? 0 : -1;
     this.tickets = this.tickets || new Map();
     const keep = new Set();
     let prev = null;
-    for (const p of shown) {
+    for (const p of parties) {
       const key = p.id + ':' + p.ticket;
       keep.add(key);
       let el = this.tickets.get(key);
@@ -298,21 +302,6 @@ export class Hud {
       prev = el;
     }
     for (const [k, el] of this.tickets) if (!keep.has(k)) { el.remove(); this.tickets.delete(k); }
-    // Tickets that don't fit the column collapse into a counter.
-    const railH = this.el.rail.clientHeight;
-    let hidden = 0;
-    for (const el of this.tickets.values()) {
-      el.style.display = '';
-    }
-    for (const el of this.tickets.values()) {
-      if (el.offsetTop + el.offsetHeight > railH - 34) { el.style.display = 'none'; hidden++; }
-    }
-    let more = this.el.rail.querySelector('.more');
-    if (hidden) {
-      if (!more) { more = document.createElement('div'); more.className = 'more'; }
-      setText(more, `+${hidden} more ticket${hidden > 1 ? 's' : ''}`);
-      this.el.rail.appendChild(more);
-    } else if (more) more.remove();
   }
 
   ticketBody(state, p, withComps) {
@@ -365,20 +354,29 @@ export class Hud {
     if (state.phase !== 'morning') { m.hidden = true; return; }
     m.hidden = false;
     const dock = state.objects.find((o) => o.type === 'dock');
+    const notes = [];
     const items = [];
-    if (dock.boxes.length) items.push(`<li>${dock.boxes.length} case${dock.boxes.length > 1 ? 's' : ''} on the pallet by the back door. Carry each one (<kbd>E</kbd>) to the fridge, freezer or pantry.</li>`);
+    if (dock.boxes.length) items.push(`<li>${dock.boxes.length} delivery case${dock.boxes.length > 1 ? 's' : ''} at the back door. Carry them to storage with <kbd>E</kbd>.</li>`);
     const out = menuIngredients(state).filter((i) => stockCount(state, i) === 0 && !state.objects.some((o) => o.well && o.well.ing === i) && !dock.boxes.some((b) => b.ing === i));
-    if (out.length) items.push(`<li class="warn">Out of ${out.map((i) => lc(ING[i].name)).join(', ')}. Those dishes can't be ordered. Use <kbd>O</kbd> for a rush delivery.</li>`);
+    if (out.length) {
+      items.push(`<li class="warn">${out.length} ingredient${out.length > 1 ? 's' : ''} out of stock. Rush order: <kbd>O</kbd>.</li>`);
+      notes.push(`<li>Out of ${out.map((i) => lc(ING[i].name)).join(', ')}. Dishes that need these cannot be ordered.</li>`);
+    }
     const mains = state.menu.dishes.filter((x) => x.on && courseSlot(dishById(state, x.id).course) === 'main').length;
-    items.push(`<li>Optional: prep ahead. Chopped and cooked food in a prep well keeps warm and lasts until tomorrow.</li>`);
-    if (state.day === 1) items.push(`<li>Press <kbd>B</kbd> any time to see every recipe on tonight's menu (${mains} mains).</li>`);
+    notes.push(`<li>Prep wells keep cooked food warm until tomorrow.</li>`);
+    if (state.day === 1) notes.push(`<li><kbd>B</kbd> opens the cookbook (${mains} mains).</li>`);
     this.selfReady = !!state.ready[info.self];
     const others = Object.values(state.players).filter((p) => p.id !== info.self);
     const partner = others.length ? (state.ready[others[0].id] ? `${esc(others[0].name)} is ready` : `Waiting for ${esc(others[0].name)}`) : '';
-    const html = `<h3>Good morning! Day ${state.day}</h3><ul>${items.join('')}</ul>
-      <div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready (click to undo)' : 'Ready to open'}</button>
-      <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button><span class="partner">${partner}</span></div>`;
-    if (html !== this.lastMorning) { m.innerHTML = html; this.lastMorning = html; }
+    const html = `${items.length ? `<ul class="prep-alerts">${items.join('')}</ul>` : ''}<div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready · undo' : 'Ready to open'}</button>
+      <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button>${partner ? `<span class="partner">${partner}</span>` : ''}</div>
+      <details class="prep-notes"><summary>Prep notes</summary><ul>${notes.join('')}</ul></details>`;
+    if (html !== this.lastMorning) {
+      const notesOpen = !!m.querySelector('.prep-notes[open]');
+      m.innerHTML = html;
+      m.querySelector('.prep-notes').open = notesOpen;
+      this.lastMorning = html;
+    }
   }
 
   // ------------------------------------------------------------ toasts
@@ -466,9 +464,10 @@ export class Hud {
   }
 
   openSheet(kind, html, light = false) {
+    const refresh = this.modalKind === kind && this.modalOpen;
     this.modalKind = kind;
     this.modal.className = light ? 'light' : '';
-    this.modal.innerHTML = `<div class="sheet ${kind}">${html}</div>`;
+    this.modal.innerHTML = `<div class="sheet ${kind}${refresh ? ' sheet-refresh' : ''}">${html}</div>`;
     this.modal.hidden = false;
     const close = this.modal.querySelector('.close');
     if (close) close.onclick = () => this.closeModal();

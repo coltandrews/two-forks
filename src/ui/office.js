@@ -37,6 +37,7 @@ export class Office {
 
   show(state, tab) {
     this.open = true;
+    document.body.classList.add('office-open');
     if (tab) this.tab = tab;
     if (!state.report && this.tab === 'report' && state.phase === 'morning') this.tab = 'menu';
     this.root.hidden = false;
@@ -45,6 +46,7 @@ export class Office {
 
   hide() {
     this.open = false;
+    document.body.classList.remove('office-open');
     this.stopLayout(false);
     this.root.hidden = true;
   }
@@ -81,17 +83,22 @@ export class Office {
     const sig = this.sigFor(state);
     if (!force && sig === this.lastSig) return;
     const active = document.activeElement;
+    const focusedButton = active?.tagName === 'BUTTON' && this.root.contains(active) ? { ...active.dataset } : null;
     if (!force && active && this.root.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) return;
     this.lastSig = sig;
     const scroll = this.root.querySelector('.office-body');
     const top = scroll ? scroll.scrollTop : 0;
     this.root.innerHTML = `<div class="office">
-      <div class="office-head"><div><h1>${esc(state.name)}</h1><div class="meta">${CUISINES[state.cuisine].style} · Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]} · ${state.phase === 'office' ? 'after hours' : 'morning'}</div></div>
-        <div class="tabs">${TABS.filter(([k]) => k !== 'unlocks' || state.mode === 'story').map(([k, n]) => `<button data-tab="${k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+      <div class="office-head"><div class="office-title"><h1>${esc(state.name)}</h1><div class="meta">${CUISINES[state.cuisine].style} · Day ${state.day} · ${WEEKDAYS[(state.day - 1) % 7]} · ${state.phase === 'office' ? 'after hours' : 'morning'}</div></div>
+        <div class="tabs" aria-label="Office sections">${TABS.filter(([k]) => k !== 'unlocks' || state.mode === 'story').map(([k, n]) => `<button data-tab="${k}" aria-pressed="${this.tab === k}" class="${this.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div></div>
       <div class="office-body">${this.body(state)}</div>
       <div class="office-foot">${this.foot(state)}</div></div>`;
     const nb = this.root.querySelector('.office-body');
     if (nb && !force) nb.scrollTop = top;
+    if (focusedButton) {
+      const next = [...this.root.querySelectorAll('button')].find((button) => Object.entries(focusedButton).every(([key, value]) => button.dataset[key] === value));
+      if (next && !next.disabled) next.focus({ preventScroll: true });
+    }
   }
 
   sigFor(state) {
@@ -167,7 +174,7 @@ export class Office {
         <div class="card"><h3>Tip jar</h3>${tipsToday.length ? tipsToday.map(([n, v]) => `<div>${esc(n)}: <b>${money(v)}</b> today</div>`).join('') : '<div class="tip">Tips go to whoever settles the bill.</div>'}${jar.length ? `<div class="tip">All time: ${jar.map(([n, v]) => `${esc(n)} ${money(v)}`).join(' · ')}</div>` : ''}</div>
       </div></div>
       ${crew}${isOwned(state, 'features', 'menu_report') ? `<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><div class="tip" style="margin-bottom:6px">Popularity is compared to a fair share of orders (70% rule); profit is each dish's margin against the average. Hover a tag for advice.</div>
-      <table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Available at Chef Level 5. Open the Unlocks tab to get this report.</p></div>'}`;
+      <div class="table-scroll"><table class="me"><tr><th>Dish</th><th>Sold</th><th>Avg price</th><th>Food cost</th><th>Margin</th><th>Class</th></tr>${meRows}</table></div></div>` : '<div class="card" style="margin-top:14px"><h3>Menu engineering</h3><p>Available at Chef Level 5. Open the Unlocks tab to get this report.</p></div>'}`;
   }
 
   // ------------------------------------------------------------ menu
@@ -185,9 +192,9 @@ export class Office {
       const locked = requirements.length > 0;
       const s = sold.find((x) => x.id === m.id);
       return `<div class="mrow ${m.on ? '' : 'off'} ${locked ? 'locked' : ''}">
-        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked && !m.on ? 'disabled' : ''} title="${locked ? esc(requirements.join(' · ')) : m.on ? 'Take off the menu' : 'Put on the menu'}" aria-label="${esc(d.name)}: ${m.on ? 'remove from menu' : 'add to menu'}"></button>
+        <button class="toggle ${m.on ? 'on' : ''}" data-act="toggle" data-id="${m.id}" ${locked && !m.on ? 'disabled' : ''} title="${locked ? esc(requirements.join(' · ')) : m.on ? 'Take off the menu' : 'Put on the menu'}" role="switch" aria-checked="${m.on}" aria-label="${esc(d.name)} on the menu"></button>
         <div class="nm">${esc(d.name)}${d.custom ? ' <span class="cls Puzzle">House</span>' : ''}${dishVeg(d) ? ' <span title="Vegetarian">🌱</span>' : ''} <span class="appeal" title="Appeal">${'★'.repeat(Math.round(d.appeal / 2))}</span><small>${d.comps.map(([i, st]) => stateInfo(i, st).label.toLowerCase()).join(' · ')}</small>${requirementChips(requirements)}</div>
-        <div class="price"><button data-act="price" data-id="${m.id}" data-d="-1">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-price="${m.id}"><button data-act="price" data-id="${m.id}" data-d="1">+</button></div>
+        <div class="price"><button data-act="price" data-id="${m.id}" data-d="-1" aria-label="Lower ${esc(d.name)} price">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-price="${m.id}" aria-label="${esc(d.name)} price"><button data-act="price" data-id="${m.id}" data-d="1" aria-label="Raise ${esc(d.name)} price">+</button></div>
         <div class="n">${money(cost)}<br><span class="fc ${fc > 0.38 ? 'hi' : ''}">${pct(fc)} cost</span></div>
         <div class="n" title="What guests think it's worth">fair ${money0(d.fair)}</div>
         <div class="n">${s ? s.n + ' sold' : ''}${d.custom ? `<br><button class="icon-btn" data-act="deldish" data-id="${m.id}" title="Delete this house dish">🗑</button>` : ''}</div></div>`;
@@ -199,8 +206,8 @@ export class Office {
     const drinks = state.menu.drinks.map((m) => {
       const d = drinkById(state, m.id);
       const requirements = drinkRequirements(state, d);
-      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}" ${requirements.length && !m.on ? 'disabled' : ''} aria-label="${esc(d.name)}: ${m.on ? 'remove from menu' : 'add to menu'}"></button><div class="nm">${esc(d.name)}${requirementChips(requirements)}</div>
-        <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}"><button data-act="dprice" data-id="${m.id}" data-d="0.5">+</button></div>
+      return `<div class="mrow ${m.on ? '' : 'off'}"><button class="toggle ${m.on ? 'on' : ''}" data-act="dtoggle" data-id="${m.id}" ${requirements.length && !m.on ? 'disabled' : ''} role="switch" aria-checked="${m.on}" aria-label="${esc(d.name)} on the menu"></button><div class="nm">${esc(d.name)}${requirementChips(requirements)}</div>
+        <div class="price"><button data-act="dprice" data-id="${m.id}" data-d="-0.5" aria-label="Lower ${esc(d.name)} price">−</button><input type="number" step="0.5" min="1" max="99" value="${m.price.toFixed(2)}" data-dprice="${m.id}" aria-label="${esc(d.name)} price"><button data-act="dprice" data-id="${m.id}" data-d="0.5" aria-label="Raise ${esc(d.name)} price">+</button></div>
         <div class="n">${money(d.cost)}<br><span class="fc">${pct(d.cost / m.price)} cost</span></div><div class="n">fair ${money0(d.price)}</div><div></div></div>`;
     }).join('');
     return `<div class="tip">Guests compare your price with what they think a dish is worth ("fair"). Charge more and fewer people order it, and fewer people come in at all. Food cost around 25 to 35% is healthy.</div>
@@ -259,16 +266,16 @@ export class Office {
       return `<tr class="${used.has(i.id) ? 'used' : ''}"><td><span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hex(i.look.color)}"></span> ${esc(i.name)}${storage ? '' : requirementChips([`Needs ${STATION_NAMES[i.store].toLowerCase()}`])}</td>
         <td>${STATION_NAMES[i.store]}</td><td class="n">${n}${exp ? ` <span class="exp">(${exp} spoil soon)</span>` : ''}</td><td class="n ${short ? 'short' : ''}">${needN || ''}</td>
         <td class="n">${i.case} · ${i.keep}d</td><td class="n">${money(casePrice(i.id))}</td>
-        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1" ${storage ? '' : 'disabled'}>+</button></span></td>
+        <td><span class="qty"><button data-act="order" data-ing="${i.id}" data-d="-1" aria-label="Order one less case of ${esc(i.name)}" ${pend ? '' : 'disabled'}>−</button><b>${pend}</b><button data-act="order" data-ing="${i.id}" data-d="1" aria-label="Order one more case of ${esc(i.name)}" ${storage ? '' : 'disabled'}>+</button></span></td>
         <td class="n">${pend ? money(pend * casePrice(i.id)) : ''}</td></tr>`;
     }).join('');
     const total = state.orders.reduce((s, o) => s + o.cases * casePrice(o.ing), 0);
     const planCost = plan.reduce((s, p) => s + p.cases * casePrice(p.ing), 0);
-    return `<div class="cols2" style="grid-template-columns:1fr auto;align-items:center">
+    return `<div class="supplier-summary">
       <div><div class="card"><b>Forecast for ${state.phase === 'office' ? 'tomorrow' : 'today'}:</b> about ${Math.round(parties)} parties (${Math.round(parties * 2.35)} guests) on a ${WEEKDAYS[(tomorrow - 1) % 7]}. Orders arrive on the pallet by the back door the next morning. Fresh food spoils; check the shelf life column.</div></div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
+      <div class="supplier-order"><button class="btn primary" data-act="autofill" ${plan.length ? '' : 'disabled'}>${plan.length ? `Auto-fill ${plan.length} items · ${money(planCost)}` : 'Storage covers the forecast'}</button>
       <span class="hint-line">Tonight's order: <b>${money(total)}</b></span></div></div>
-      <table class="sup" style="margin-top:12px"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table>
+      <div class="table-scroll"><table class="sup"><tr><th>Ingredient</th><th>Kept in</th><th>In stock</th><th>Need</th><th>Case · keeps</th><th>Per case</th><th>Order</th><th>Cost</th></tr>${rows}</table></div>
       <button class="btn small ghost" style="margin-top:10px" data-act="allings">${this.showAllIngs ? 'Show only what the menu uses' : state.mode === 'story' ? 'Show all licensed ingredients' : 'Show every ingredient (for house dishes)'}</button>${state.mode === 'story' ? '<p class="hint-line">Buy supplier licenses in the Unlocks tab to order more ingredients.</p>' : ''}`;
   }
 
