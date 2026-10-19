@@ -12,7 +12,7 @@ host.sim.addPlayer('C', { name: 'Partner' });
 host.sim.drain();
 const client = new Session('client');
 const hostHandlers = {}, clientHandlers = {}, messages = [];
-host.partner = { peerId: 'client' };
+host.clients.set('client', { peerId: 'client', pid: 'C', name: 'Partner' });
 host.net = {
   on(type, fn) { hostHandlers[type] = fn; },
   to(type, data) { messages.push({ type, data: structuredClone(data) }); },

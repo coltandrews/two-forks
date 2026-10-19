@@ -1,14 +1,16 @@
 // A running game, from one laptop's point of view.
-//   host   runs the Sim, saves, and streams state to the partner.
+//   host   runs the Sim, saves, and streams state to every joined chef.
 //   client mirrors the host's state and sends its own moves and presses.
-// Solo play is a host with nobody connected.
-import { CFG, TICK, BUILD } from '../config.js';
+// Solo play is a host with nobody connected. Up to MAX_PLAYERS chefs in all.
+import { CFG, TICK, BUILD, MAX_PLAYERS } from '../config.js';
 import { Sim } from '../sim/sim.js';
 import { buildGrid } from '../sim/world.js';
 import { serialize } from '../sim/state.js';
 import { Net } from './net.js';
 
 const HOST_PID = 'H', CLIENT_PID = 'C';
+// The first guest keeps 'C' so older tests and habits still line up.
+const CLIENT_PIDS = ['C', 'C2', 'C3'].slice(0, MAX_PLAYERS - 1);
 
 const strip = (k, v) => (k === 'path' || k === 'tx' || k === 'tz' || k === 'moving' ? undefined : v);
 const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created', 'mode', 'building', 'xp', 'level', 'prestige', 'owned', 'chapter', 'chapterDay', 'storyStats', 'debt', 'debtDays'];
@@ -31,7 +33,8 @@ export class Session {
     this.listeners = {};
     this.selfPid = role === 'client' ? CLIENT_PID : HOST_PID;
     this.net = null;
-    this.partner = null;          // { peerId, name } when connected
+    this.clients = new Map();     // host: peerId -> { peerId, pid, name }
+    this.hostPeer = null;         // client: the host's peerId
     this.acc = 0;
     this.sendSlowAcc = 0;
     this.sendFastAcc = 0;
@@ -47,6 +50,9 @@ export class Session {
   fire(type, ...a) { for (const fn of this.listeners[type] || []) fn(...a); }
 
   get state() { return this.role === 'client' ? this.replica : this.sim.state; }
+
+  /** Names of the other chefs connected to this host. */
+  get crewNames() { return [...this.clients.values()].map((c) => c.name); }
 
   gridFor(area = this.state?.players[this.selfPid]?.area || 'restaurant') {
     const s = this.state;
@@ -78,68 +84,101 @@ export class Session {
     return s;
   }
 
+  /** Drops a joined chef: their player, their slot, and tells the UI. */
+  dropClient(peerId) {
+    const c = this.clients.get(peerId);
+    if (!c) return;
+    this.clients.delete(peerId);
+    this.sim.removePlayer(c.pid);
+    this.fire('partner', null, c.name);
+  }
+
+  /** Forgets chefs whose connection is gone without a leave message. */
+  pruneClients() {
+    const peers = this.net && this.net.peers;
+    if (!peers) return;
+    for (const peerId of [...this.clients.keys()]) if (!peers.has(peerId)) this.dropClient(peerId);
+  }
+
   wireHost() {
     const n = this.net;
+    const pidOf = (peerId) => this.clients.get(peerId)?.pid;
     n.on('hello', (d, peerId) => {
-      if (!d || d.build !== BUILD) { n.to('welcome', { ok: false, reason: `Version mismatch (host ${BUILD}). Both laptops should refresh the page.` }, peerId); return; }
-      if (this.partner && this.partner.peerId !== peerId && n.peers.has(this.partner.peerId)) { n.to('welcome', { ok: false, reason: 'This kitchen already has two chefs.' }, peerId); return; }
-      if (this.partner && this.partner.peerId !== peerId) this.sim.removePlayer(CLIENT_PID);
-      if (!this.sim.state.players[CLIENT_PID]) this.sim.addPlayer(CLIENT_PID, d.profile || {});
-      else this.sim.updateProfile(CLIENT_PID, d.profile || {});
-      this.partner = { peerId, name: this.sim.state.players[CLIENT_PID].name };
-      this.lastSlow = ''; this.lastMeta = '';
-      n.to('welcome', { ok: true, pid: CLIENT_PID, build: BUILD }, peerId);
-      this.sendSnapshots(true);
-      this.fire('partner', this.partner);
-    });
-    n.on('leave', (peerId) => {
-      if (this.partner && this.partner.peerId === peerId) {
-        this.sim.removePlayer(CLIENT_PID);
-        this.partner = null;
-        this.fire('partner', null);
+      if (!d || d.build !== BUILD) { n.to('welcome', { ok: false, reason: `Version mismatch (host ${BUILD}). Everyone should refresh the page.` }, peerId); return; }
+      let c = this.clients.get(peerId);
+      const fresh = !c;
+      if (!c) {
+        this.pruneClients();
+        const used = new Set([...this.clients.values()].map((x) => x.pid));
+        const pid = CLIENT_PIDS.find((x) => !used.has(x));
+        if (!pid) { n.to('welcome', { ok: false, reason: `This kitchen is full (${MAX_PLAYERS} chefs).` }, peerId); return; }
+        c = { peerId, pid, name: '' };
+        this.clients.set(peerId, c);
       }
+      if (!this.sim.state.players[c.pid]) this.sim.addPlayer(c.pid, d.profile || {});
+      else this.sim.updateProfile(c.pid, d.profile || {});
+      c.name = this.sim.state.players[c.pid].name;
+      this.lastSlow = ''; this.lastMeta = '';
+      n.to('welcome', { ok: true, pid: c.pid, build: BUILD }, peerId);
+      this.sendSnapshots(true);
+      if (fresh) this.fire('partner', { pid: c.pid, name: c.name });
     });
+    n.on('leave', (peerId) => this.dropClient(peerId));
     n.on('pose', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !Array.isArray(d)) return;
-      const p = this.sim.state.players[CLIENT_PID];
+      const pid = pidOf(peerId);
+      if (!pid || !Array.isArray(d)) return;
+      const p = this.sim.state.players[pid];
       if (!p || d[4] !== (p.area || 'restaurant') || d[5] !== (p.areaRev || 0)) return;
-      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2], d[4], d[5]);
-      this.sim.setWork(CLIENT_PID, !!d[3], d[4], d[5]);
+      this.sim.setPose(pid, d[0], d[1], d[2], d[4], d[5]);
+      this.sim.setWork(pid, !!d[3], d[4], d[5]);
     });
     n.on('key', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !d) return;
-      const p = this.sim.state.players[CLIENT_PID];
+      const pid = pidOf(peerId);
+      if (!pid || !d) return;
+      const p = this.sim.state.players[pid];
       if (!p || d.area !== (p.area || 'restaurant') || d.areaRev !== (p.areaRev || 0)) return;
-      if (d.key === 'e' || d.key === 'q') this.sim.press(CLIENT_PID, d.key, d.area, d.areaRev);
+      if (d.key === 'e' || d.key === 'q') this.sim.press(pid, d.key, d.area, d.areaRev);
     });
     n.on('cmd', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !d || typeof d.c !== 'string') return;
-      this.sim.command(CLIENT_PID, d);
+      const pid = pidOf(peerId);
+      if (!pid || !d || typeof d.c !== 'string') return;
+      this.sim.command(pid, d);
     });
     n.on('chat', (d, peerId) => {
-      if (this.partner && peerId === this.partner.peerId && d && typeof d.text === 'string') this.fire('chat', CLIENT_PID, d.text);
+      const pid = pidOf(peerId);
+      if (!pid || !d || typeof d.text !== 'string') return;
+      this.fire('chat', pid, d.text);
+      // Joined chefs only talk to the host, so pass the line along to the rest.
+      for (const other of this.clients.values()) if (other.peerId !== peerId) n.to('chat', { text: d.text, pid }, other.peerId);
     });
   }
 
   sendSnapshots(force = false) {
-    if (!this.net || !this.partner) return;
+    if (!this.net || !this.clients.size) return;
     const st = this.sim.state;
     const slow = JSON.stringify(liveOf(st), strip);
-    if (force || slow !== this.lastSlow) { this.lastSlow = slow; this.net.to('slow', slow, this.partner.peerId); }
+    if (force || slow !== this.lastSlow) {
+      this.lastSlow = slow;
+      for (const c of this.clients.values()) this.net.to('slow', slow, c.peerId);
+    }
     if (force || this.metaAcc <= 0) {
       this.metaAcc = 0.5;
       const meta = JSON.stringify(metaOf(st));
-      if (force || meta !== this.lastMeta) { this.lastMeta = meta; this.net.to('meta', meta, this.partner.peerId); }
+      if (force || meta !== this.lastMeta) {
+        this.lastMeta = meta;
+        for (const c of this.clients.values()) this.net.to('meta', meta, c.peerId);
+      }
     }
   }
 
   sendFast() {
-    if (!this.net || !this.partner) return;
+    if (!this.net || !this.clients.size) return;
     const st = this.sim.state;
     const p = {}, g = {};
     for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot), pl.area || 'restaurant', pl.areaRev || 0];
     for (const party of st.parties) for (const gu of party.guests) if (!gu.exited) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
-    this.net.to('fast', { p, g }, this.partner.peerId);
+    const msg = { p, g };
+    for (const c of this.clients.values()) this.net.to('fast', msg, c.peerId);
   }
 
   // ------------------------------------------------------------ client
@@ -153,7 +192,7 @@ export class Session {
     return new Promise((resolve, reject) => {
       let done = false;
       const fail = (msg) => { if (!done) { done = true; s.net.close(); reject(new Error(msg)); } };
-      const timer = setTimeout(() => fail("Couldn't find that kitchen. Check the code and make sure your partner is hosting."), 20000);
+      const timer = setTimeout(() => fail("Couldn't find that kitchen. Check the code and make sure the host is hosting."), 20000);
       const hello = () => s.net.to('hello', { build: BUILD, profile });
       s.net.on('join', () => hello());
       hello();
@@ -162,6 +201,7 @@ export class Session {
         if (done) return;
         if (!d || !d.ok) { clearTimeout(timer); fail(d && d.reason ? d.reason : 'The host turned us away.'); return; }
         s.hostPeer = peerId;
+        s.selfPid = d.pid || CLIENT_PID;
         s.welcomed = true;
       });
       s.net.on('slow', (d, peerId) => {
@@ -194,15 +234,23 @@ export class Session {
 
   wireClient() {
     const n = this.net;
-    this.partner = { peerId: this.hostPeer };
     n.on('fast', (d, peerId) => { if (peerId === this.hostPeer && d) this.fast = d; });
     n.on('ev', (list, peerId) => { if (peerId === this.hostPeer && Array.isArray(list)) for (const e of list) this.fire('event', e); });
-    n.on('chat', (d, peerId) => { if (peerId === this.hostPeer && d && typeof d.text === 'string') this.fire('chat', HOST_PID, d.text); });
+    n.on('chat', (d, peerId) => {
+      if (peerId !== this.hostPeer || !d || typeof d.text !== 'string') return;
+      const pid = typeof d.pid === 'string' ? d.pid : HOST_PID;
+      if (pid !== this.selfPid) this.fire('chat', pid, d.text);
+    });
     n.on('leave', (peerId) => {
       if (peerId === this.hostPeer) { this.lost = true; this.fire('lost'); }
     });
     n.on('join', () => { if (this.lost) n.to('hello', { build: BUILD, profile: this.profile }); });
-    n.on('welcome', (d, peerId) => { if (d && d.ok) { this.hostPeer = peerId; this.partner = { peerId }; if (this.lost) { this.lost = false; this.fire('back'); } } });
+    n.on('welcome', (d, peerId) => {
+      if (!d || !d.ok) return;
+      this.hostPeer = peerId;
+      if (d.pid && d.pid !== this.selfPid) { this.selfPid = d.pid; this.pose = null; }
+      if (this.lost) { this.lost = false; this.fire('back'); }
+    });
   }
 
   // ------------------------------------------------------------ shared API
@@ -228,13 +276,17 @@ export class Session {
     else this.sim.press(this.selfPid, key, area, areaRev);
   }
 
-  /** True when a partner is connected to talk to. */
-  get canChat() { return !!(this.net && this.partner && !this.lost); }
+  /** True when there is another chef to talk to. */
+  get canChat() {
+    if (!this.net) return false;
+    return this.role === 'client' ? !!(this.hostPeer && !this.lost) : this.clients.size > 0;
+  }
 
-  /** Sends a chat line to the partner and shows it locally. Chat is not game state. */
+  /** Sends a chat line to the other chefs and shows it locally. Chat is not game state. */
   chat(text) {
     if (!this.canChat) return false;
-    this.net.to('chat', { text }, this.role === 'client' ? this.hostPeer : this.partner.peerId);
+    if (this.role === 'client') this.net.to('chat', { text }, this.hostPeer);
+    else for (const c of this.clients.values()) this.net.to('chat', { text, pid: this.selfPid }, c.peerId);
     this.fire('chat', this.selfPid, text);
     return true;
   }
@@ -264,13 +316,13 @@ export class Session {
       const evs = this.sim.drain();
       if (evs.length) {
         if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd', 'areaChanged'].includes(e.type))) this.sendSnapshots(true);
-        const mine = [], theirs = [];
-        for (const e of evs) {
-          if (!e.to || e.to === this.selfPid) mine.push(e);
-          if (!e.to || e.to === CLIENT_PID) theirs.push(e);
+        for (const e of evs) if (!e.to || e.to === this.selfPid) this.fire('event', e);
+        if (this.net) {
+          for (const c of this.clients.values()) {
+            const theirs = evs.filter((e) => !e.to || e.to === c.pid);
+            if (theirs.length) this.net.to('ev', theirs, c.peerId);
+          }
         }
-        for (const e of mine) this.fire('event', e);
-        if (theirs.length && this.net && this.partner) this.net.to('ev', theirs, this.partner.peerId);
       }
     }
     this.sendSlowAcc -= dt;

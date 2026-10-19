@@ -1,6 +1,6 @@
 // In-game HUD: clock, money, ticket rail, prompts, toasts, and the small
 // modal sheets (storage pickers, cookbook, rush orders, pause menu).
-import { CFG } from '../config.js';
+import { CFG, MAX_PLAYERS } from '../config.js';
 import { ING, stateInfo } from '../data/ingredients.js';
 import { CUISINES } from '../data/cuisines.js';
 import { STATION_NAMES } from '../data/layout.js';
@@ -13,6 +13,11 @@ import { stockCount, casePrice, avgRating } from '../sim/economy.js';
 import { esc } from './overlay.js';
 import { sfx, volumes, setVolume } from '../audio.js';
 import { keyName } from '../input.js';
+
+/** "Ana", "Ana and Ben", "Ana, Ben and Cy". */
+function nameList(names) {
+  return names.length < 2 ? names.join('') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
 
 export const money = (v) => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const money0 = (v) => (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US');
@@ -352,9 +357,12 @@ export class Hud {
   updateCorner(state, info) {
     let h = '';
     if (info.role === 'host' && this.app.code) {
-      h += info.partner
-        ? `<div><span class="dot on"></span>${esc(info.partner)} is cooking with you</div>`
-        : `<div>Room code <button class="icon-btn" data-act="copy" title="Copy">⧉</button></div><div class="code">${this.app.code}</div><div class="hint-line">Your partner joins with this code</div>`;
+      const crew = info.crew || [];
+      if (crew.length) h += `<div><span class="dot on"></span>${esc(nameList(crew))} ${crew.length === 1 ? 'is' : 'are'} cooking with you</div>`;
+      if (crew.length < MAX_PLAYERS - 1) {
+        const open = MAX_PLAYERS - 1 - crew.length;
+        h += `<div>Room code <button class="icon-btn" data-act="copy" title="Copy">⧉</button></div><div class="code">${this.app.code}</div><div class="hint-line">${open} more ${open === 1 ? 'chef' : 'chefs'} can join with this code</div>`;
+      }
     } else if (info.role === 'client') {
       h += info.lost ? '<div><span class="dot off"></span>Lost the host. Reconnecting…</div>' : `<div><span class="dot on"></span>Connected · room ${this.app.code}</div>`;
     } else {
@@ -383,7 +391,8 @@ export class Hud {
     if (state.day === 1) notes.push(`<li><kbd>B</kbd> opens the cookbook (${mains} mains).</li>`);
     this.selfReady = !!state.ready[info.self];
     const others = Object.values(state.players).filter((p) => p.id !== info.self);
-    const partner = others.length ? (state.ready[others[0].id] ? `${esc(others[0].name)} is ready` : `Waiting for ${esc(others[0].name)}`) : '';
+    const waiting = others.filter((p) => !state.ready[p.id]).map((p) => p.name);
+    const partner = !others.length ? '' : waiting.length ? `Waiting for ${esc(nameList(waiting))}` : `${others.length === 1 ? esc(others[0].name) + ' is' : 'Everyone else is'} ready`;
     const html = `${items.length ? `<ul class="prep-alerts">${items.join('')}</ul>` : ''}<div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready · undo' : 'Ready to open'}</button>
       <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button>${partner ? `<span class="partner">${partner}</span>` : ''}</div>
       <details class="prep-notes"><summary>Prep notes</summary><ul>${notes.join('')}</ul></details>`;

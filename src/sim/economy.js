@@ -181,9 +181,9 @@ export function expectedParties(state, day, players = 2) {
   const mk = state.marketing && state.marketing.days > 0 ? 1 + state.marketing.boost : 1;
   const pi = priceIndex(state);
   const priceMult = Math.max(0.45, Math.min(1.25, Math.pow(1 / pi, 1.4)));
-  const solo = players <= 1 ? T.solo : 1;
+  const crew = T.crew[Math.max(1, Math.min(T.crew.length, players)) - 1];
   const menuMult = menuItemsOn(state, 'main').length ? 1 : 0;
-  return tables.length * T.perTable * wd * repMult * ratingMult * mk * priceMult * solo * menuMult;
+  return tables.length * T.perTable * wd * repMult * ratingMult * mk * priceMult * crew * menuMult;
 }
 
 /** Expected portions of each on-menu dish for a day with this many parties. */

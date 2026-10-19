@@ -2,8 +2,8 @@
   "name": "two-forks",
   "private": true,
   "type": "module",
-  "description": "Two Forks: a cozy co-op restaurant game for two laptops.",
+  "description": "Two Forks: a cozy co-op restaurant game for up to four laptops.",
   "scripts": {
-    "test": "node tools/simtest.mjs && node tools/storytest.mjs && node tools/alleytest.mjs && node tools/alleynettest.mjs && node tools/guesttest.mjs"
+    "test": "node tools/simtest.mjs && node tools/storytest.mjs && node tools/alleytest.mjs && node tools/alleynettest.mjs && node tools/guesttest.mjs && node tools/fourtest.mjs"
   }
 }

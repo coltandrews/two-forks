@@ -1,11 +1,12 @@
 // Every tuning number in one place. Times are real seconds unless noted.
 
-export const BUILD = 'tf-1.3.0-chat';
+export const BUILD = 'tf-1.4.0-four';
 export const APP_ID = 'two-forks-bistro-game-2026';
+export const MAX_PLAYERS = 4;   // host plus up to three friends
 
 export const CFG = {
   tickHz: 30,
-  slowHz: 8,     // full game-state snapshots to the partner
+  slowHz: 8,     // full game-state snapshots to each joined chef
   fastHz: 20,    // positions only
 
   // A service covers 11:00 to 22:00 (660 game minutes) in 10 real minutes.
@@ -47,8 +48,8 @@ export const CFG = {
   traffic: {
     perTable: 2.8,
     capPerTable: 2.7,
-    solo: 0.6,
-    minGap: { solo: 34, duo: 16 },   // game minutes between arrivals at least
+    crew: [0.6, 1, 1.25, 1.45],      // guest volume for 1, 2, 3 and 4 chefs
+    minGap: [34, 16, 13, 11],        // game minutes between arrivals at least, by chef count
     weekday: [0.8, 0.85, 0.95, 1.0, 1.25, 1.3, 1.1], // Mon..Sun
     // Relative arrivals per game hour from 11:00 to 21:00.
     hourly: [1, 3, 2, 1, 0.4, 0.7, 1, 2, 2.2, 1.2, 0.3],

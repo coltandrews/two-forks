@@ -104,9 +104,9 @@ class App {
   wireSession() {
     const s = this.session;
     s.on('event', (e) => this.onEvent(e));
-    s.on('partner', (p) => {
+    s.on('partner', (p, leftName) => {
       if (p) { this.hud.toast(`${p.name} joined the kitchen!`, 'good'); sfx('door'); }
-      else this.hud.toast('Your partner left. The kitchen is yours.', 'warn');
+      else this.hud.toast(`${leftName || 'A chef'} left the kitchen.`, 'warn');
     });
     s.on('lost', () => this.hud.toast('Lost connection to the host. Trying to reconnect…', 'bad', 6000));
     s.on('back', () => this.hud.toast('Reconnected!', 'good'));
@@ -119,7 +119,7 @@ class App {
   }
 
   sendChat(text) {
-    if (!this.session || !this.session.chat(text)) this.hud.toast('Your partner is not connected.', 'warn');
+    if (!this.session || !this.session.chat(text)) this.hud.toast('Nobody else is in the kitchen yet.', 'warn');
     this.focusGame();
   }
 
@@ -436,7 +436,7 @@ class App {
     this.view.sync(st, dt, { self: this.selfPid, area, poses: allPoses, guestPoses: guests });
     this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, self: this.selfPid, area, target: info && (info.e || info.space || info.q) ? info.target : null });
     this.aimTarget = info && info.target ? areaObjects(st, area).find((o) => o.id === info.target) : null;
-    this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, partner: s.partner && s.role === 'host' ? s.partner.name : null, lost: s.lost }, dt);
+    this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, crew: s.role === 'host' ? s.crewNames : null, lost: s.lost }, dt);
     this.office.update(st);
     this.view.render();
     let guestsIn = 0;

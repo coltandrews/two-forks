@@ -5,12 +5,13 @@ const __m = {};
 __m.config = (() => {
 // Every tuning number in one place. Times are real seconds unless noted.
 
-const BUILD = 'tf-1.3.0-chat';
+const BUILD = 'tf-1.4.0-four';
 const APP_ID = 'two-forks-bistro-game-2026';
+const MAX_PLAYERS = 4;   // host plus up to three friends
 
 const CFG = {
   tickHz: 30,
-  slowHz: 8,     // full game-state snapshots to the partner
+  slowHz: 8,     // full game-state snapshots to each joined chef
   fastHz: 20,    // positions only
 
   // A service covers 11:00 to 22:00 (660 game minutes) in 10 real minutes.
@@ -52,8 +53,8 @@ const CFG = {
   traffic: {
     perTable: 2.8,
     capPerTable: 2.7,
-    solo: 0.6,
-    minGap: { solo: 34, duo: 16 },   // game minutes between arrivals at least
+    crew: [0.6, 1, 1.25, 1.45],      // guest volume for 1, 2, 3 and 4 chefs
+    minGap: [34, 16, 13, 11],        // game minutes between arrivals at least, by chef count
     weekday: [0.8, 0.85, 0.95, 1.0, 1.25, 1.3, 1.1], // Mon..Sun
     // Relative arrivals per game hour from 11:00 to 21:00.
     hourly: [1, 3, 2, 1, 0.4, 0.7, 1, 2, 2.2, 1.2, 0.3],
@@ -89,7 +90,7 @@ const CFG = {
 const TICK = 1 / CFG.tickHz;
 const GAME_MIN_PER_SEC = (CFG.serviceEnd - CFG.serviceStart) / CFG.serviceRealSeconds;
 
-return { BUILD, APP_ID, CFG, TICK, GAME_MIN_PER_SEC };
+return { BUILD, APP_ID, MAX_PLAYERS, CFG, TICK, GAME_MIN_PER_SEC };
 })();
 
 // ---- src/data/layout.js ----
@@ -189,7 +190,7 @@ const QUEUE_SPOTS = [
   { x: 2.5, z: 12.9 }, { x: 1.6, z: 12.9 }, { x: 1.6, z: 12.0 }, { x: 2.5, z: 12.0 },
   { x: 1.6, z: 11.1 }, { x: 2.5, z: 11.1 }, { x: 1.6, z: 10.2 }, { x: 2.5, z: 10.2 },
 ];
-const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }];
+const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }, { x: 9.5, z: 4.5 }, { x: 12.5, z: 4.5 }];
 
 const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
 const FLOOR_EXPANSION_WIDTH = 10;
@@ -204,7 +205,7 @@ function frontDoor(state) { return { x: FRONT_DOOR.x, z: roomSize(state).height 
 
 function spawnPoints(state) {
   return state.mode === 'story' && state.building?.height === STORY_BUILDING.height
-    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }]
+    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }, { x: 8.5, z: 4.5 }, { x: 11.5, z: 4.5 }]
     : SPAWN_POINTS;
 }
 
@@ -1948,9 +1949,9 @@ function expectedParties(state, day, players = 2) {
   const mk = state.marketing && state.marketing.days > 0 ? 1 + state.marketing.boost : 1;
   const pi = priceIndex(state);
   const priceMult = Math.max(0.45, Math.min(1.25, Math.pow(1 / pi, 1.4)));
-  const solo = players <= 1 ? T.solo : 1;
+  const crew = T.crew[Math.max(1, Math.min(T.crew.length, players)) - 1];
   const menuMult = menuItemsOn(state, 'main').length ? 1 : 0;
-  return tables.length * T.perTable * wd * repMult * ratingMult * mk * priceMult * solo * menuMult;
+  return tables.length * T.perTable * wd * repMult * ratingMult * mk * priceMult * crew * menuMult;
 }
 
 /** Expected portions of each on-menu dish for a day with this many parties. */
@@ -3239,7 +3240,7 @@ function buildSchedule(expected, players) {
     }
     return CFG.doorsLock - 1;
   };
-  const gap = players <= 1 ? T.minGap.solo : T.minGap.duo;
+  const gap = T.minGap[Math.max(1, Math.min(T.minGap.length, players || 1)) - 1];
   const out = [];
   for (let i = 0; i < n; i++) out.push(at((i + 0.15 + Math.random() * 0.7) / n));
   out.sort((a, b) => a - b);
@@ -6273,7 +6274,7 @@ return { View };
 
 // ---- src/ui/chat.js ----
 __m.ui_chat = (() => {
-// Quick chat for two-player games. Enter opens a one-line box, Enter again
+// Quick chat for co-op games (up to four chefs). Enter opens a one-line box, Enter again
 // sends, Esc (or clicking away) cancels. Lines show as speech bubbles over
 // the sender's chef (see Overlay.say) for CHAT_SECONDS.
 const CHAT_MAX = 80;
@@ -6291,7 +6292,7 @@ class ChatBox {
     this.el.className = 'chat-box';
     this.el.hidden = true;
     this.el.innerHTML = `<label class="chat-label" for="chat-input">Say</label>`
-      + `<input id="chat-input" maxlength="${CHAT_MAX}" autocomplete="off" spellcheck="false" placeholder="Message your partner…">`
+      + `<input id="chat-input" maxlength="${CHAT_MAX}" autocomplete="off" spellcheck="false" placeholder="Message the kitchen…">`
       + `<span class="chat-hint"><kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel</span>`;
     this.input = this.el.querySelector('input');
     root.appendChild(this.el);
@@ -6920,7 +6921,7 @@ return { keyName, Input };
 __m.ui_hud = (() => {
 // In-game HUD: clock, money, ticket rail, prompts, toasts, and the small
 // modal sheets (storage pickers, cookbook, rush orders, pause menu).
-const { CFG } = __m.config;
+const { CFG, MAX_PLAYERS } = __m.config;
 const { ING, stateInfo } = __m.data_ingredients;
 const { CUISINES } = __m.data_cuisines;
 const { STATION_NAMES } = __m.data_layout;
@@ -6933,6 +6934,11 @@ const { stockCount, casePrice, avgRating } = __m.sim_economy;
 const { esc } = __m.ui_overlay;
 const { sfx, volumes, setVolume } = __m.audio;
 const { keyName } = __m.input;
+/** "Ana", "Ana and Ben", "Ana, Ben and Cy". */
+function nameList(names) {
+  return names.length < 2 ? names.join('') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
+
 const money = (v) => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money0 = (v) => (v < 0 ? '−$' : '$') + Math.round(Math.abs(v)).toLocaleString('en-US');
 function clockText(m) {
@@ -7271,9 +7277,12 @@ class Hud {
   updateCorner(state, info) {
     let h = '';
     if (info.role === 'host' && this.app.code) {
-      h += info.partner
-        ? `<div><span class="dot on"></span>${esc(info.partner)} is cooking with you</div>`
-        : `<div>Room code <button class="icon-btn" data-act="copy" title="Copy">⧉</button></div><div class="code">${this.app.code}</div><div class="hint-line">Your partner joins with this code</div>`;
+      const crew = info.crew || [];
+      if (crew.length) h += `<div><span class="dot on"></span>${esc(nameList(crew))} ${crew.length === 1 ? 'is' : 'are'} cooking with you</div>`;
+      if (crew.length < MAX_PLAYERS - 1) {
+        const open = MAX_PLAYERS - 1 - crew.length;
+        h += `<div>Room code <button class="icon-btn" data-act="copy" title="Copy">⧉</button></div><div class="code">${this.app.code}</div><div class="hint-line">${open} more ${open === 1 ? 'chef' : 'chefs'} can join with this code</div>`;
+      }
     } else if (info.role === 'client') {
       h += info.lost ? '<div><span class="dot off"></span>Lost the host. Reconnecting…</div>' : `<div><span class="dot on"></span>Connected · room ${this.app.code}</div>`;
     } else {
@@ -7302,7 +7311,8 @@ class Hud {
     if (state.day === 1) notes.push(`<li><kbd>B</kbd> opens the cookbook (${mains} mains).</li>`);
     this.selfReady = !!state.ready[info.self];
     const others = Object.values(state.players).filter((p) => p.id !== info.self);
-    const partner = others.length ? (state.ready[others[0].id] ? `${esc(others[0].name)} is ready` : `Waiting for ${esc(others[0].name)}`) : '';
+    const waiting = others.filter((p) => !state.ready[p.id]).map((p) => p.name);
+    const partner = !others.length ? '' : waiting.length ? `Waiting for ${esc(nameList(waiting))}` : `${others.length === 1 ? esc(others[0].name) + ' is' : 'Everyone else is'} ready`;
     const html = `${items.length ? `<ul class="prep-alerts">${items.join('')}</ul>` : ''}<div class="row"><button class="btn ${this.selfReady ? 'on' : 'primary'}" data-act="ready">${this.selfReady ? '✓ Ready · undo' : 'Ready to open'}</button>
       <button class="btn ghost" data-act="office">Office <kbd>Tab</kbd></button>${partner ? `<span class="partner">${partner}</span>` : ''}</div>
       <details class="prep-notes"><summary>Prep notes</summary><ul>${notes.join('')}</ul></details>`;
@@ -8128,11 +8138,11 @@ __m.sim_sim = (() => {
 const { isStory, chapterInfo, CHAPTERS, AREAS, unlockList } = __m.data_progression;
 const { UPGRADES, MARKETING } = __m.data_upgrades;
 const { dailyGoal } = __m.sim_progression;
-const { CFG } = __m.config;
+const { CFG, MAX_PLAYERS } = __m.config;
 const { spawnPoints } = __m.data_layout;
 const { playerArea } = __m.data_alley;
 const { ING } = __m.data_ingredients;
-const { buildGrid, collide } = __m.sim_world;
+const { buildGrid, collide, walkable } = __m.sim_world;
 const { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } = __m.sim_state;
 const { actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById } = __m.sim_kitchen;
 const { updateParties, spawnParty, buildSchedule, compItem, sendHome, pay } = __m.sim_guests;
@@ -8171,6 +8181,14 @@ class Sim {
 
   playerCount() { return Object.keys(this.state.players).length; }
 
+  /** Where a chef in this slot starts. Older saves may have furniture on the newer spots, so fall back to the first two. */
+  spawnSpot(slot) {
+    const pts = spawnPoints(this.state);
+    const sp = pts[slot] || pts[0];
+    if (!this.grid || walkable(this.grid, Math.floor(sp.x), Math.floor(sp.z))) return sp;
+    return pts[slot % 2];
+  }
+
   // ------------------------------------------------------------ players
 
   addPlayer(pid, profile) {
@@ -8181,8 +8199,10 @@ class Sim {
       delete S.pendingPurchase;
       this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
     }
-    const slot = previous?.slot ?? (Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0);
-    const sp = spawnPoints(S)[slot];
+    const taken = new Set(Object.values(S.players).filter((p) => p.id !== pid).map((p) => p.slot));
+    let slot = previous?.slot ?? 0;
+    if (!previous) while (taken.has(slot) && slot < MAX_PLAYERS - 1) slot++;
+    const sp = this.spawnSpot(slot);
     S.players[pid] = {
       id: pid, slot, name: (profile.name || 'Chef').slice(0, 16), look: sanitizeLook(profile.look),
       x: sp.x, z: sp.z, rot: Math.PI, hand: null, tips: 0, last: {}, working: null,
@@ -8434,7 +8454,7 @@ class Sim {
     S.phase = 'office';
     S.ready = {};
     for (const p of Object.values(S.players)) {
-      const sp = spawnPoints(S)[p.slot];
+      const sp = this.spawnSpot(p.slot);
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
       p.area = 'restaurant'; p.areaRev = (p.areaRev || 0) + 1;
       p.space = false; p.working = null; p.smoking = null;
@@ -9041,15 +9061,17 @@ return { HAT_COLORS, APRON_COLORS, SHIRT_COLORS, SKIN, HAIR, loadProfile, savePr
 // ---- src/net/session.js ----
 __m.net_session = (() => {
 // A running game, from one laptop's point of view.
-//   host   runs the Sim, saves, and streams state to the partner.
+//   host   runs the Sim, saves, and streams state to every joined chef.
 //   client mirrors the host's state and sends its own moves and presses.
-// Solo play is a host with nobody connected.
-const { CFG, TICK, BUILD } = __m.config;
+// Solo play is a host with nobody connected. Up to MAX_PLAYERS chefs in all.
+const { CFG, TICK, BUILD, MAX_PLAYERS } = __m.config;
 const { Sim } = __m.sim_sim;
 const { buildGrid } = __m.sim_world;
 const { serialize } = __m.sim_state;
 const { Net } = __m.net_net;
 const HOST_PID = 'H', CLIENT_PID = 'C';
+// The first guest keeps 'C' so older tests and habits still line up.
+const CLIENT_PIDS = ['C', 'C2', 'C3'].slice(0, MAX_PLAYERS - 1);
 
 const strip = (k, v) => (k === 'path' || k === 'tx' || k === 'tz' || k === 'moving' ? undefined : v);
 const META_KEYS = ['stock', 'orders', 'history', 'report', 'reviews', 'lifetime', 'unlocked', 'spentUpgrades', 'spentMarketing', 'tipJar', 'created', 'mode', 'building', 'xp', 'level', 'prestige', 'owned', 'chapter', 'chapterDay', 'storyStats', 'debt', 'debtDays'];
@@ -9072,7 +9094,8 @@ class Session {
     this.listeners = {};
     this.selfPid = role === 'client' ? CLIENT_PID : HOST_PID;
     this.net = null;
-    this.partner = null;          // { peerId, name } when connected
+    this.clients = new Map();     // host: peerId -> { peerId, pid, name }
+    this.hostPeer = null;         // client: the host's peerId
     this.acc = 0;
     this.sendSlowAcc = 0;
     this.sendFastAcc = 0;
@@ -9088,6 +9111,9 @@ class Session {
   fire(type, ...a) { for (const fn of this.listeners[type] || []) fn(...a); }
 
   get state() { return this.role === 'client' ? this.replica : this.sim.state; }
+
+  /** Names of the other chefs connected to this host. */
+  get crewNames() { return [...this.clients.values()].map((c) => c.name); }
 
   gridFor(area = this.state?.players[this.selfPid]?.area || 'restaurant') {
     const s = this.state;
@@ -9119,68 +9145,101 @@ class Session {
     return s;
   }
 
+  /** Drops a joined chef: their player, their slot, and tells the UI. */
+  dropClient(peerId) {
+    const c = this.clients.get(peerId);
+    if (!c) return;
+    this.clients.delete(peerId);
+    this.sim.removePlayer(c.pid);
+    this.fire('partner', null, c.name);
+  }
+
+  /** Forgets chefs whose connection is gone without a leave message. */
+  pruneClients() {
+    const peers = this.net && this.net.peers;
+    if (!peers) return;
+    for (const peerId of [...this.clients.keys()]) if (!peers.has(peerId)) this.dropClient(peerId);
+  }
+
   wireHost() {
     const n = this.net;
+    const pidOf = (peerId) => this.clients.get(peerId)?.pid;
     n.on('hello', (d, peerId) => {
-      if (!d || d.build !== BUILD) { n.to('welcome', { ok: false, reason: `Version mismatch (host ${BUILD}). Both laptops should refresh the page.` }, peerId); return; }
-      if (this.partner && this.partner.peerId !== peerId && n.peers.has(this.partner.peerId)) { n.to('welcome', { ok: false, reason: 'This kitchen already has two chefs.' }, peerId); return; }
-      if (this.partner && this.partner.peerId !== peerId) this.sim.removePlayer(CLIENT_PID);
-      if (!this.sim.state.players[CLIENT_PID]) this.sim.addPlayer(CLIENT_PID, d.profile || {});
-      else this.sim.updateProfile(CLIENT_PID, d.profile || {});
-      this.partner = { peerId, name: this.sim.state.players[CLIENT_PID].name };
-      this.lastSlow = ''; this.lastMeta = '';
-      n.to('welcome', { ok: true, pid: CLIENT_PID, build: BUILD }, peerId);
-      this.sendSnapshots(true);
-      this.fire('partner', this.partner);
-    });
-    n.on('leave', (peerId) => {
-      if (this.partner && this.partner.peerId === peerId) {
-        this.sim.removePlayer(CLIENT_PID);
-        this.partner = null;
-        this.fire('partner', null);
+      if (!d || d.build !== BUILD) { n.to('welcome', { ok: false, reason: `Version mismatch (host ${BUILD}). Everyone should refresh the page.` }, peerId); return; }
+      let c = this.clients.get(peerId);
+      const fresh = !c;
+      if (!c) {
+        this.pruneClients();
+        const used = new Set([...this.clients.values()].map((x) => x.pid));
+        const pid = CLIENT_PIDS.find((x) => !used.has(x));
+        if (!pid) { n.to('welcome', { ok: false, reason: `This kitchen is full (${MAX_PLAYERS} chefs).` }, peerId); return; }
+        c = { peerId, pid, name: '' };
+        this.clients.set(peerId, c);
       }
+      if (!this.sim.state.players[c.pid]) this.sim.addPlayer(c.pid, d.profile || {});
+      else this.sim.updateProfile(c.pid, d.profile || {});
+      c.name = this.sim.state.players[c.pid].name;
+      this.lastSlow = ''; this.lastMeta = '';
+      n.to('welcome', { ok: true, pid: c.pid, build: BUILD }, peerId);
+      this.sendSnapshots(true);
+      if (fresh) this.fire('partner', { pid: c.pid, name: c.name });
     });
+    n.on('leave', (peerId) => this.dropClient(peerId));
     n.on('pose', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !Array.isArray(d)) return;
-      const p = this.sim.state.players[CLIENT_PID];
+      const pid = pidOf(peerId);
+      if (!pid || !Array.isArray(d)) return;
+      const p = this.sim.state.players[pid];
       if (!p || d[4] !== (p.area || 'restaurant') || d[5] !== (p.areaRev || 0)) return;
-      this.sim.setPose(CLIENT_PID, d[0], d[1], d[2], d[4], d[5]);
-      this.sim.setWork(CLIENT_PID, !!d[3], d[4], d[5]);
+      this.sim.setPose(pid, d[0], d[1], d[2], d[4], d[5]);
+      this.sim.setWork(pid, !!d[3], d[4], d[5]);
     });
     n.on('key', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !d) return;
-      const p = this.sim.state.players[CLIENT_PID];
+      const pid = pidOf(peerId);
+      if (!pid || !d) return;
+      const p = this.sim.state.players[pid];
       if (!p || d.area !== (p.area || 'restaurant') || d.areaRev !== (p.areaRev || 0)) return;
-      if (d.key === 'e' || d.key === 'q') this.sim.press(CLIENT_PID, d.key, d.area, d.areaRev);
+      if (d.key === 'e' || d.key === 'q') this.sim.press(pid, d.key, d.area, d.areaRev);
     });
     n.on('cmd', (d, peerId) => {
-      if (!this.partner || peerId !== this.partner.peerId || !d || typeof d.c !== 'string') return;
-      this.sim.command(CLIENT_PID, d);
+      const pid = pidOf(peerId);
+      if (!pid || !d || typeof d.c !== 'string') return;
+      this.sim.command(pid, d);
     });
     n.on('chat', (d, peerId) => {
-      if (this.partner && peerId === this.partner.peerId && d && typeof d.text === 'string') this.fire('chat', CLIENT_PID, d.text);
+      const pid = pidOf(peerId);
+      if (!pid || !d || typeof d.text !== 'string') return;
+      this.fire('chat', pid, d.text);
+      // Joined chefs only talk to the host, so pass the line along to the rest.
+      for (const other of this.clients.values()) if (other.peerId !== peerId) n.to('chat', { text: d.text, pid }, other.peerId);
     });
   }
 
   sendSnapshots(force = false) {
-    if (!this.net || !this.partner) return;
+    if (!this.net || !this.clients.size) return;
     const st = this.sim.state;
     const slow = JSON.stringify(liveOf(st), strip);
-    if (force || slow !== this.lastSlow) { this.lastSlow = slow; this.net.to('slow', slow, this.partner.peerId); }
+    if (force || slow !== this.lastSlow) {
+      this.lastSlow = slow;
+      for (const c of this.clients.values()) this.net.to('slow', slow, c.peerId);
+    }
     if (force || this.metaAcc <= 0) {
       this.metaAcc = 0.5;
       const meta = JSON.stringify(metaOf(st));
-      if (force || meta !== this.lastMeta) { this.lastMeta = meta; this.net.to('meta', meta, this.partner.peerId); }
+      if (force || meta !== this.lastMeta) {
+        this.lastMeta = meta;
+        for (const c of this.clients.values()) this.net.to('meta', meta, c.peerId);
+      }
     }
   }
 
   sendFast() {
-    if (!this.net || !this.partner) return;
+    if (!this.net || !this.clients.size) return;
     const st = this.sim.state;
     const p = {}, g = {};
     for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot), pl.area || 'restaurant', pl.areaRev || 0];
     for (const party of st.parties) for (const gu of party.guests) if (!gu.exited) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
-    this.net.to('fast', { p, g }, this.partner.peerId);
+    const msg = { p, g };
+    for (const c of this.clients.values()) this.net.to('fast', msg, c.peerId);
   }
 
   // ------------------------------------------------------------ client
@@ -9194,7 +9253,7 @@ class Session {
     return new Promise((resolve, reject) => {
       let done = false;
       const fail = (msg) => { if (!done) { done = true; s.net.close(); reject(new Error(msg)); } };
-      const timer = setTimeout(() => fail("Couldn't find that kitchen. Check the code and make sure your partner is hosting."), 20000);
+      const timer = setTimeout(() => fail("Couldn't find that kitchen. Check the code and make sure the host is hosting."), 20000);
       const hello = () => s.net.to('hello', { build: BUILD, profile });
       s.net.on('join', () => hello());
       hello();
@@ -9203,6 +9262,7 @@ class Session {
         if (done) return;
         if (!d || !d.ok) { clearTimeout(timer); fail(d && d.reason ? d.reason : 'The host turned us away.'); return; }
         s.hostPeer = peerId;
+        s.selfPid = d.pid || CLIENT_PID;
         s.welcomed = true;
       });
       s.net.on('slow', (d, peerId) => {
@@ -9235,15 +9295,23 @@ class Session {
 
   wireClient() {
     const n = this.net;
-    this.partner = { peerId: this.hostPeer };
     n.on('fast', (d, peerId) => { if (peerId === this.hostPeer && d) this.fast = d; });
     n.on('ev', (list, peerId) => { if (peerId === this.hostPeer && Array.isArray(list)) for (const e of list) this.fire('event', e); });
-    n.on('chat', (d, peerId) => { if (peerId === this.hostPeer && d && typeof d.text === 'string') this.fire('chat', HOST_PID, d.text); });
+    n.on('chat', (d, peerId) => {
+      if (peerId !== this.hostPeer || !d || typeof d.text !== 'string') return;
+      const pid = typeof d.pid === 'string' ? d.pid : HOST_PID;
+      if (pid !== this.selfPid) this.fire('chat', pid, d.text);
+    });
     n.on('leave', (peerId) => {
       if (peerId === this.hostPeer) { this.lost = true; this.fire('lost'); }
     });
     n.on('join', () => { if (this.lost) n.to('hello', { build: BUILD, profile: this.profile }); });
-    n.on('welcome', (d, peerId) => { if (d && d.ok) { this.hostPeer = peerId; this.partner = { peerId }; if (this.lost) { this.lost = false; this.fire('back'); } } });
+    n.on('welcome', (d, peerId) => {
+      if (!d || !d.ok) return;
+      this.hostPeer = peerId;
+      if (d.pid && d.pid !== this.selfPid) { this.selfPid = d.pid; this.pose = null; }
+      if (this.lost) { this.lost = false; this.fire('back'); }
+    });
   }
 
   // ------------------------------------------------------------ shared API
@@ -9269,13 +9337,17 @@ class Session {
     else this.sim.press(this.selfPid, key, area, areaRev);
   }
 
-  /** True when a partner is connected to talk to. */
-  get canChat() { return !!(this.net && this.partner && !this.lost); }
+  /** True when there is another chef to talk to. */
+  get canChat() {
+    if (!this.net) return false;
+    return this.role === 'client' ? !!(this.hostPeer && !this.lost) : this.clients.size > 0;
+  }
 
-  /** Sends a chat line to the partner and shows it locally. Chat is not game state. */
+  /** Sends a chat line to the other chefs and shows it locally. Chat is not game state. */
   chat(text) {
     if (!this.canChat) return false;
-    this.net.to('chat', { text }, this.role === 'client' ? this.hostPeer : this.partner.peerId);
+    if (this.role === 'client') this.net.to('chat', { text }, this.hostPeer);
+    else for (const c of this.clients.values()) this.net.to('chat', { text, pid: this.selfPid }, c.peerId);
     this.fire('chat', this.selfPid, text);
     return true;
   }
@@ -9305,13 +9377,13 @@ class Session {
       const evs = this.sim.drain();
       if (evs.length) {
         if (evs.some((e) => ['chapter', 'chefLevelUp', 'dayEnd', 'areaChanged'].includes(e.type))) this.sendSnapshots(true);
-        const mine = [], theirs = [];
-        for (const e of evs) {
-          if (!e.to || e.to === this.selfPid) mine.push(e);
-          if (!e.to || e.to === CLIENT_PID) theirs.push(e);
+        for (const e of evs) if (!e.to || e.to === this.selfPid) this.fire('event', e);
+        if (this.net) {
+          for (const c of this.clients.values()) {
+            const theirs = evs.filter((e) => !e.to || e.to === c.pid);
+            if (theirs.length) this.net.to('ev', theirs, c.peerId);
+          }
         }
-        for (const e of mine) this.fire('event', e);
-        if (theirs.length && this.net && this.partner) this.net.to('ev', theirs, this.partner.peerId);
       }
     }
     this.sendSlowAcc -= dt;
@@ -9450,9 +9522,9 @@ class App {
   wireSession() {
     const s = this.session;
     s.on('event', (e) => this.onEvent(e));
-    s.on('partner', (p) => {
+    s.on('partner', (p, leftName) => {
       if (p) { this.hud.toast(`${p.name} joined the kitchen!`, 'good'); sfx('door'); }
-      else this.hud.toast('Your partner left. The kitchen is yours.', 'warn');
+      else this.hud.toast(`${leftName || 'A chef'} left the kitchen.`, 'warn');
     });
     s.on('lost', () => this.hud.toast('Lost connection to the host. Trying to reconnect…', 'bad', 6000));
     s.on('back', () => this.hud.toast('Reconnected!', 'good'));
@@ -9465,7 +9537,7 @@ class App {
   }
 
   sendChat(text) {
-    if (!this.session || !this.session.chat(text)) this.hud.toast('Your partner is not connected.', 'warn');
+    if (!this.session || !this.session.chat(text)) this.hud.toast('Nobody else is in the kitchen yet.', 'warn');
     this.focusGame();
   }
 
@@ -9782,7 +9854,7 @@ class App {
     this.view.sync(st, dt, { self: this.selfPid, area, poses: allPoses, guestPoses: guests });
     this.overlay.update(st, { extra: s.role === 'client' && !st.paused ? Math.min(s.since, 0.3) : 0, dt, self: this.selfPid, area, target: info && (info.e || info.space || info.q) ? info.target : null });
     this.aimTarget = info && info.target ? areaObjects(st, area).find((o) => o.id === info.target) : null;
-    this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, partner: s.partner && s.role === 'host' ? s.partner.name : null, lost: s.lost }, dt);
+    this.hud.update(st, { describe: info, self: this.selfPid, role: s.role, crew: s.role === 'host' ? s.crewNames : null, lost: s.lost }, dt);
     this.office.update(st);
     this.view.render();
     let guestsIn = 0;

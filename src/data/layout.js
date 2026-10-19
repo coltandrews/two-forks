@@ -93,7 +93,7 @@ export const QUEUE_SPOTS = [
   { x: 2.5, z: 12.9 }, { x: 1.6, z: 12.9 }, { x: 1.6, z: 12.0 }, { x: 2.5, z: 12.0 },
   { x: 1.6, z: 11.1 }, { x: 2.5, z: 11.1 }, { x: 1.6, z: 10.2 }, { x: 2.5, z: 10.2 },
 ];
-export const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }];
+export const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }, { x: 9.5, z: 4.5 }, { x: 12.5, z: 4.5 }];
 
 export const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
 export const FLOOR_EXPANSION_WIDTH = 10;
@@ -108,7 +108,7 @@ export function frontDoor(state) { return { x: FRONT_DOOR.x, z: roomSize(state).
 
 export function spawnPoints(state) {
   return state.mode === 'story' && state.building?.height === STORY_BUILDING.height
-    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }]
+    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }, { x: 8.5, z: 4.5 }, { x: 11.5, z: 4.5 }]
     : SPAWN_POINTS;
 }
 

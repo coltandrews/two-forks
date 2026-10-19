@@ -1,4 +1,4 @@
-// Quick chat for two-player games. Enter opens a one-line box, Enter again
+// Quick chat for co-op games (up to four chefs). Enter opens a one-line box, Enter again
 // sends, Esc (or clicking away) cancels. Lines show as speech bubbles over
 // the sender's chef (see Overlay.say) for CHAT_SECONDS.
 export const CHAT_MAX = 80;
@@ -16,7 +16,7 @@ export class ChatBox {
     this.el.className = 'chat-box';
     this.el.hidden = true;
     this.el.innerHTML = `<label class="chat-label" for="chat-input">Say</label>`
-      + `<input id="chat-input" maxlength="${CHAT_MAX}" autocomplete="off" spellcheck="false" placeholder="Message your partner…">`
+      + `<input id="chat-input" maxlength="${CHAT_MAX}" autocomplete="off" spellcheck="false" placeholder="Message the kitchen…">`
       + `<span class="chat-hint"><kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel</span>`;
     this.input = this.el.querySelector('input');
     root.appendChild(this.el);

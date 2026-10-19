@@ -740,7 +740,7 @@ export function buildSchedule(expected, players) {
     }
     return CFG.doorsLock - 1;
   };
-  const gap = players <= 1 ? T.minGap.solo : T.minGap.duo;
+  const gap = T.minGap[Math.max(1, Math.min(T.minGap.length, players || 1)) - 1];
   const out = [];
   for (let i = 0; i < n; i++) out.push(at((i + 0.15 + Math.random() * 0.7) / n));
   out.sort((a, b) => a - b);

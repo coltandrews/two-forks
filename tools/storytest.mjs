@@ -310,7 +310,7 @@ async function verifySessionSnapshots() {
   host.sim.addPlayer('C', { name: 'Guest chef' });
   const client = new Session('client');
   const hostHandlers = {}, clientHandlers = {}, messages = [], events = [];
-  host.partner = { peerId: 'client' };
+  host.clients.set('client', { peerId: 'client', pid: 'C', name: 'Guest chef' });
   host.net = {
     on(type, fn) { hostHandlers[type] = fn; },
     to(type, data, peerId) { messages.push({ type, data: structuredClone(data), peerId }); },

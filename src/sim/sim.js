@@ -3,11 +3,11 @@
 import { isStory, chapterInfo, CHAPTERS, AREAS, unlockList } from '../data/progression.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { dailyGoal } from './progression.js';
-import { CFG } from '../config.js';
+import { CFG, MAX_PLAYERS } from '../config.js';
 import { spawnPoints } from '../data/layout.js';
 import { playerArea } from '../data/alley.js';
 import { ING } from '../data/ingredients.js';
-import { buildGrid, collide } from './world.js';
+import { buildGrid, collide, walkable } from './world.js';
 import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } from './state.js';
 import {
   actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
@@ -52,6 +52,14 @@ export class Sim {
 
   playerCount() { return Object.keys(this.state.players).length; }
 
+  /** Where a chef in this slot starts. Older saves may have furniture on the newer spots, so fall back to the first two. */
+  spawnSpot(slot) {
+    const pts = spawnPoints(this.state);
+    const sp = pts[slot] || pts[0];
+    if (!this.grid || walkable(this.grid, Math.floor(sp.x), Math.floor(sp.z))) return sp;
+    return pts[slot % 2];
+  }
+
   // ------------------------------------------------------------ players
 
   addPlayer(pid, profile) {
@@ -62,8 +70,10 @@ export class Sim {
       delete S.pendingPurchase;
       this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
     }
-    const slot = previous?.slot ?? (Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0);
-    const sp = spawnPoints(S)[slot];
+    const taken = new Set(Object.values(S.players).filter((p) => p.id !== pid).map((p) => p.slot));
+    let slot = previous?.slot ?? 0;
+    if (!previous) while (taken.has(slot) && slot < MAX_PLAYERS - 1) slot++;
+    const sp = this.spawnSpot(slot);
     S.players[pid] = {
       id: pid, slot, name: (profile.name || 'Chef').slice(0, 16), look: sanitizeLook(profile.look),
       x: sp.x, z: sp.z, rot: Math.PI, hand: null, tips: 0, last: {}, working: null,
@@ -315,7 +325,7 @@ export class Sim {
     S.phase = 'office';
     S.ready = {};
     for (const p of Object.values(S.players)) {
-      const sp = spawnPoints(S)[p.slot];
+      const sp = this.spawnSpot(p.slot);
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
       p.area = 'restaurant'; p.areaRev = (p.areaRev || 0) + 1;
       p.space = false; p.working = null; p.smoking = null;
