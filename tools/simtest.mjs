@@ -1,7 +1,8 @@
 // Headless test: a bot plays several full days of every cuisine through the
 // real interaction code (teleporting between stations instead of walking).
 // Run: node tools/simtest.mjs [cuisine] [days]
-import { newState, dishById, serialize, deserialize } from '../src/sim/state.js';
+import { newState, dishById, serialize, deserialize, SAVE_VERSION } from '../src/sim/state.js';
+import { BUILD } from '../src/config.js';
 import { Sim } from '../src/sim/sim.js';
 import { actE, findTarget } from '../src/sim/kitchen.js';
 import { walkable, footprint, validateLayout } from '../src/sim/world.js';
@@ -411,11 +412,14 @@ function cookEveryDish() {
 
 function verifyStartingLayouts() {
   const signatures = new Set();
+  const hostX = { southern: 4, italian: 4, mexican: 3, diner: 3, noodle: 8 };
   let expectedCounts = null;
   for (const cuisine of CUISINE_ORDER) {
     const state = newState({ cuisine, name: 'Layout test', mode: 'arcade' });
     if (JSON.stringify(roomSize(state)) !== JSON.stringify({ width: 20, height: 15 })) throw new Error(`Arcade floor size changed for ${cuisine}`);
     if (state.cash !== 3000) throw new Error(`Wrong normal arcade cash for ${cuisine}: ${state.cash}`);
+    const host = state.objects.find((o) => o.type === 'host');
+    if (host.x !== hostX[cuisine] || host.z !== 13) throw new Error(`Wrong starting host stand position for ${cuisine}`);
     const status = validateLayout(state, frontDoor(state));
     if (!status.ok) throw new Error(`Invalid starting layout for ${cuisine}: ${status.reason}`);
     const counts = Object.fromEntries([...new Set(state.objects.map((o) => o.type))].sort().map((type) => [type, state.objects.filter((o) => o.type === type).length]));
@@ -439,10 +443,45 @@ function verifyStartingLayouts() {
   console.log('checked five unique layouts, starting cash, and full-floor item movement');
 }
 
+function verifyHostStandSaves() {
+  for (const [cuisine, x] of [['italian', 4], ['mexican', 3], ['diner', 3]]) {
+    const old = serialize(newState({ cuisine, name: 'Saved layout', mode: 'arcade' }));
+    old.v = 3;
+    old.build = 'tf-1.2.6-menu-sizes';
+    old.day = 4;
+    old.cash = 875.25;
+    old.objects.find((o) => o.type === 'host').x = 18;
+    old.objects.find((o) => o.type === 'rack').n = 7;
+    old.objects.find((o) => o.type === 'table').dirty = 2;
+    const expected = structuredClone(old);
+    expected.v = SAVE_VERSION;
+    expected.build = BUILD;
+    expected.objects.find((o) => o.type === 'host').x = x;
+    const loaded = deserialize(structuredClone(old));
+    if (JSON.stringify(loaded) !== JSON.stringify(expected)) throw new Error(`Host stand repair changed saved state or missed the old layout for ${cuisine}`);
+    if (!validateLayout(loaded).ok) throw new Error(`Host stand repair made an invalid layout for ${cuisine}`);
+    if (JSON.stringify(deserialize(serialize(loaded))) !== JSON.stringify(loaded)) throw new Error(`Host stand repair repeated on reload for ${cuisine}`);
+
+    for (const change of ['current save', 'moved host', 'moved counter', 'extra furniture']) {
+      const custom = structuredClone(old);
+      if (change === 'current save') custom.v = 4;
+      if (change === 'moved host') custom.objects.find((o) => o.type === 'host').x = 10;
+      if (change === 'moved counter') Object.assign(custom.objects.find((o) => o.type === 'counter'), { x: 9, z: 6 });
+      if (change === 'extra furniture') custom.objects.push({ id: `o${++custom.seq}`, type: 'counter', x: 9, z: 6, slot: null });
+      const unchanged = structuredClone(custom);
+      unchanged.v = SAVE_VERSION;
+      unchanged.build = BUILD;
+      if (JSON.stringify(deserialize(custom)) !== JSON.stringify(unchanged)) throw new Error(`Host stand repair changed ${change} for ${cuisine}`);
+    }
+  }
+  console.log('checked host stand save repair, saved data, custom layouts, and reloads');
+}
+
 const itemsMod = await import('../src/sim/items.js');
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   Math.random = seededRandom(20261018);
   verifyStartingLayouts();
+  verifyHostStandSaves();
   cookEveryDish();
   const only = process.argv[2];
   const days = +(process.argv[3] || 3);

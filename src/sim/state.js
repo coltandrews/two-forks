@@ -6,8 +6,9 @@ import { startingObjects, STORY_BUILDING } from '../data/layout.js';
 import { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } from '../data/progression.js';
 import { dailyGoal } from './progression.js';
 import { TRASH_CAPACITY } from '../data/alley.js';
+import { footprint, validateLayout } from './world.js';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function nextId(state, prefix = 'o') {
@@ -197,10 +198,27 @@ export function serialize(state) {
   return s;
 }
 
+/** Repair only unchanged starter floors; old saves do not record furniture moves. */
+function repairStartingHost(state) {
+  if (!['italian', 'mexican', 'diner'].includes(state.cuisine)) return;
+  const defaults = startingObjects(state.cuisine);
+  const oldLayout = defaults.map((o) => o.type === 'host' ? { ...o, x: 18, z: 13 } : o);
+  const signature = (objects) => JSON.stringify(objects.map((o) => {
+    const f = footprint(o);
+    return [o.type, f.x, f.z, f.w, f.h, o.seats || 0];
+  }).sort());
+  if (signature(state.objects) !== signature(oldLayout)) return;
+  const host = state.objects.find((o) => o.type === 'host');
+  const target = defaults.find((o) => o.type === 'host');
+  host.x = target.x; host.z = target.z;
+  if (!validateLayout(state).ok) { host.x = 18; host.z = 13; }
+}
+
 export function deserialize(obj) {
   if (!obj || typeof obj !== 'object' || !obj.cuisine || !CUISINES[obj.cuisine]) throw new Error('Not a Two Forks save');
   const s = obj;
   s.mode = s.mode === 'story' ? 'story' : 'arcade';
+  if ((s.v || 0) < 4 && s.mode === 'arcade') repairStartingHost(s);
   s.v = SAVE_VERSION;
   delete s.pendingPurchase;
   for (const o of s.objects) if (o.type === 'bin') {
