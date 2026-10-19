@@ -321,7 +321,8 @@ kbd {
 .pick.wanted::after { content: 'NEEDED'; position: absolute; left: 10px; top: -9px; font: 9px var(--display); letter-spacing: 0.08em; background: var(--green); color: #fff; border: 2px solid var(--ink); border-radius: 5px; padding: 0 4px; }
 .empty { color: var(--ink-3); padding: 18px; text-align: center; font-weight: 800; }
 
-.cookbook .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.sheet.cookbook { width: min(1000px, 100%); }
+.cookbook .cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 12px; }
 .recipe { min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .recipe h4 { margin: 0; font: 1.15rem var(--display); display: flex; justify-content: space-between; gap: 8px; letter-spacing: 0.01em; overflow-wrap: anywhere; }
 .recipe h4 small { flex: none; align-self: flex-start; font: 0.95rem var(--display); color: var(--green-d); white-space: nowrap; }
