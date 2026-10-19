@@ -526,6 +526,7 @@ export class View {
     for (const party of state.parties) {
       const seated = ['browsing', 'ordering', 'waitingFood', 'eating', 'dessertReady', 'dessertWait', 'dessertEat', 'paying'].includes(party.state);
       for (const g of party.guests) {
+        if (g.exited) continue;
         gseen.add(g.id);
         let c = this.guests.get(g.id);
         if (!c) {

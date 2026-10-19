@@ -24,6 +24,7 @@ export class Sim {
   constructor(state) {
     this.state = state;
     this.events = [];
+    this.guestMotion = new Map();
     this.time = state.t || 0;
     this.layoutRev = 0;
     this.announcedLevel = state.level || 1;

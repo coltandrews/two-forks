@@ -135,7 +135,7 @@ export class Session {
     const st = this.sim.state;
     const p = {}, g = {};
     for (const [pid, pl] of Object.entries(st.players)) p[pid] = [r2(pl.x), r2(pl.z), r2(pl.rot), pl.area || 'restaurant', pl.areaRev || 0];
-    for (const party of st.parties) for (const gu of party.guests) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
+    for (const party of st.parties) for (const gu of party.guests) if (!gu.exited) g[gu.id] = [r2(gu.x), r2(gu.z), r2(gu.rot)];
     this.net.to('fast', { p, g }, this.partner.peerId);
   }
 

@@ -1,6 +1,6 @@
 // Every tuning number in one place. Times are real seconds unless noted.
 
-export const BUILD = 'tf-1.2.2-cookbook-icon';
+export const BUILD = 'tf-1.2.3-guest-spacing';
 export const APP_ID = 'two-forks-bistro-game-2026';
 
 export const CFG = {
@@ -40,6 +40,8 @@ export const CFG = {
     dessertEat: [28, 38],
     payPatience: 50,
     walkSpeed: 2.6,
+    radius: 0.34,
+    seatingTimeout: 20,
   },
 
   traffic: {

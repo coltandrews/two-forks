@@ -7,6 +7,7 @@ import { ING } from '../data/ingredients.js';
 import { dishById, drinkById, dishVeg, courseSlot, repLevel, nextId } from './state.js';
 import { findPath, seatsOf, walkable } from './world.js';
 import { availableUnits, menuItemsOn } from './economy.js';
+import { moveGuests } from './crowd.js';
 import { matchDish, plateQuality, itemCost } from './items.js';
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -34,32 +35,73 @@ function goTo(sim, g, x, z) {
   g.tx = x; g.tz = z;
 }
 
-function moveGuest(g, dt, speed) {
-  let budget = speed * dt;
-  while (budget > 0) {
-    let target = g.path.length ? g.path[0] : (g.tx != null ? { x: g.tx, z: g.tz } : null);
-    if (!target) break;
-    const dx = target.x - g.x, dz = target.z - g.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 1e-3) {
-      if (g.path.length) g.path.shift(); else { g.tx = null; g.tz = null; }
-      continue;
-    }
-    const step = Math.min(d, budget);
-    g.x += (dx / d) * step;
-    g.z += (dz / d) * step;
-    g.rot = Math.atan2(dx, dz);
-    budget -= step;
-    g.moving = true;
-    if (step >= d) {
-      if (g.path.length) g.path.shift(); else { g.tx = null; g.tz = null; }
-    }
-  }
-}
-
 function arrived(g) { return !g.path.length && g.tx == null; }
 
 // ------------------------------------------------------------ spawning
+
+const GUEST_SPACING = 0.8;
+
+function guestPointClear(sim, point) {
+  const r = CFG.party.radius;
+  for (let z = Math.floor(point.z - r); z <= Math.floor(point.z + r); z++) {
+    for (let x = Math.floor(point.x - r); x <= Math.floor(point.x + r); x++) {
+      if (walkable(sim.grid, x, z)) continue;
+      const dx = point.x - clamp(point.x, x, x + 1), dz = point.z - clamp(point.z, z, z + 1);
+      if (dx * dx + dz * dz < r * r) return false;
+    }
+  }
+  return true;
+}
+
+/** Reachable tile centers keep the queue clear of moved furniture. */
+function reachableFloorSpots(grid, door) {
+  const width = grid.width;
+  const todo = [{ x: door.x, z: door.z }], seen = new Set([door.z * width + door.x]), spots = [];
+  for (let i = 0; i < todo.length; i++) {
+    const tile = todo[i];
+    if (walkable(grid, tile.x, tile.z)) spots.push({ x: tile.x + 0.5, z: tile.z + 0.5 });
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = tile.x + dx, z = tile.z + dz, key = z * width + x;
+      if (seen.has(key) || !walkable(grid, x, z)) continue;
+      seen.add(key);
+      todo.push({ x, z });
+    }
+  }
+  return spots;
+}
+
+function guestFloorSpots(sim) { return reachableFloorSpots(sim.grid, frontDoor(sim.state)); }
+
+function queuePositions(sim) {
+  const door = frontDoor(sim.state), anchors = queueSpots(sim.state);
+  const score = (point) => Math.min(...anchors.map((s) => (s.x - point.x) ** 2 + (s.z - point.z) ** 2));
+  const floor = guestFloorSpots(sim);
+  const candidates = floor
+    .filter((s) => s.z >= 6 && s.z < door.z && Math.floor(s.x) !== door.x)
+    .sort((a, b) => score(a) - score(b) || b.z - a.z || a.x - b.x);
+  const grid = { ...sim.grid, blocked: sim.grid.blocked.slice() }, spots = [];
+  const cell = (point) => Math.floor(point.z) * grid.width + Math.floor(point.x);
+  const hasApproach = (point, reachable) => [-1, 1, -grid.width, grid.width].some((offset) => reachable.has(cell(point) + offset));
+  const chairs = sim.state.objects.filter((o) => o.type === 'table').flatMap(seatsOf);
+  for (const point of candidates) {
+    grid.blocked[cell(point)] = 1;
+    const reachable = new Set(reachableFloorSpots(grid, door).map(cell));
+    // A waiting guest must not cut a route through the room or block access
+    // to another queue cell or a chair, including seats along the front wall.
+    if (reachable.size !== floor.length - spots.length - 1 || !hasApproach(point, reachable)
+      || spots.some((spot) => !hasApproach(spot, reachable)) || chairs.some((chair) => !hasApproach(chair, reachable))) {
+      grid.blocked[cell(point)] = 0;
+      continue;
+    }
+    spots.push(point);
+    if (spots.length === CFG.queueMax * 4) break;
+  }
+  return spots;
+}
+
+function spacedFrom(point, others) {
+  return others.every((other) => Math.hypot(point.x - other.x, point.z - other.z) >= GUEST_SPACING - 1e-6);
+}
 
 function rollSize(maxSeats) {
   const r = Math.random();
@@ -74,8 +116,22 @@ export function spawnParty(sim, opts = {}) {
   if (waiting.length >= CFG.queueMax) { S.today.turnedAway++; return null; }
   const maxSeats = Math.max(...S.objects.filter((o) => o.type === 'table').map((t) => t.seats), 2);
   const critic = opts.critic ?? (isStory(S) ? S.chapter === 3 && !S.storyStats.criticPassed && !S.today.criticVisited : S.day >= 3 && Math.random() < 0.035);
-  if (critic && isStory(S)) S.today.criticVisited = true;
   const size = critic ? 1 : opts.size || rollSize(maxSeats);
+  const queue = queuePositions(sim);
+  const occupied = S.parties.flatMap((p) => p.guests.filter((g) => !g.exited));
+  const spawn = [];
+  const entrance = { x: door.x + 0.5, z: door.z + 0.5 };
+  const candidates = [entrance, ...queue].sort((a, b) => Math.hypot(a.x - entrance.x, a.z - entrance.z) - Math.hypot(b.x - entrance.x, b.z - entrance.z));
+  for (const point of candidates) {
+    if (!guestPointClear(sim, point) || !spacedFrom(point, occupied) || !spacedFrom(point, spawn)) continue;
+    spawn.push(point);
+    if (spawn.length === size) break;
+  }
+  if (queue.length < waiting.reduce((n, p) => n + p.guests.length, 0) + size || spawn.length < size) {
+    S.today.turnedAway++;
+    return null;
+  }
+  if (critic && isStory(S)) S.today.criticVisited = true;
   const r = Math.random();
   const kind = critic ? 'critic' : r < 0.3 ? 'budget' : r < 0.8 ? 'regular' : 'foodie';
   const decor = (S.upgrades.decor1 ? 4 : 0) + (S.upgrades.decor2 ? 4 : 0) + (S.upgrades.decor3 ? 4 : 0);
@@ -87,7 +143,7 @@ export function spawnParty(sim, opts = {}) {
   };
   for (let i = 0; i < size; i++) {
     party.guests.push({
-      id: party.id + 'g' + i, x: door.x + 0.5 + rand(-0.2, 0.2), z: door.z + 0.4, rot: Math.PI,
+      id: party.id + 'g' + i, x: spawn[i].x, z: spawn[i].z, rot: Math.PI,
       path: [], tx: null, tz: null, seat: -1, look: guestLook(critic && i === 0), veg: Math.random() < 0.12,
       eating: false,
     });
@@ -101,17 +157,42 @@ export function spawnParty(sim, opts = {}) {
   return party;
 }
 
-/** Gives every waiting party a queue spot in arrival order. */
+/** Keep guests near their current positions and leave a passage from the door. */
 function assignQueue(sim) {
-  const spots = queueSpots(sim.state);
+  const spots = queuePositions(sim);
   const q = sim.state.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
+  const guests = q.flatMap((p) => p.guests.filter((g) => !g.exited));
+  const pending = [...guests], targets = new Map();
+  // Assign the closest guest/cell pairs first. A guest already in a good cell
+  // keeps it instead of crossing the queue when another party arrives.
+  while (pending.length && spots.length) {
+    let bestGuest = -1, bestSpot = -1, distance = Infinity;
+    for (let i = 0; i < pending.length; i++) for (let j = 0; j < spots.length; j++) {
+      const guest = pending[i], point = spots[j];
+      if (!spacedFrom(point, guests.filter((other) => other !== guest))) continue;
+      const d = (guest.x - point.x) ** 2 + (guest.z - point.z) ** 2;
+      if (d < distance) { distance = d; bestGuest = i; bestSpot = j; }
+    }
+    if (bestGuest < 0) break;
+    targets.set(pending[bestGuest], spots[bestSpot]);
+    pending.splice(bestGuest, 1);
+    spots.splice(bestSpot, 1);
+  }
   q.forEach((p, i) => {
-    if (p.spot === i) return;
     p.spot = i;
-    const s = spots[Math.min(i, spots.length - 1)];
-    p.guests.forEach((g, k) => {
-      const ox = ((k % 2) - 0.5) * 0.36, oz = (k >> 1) * 0.3 - 0.15;
-      goTo(sim, g, s.x + ox, s.z + oz);
+    p.guests.forEach((g) => {
+      const s = targets.get(g);
+      if (!s) { g.path = []; g.tx = null; g.tz = null; return; }
+      if (g.tx !== s.x || g.tz !== s.z) {
+        goTo(sim, g, s.x, s.z);
+        const blocked = sim.grid.blocked.slice();
+        for (const party of sim.state.parties) for (const other of party.guests) {
+          if (other === g || other.exited) continue;
+          blocked[Math.floor(other.z) * sim.grid.width + Math.floor(other.x)] = 1;
+        }
+        const path = findPath({ ...sim.grid, blocked }, g.x, g.z, s.x, s.z);
+        if (path) g.path = path;
+      }
     });
   });
   sim.state.today.peakQueue = Math.max(sim.state.today.peakQueue, q.length);
@@ -532,7 +613,6 @@ function review(sim, party, paid) {
 export function updateParties(sim, dt) {
   const S = sim.state;
   const P = CFG.party;
-  const speed = P.walkSpeed;
   for (const p of S.parties) {
     p.t += dt;
     const drain = (rate = 1) => { p.mood -= P.drain * rate * dt; };
@@ -554,18 +634,25 @@ export function updateParties(sim, dt) {
         if (p.retarget <= 0) {
           p.retarget = 0.35;
           const fx = Math.sin(pl.rot), fz = Math.cos(pl.rot);
-          p.guests.forEach((g, i) => {
-            const back = 0.85 + i * 0.5;
-            let tx = pl.x - fx * back, tz = pl.z - fz * back;
-            const tix = Math.floor(tx), tiz = Math.floor(tz);
-            if (!walkable(sim.grid, tix, tiz)) { tx = pl.x; tz = pl.z; }
-            if (Math.hypot(tx - g.x, tz - g.z) > 0.5) goTo(sim, g, tx, tz);
+          const floor = guestFloorSpots(sim), reserved = [{ x: pl.x, z: pl.z }];
+          p.guests.filter((g) => !g.exited).forEach((g, i) => {
+            const back = 0.95 + i * 0.85;
+            const desired = { x: pl.x - fx * back, z: pl.z - fz * back };
+            const score = (point) => (point.x - desired.x) ** 2 + (point.z - desired.z) ** 2
+              + Math.max(0, (point.x - pl.x) * fx + (point.z - pl.z) * fz) * 2;
+            const candidates = [desired, ...floor].sort((a, b) => score(a) - score(b));
+            const target = candidates.find((point) => guestPointClear(sim, point) && spacedFrom(point, reserved)
+              && findPath(sim.grid, g.x, g.z, point.x, point.z) !== null);
+            if (!target) { reserved.push(g); return; }
+            reserved.push(target);
+            if (Math.hypot(target.x - g.x, target.z - g.z) > 0.15) goTo(sim, g, target.x, target.z);
+            else { g.path = []; g.tx = null; g.tz = null; }
           });
         }
         break;
       }
       case 'seating':
-        if (p.guests.every(arrived) || p.t > 10) {
+        if (p.guests.every(arrived) || p.t > P.seatingTimeout) {
           const t = S.objects.find((o) => o.id === p.table);
           if (t) {
             const seats = seatsOf(t);
@@ -618,11 +705,8 @@ export function updateParties(sim, dt) {
         if (p.guests.every(arrived) || p.t > 20) p.gone = true;
         break;
     }
-    for (const g of p.guests) {
-      g.moving = false;
-      if (p.state !== 'browsing' && p.state !== 'ordering' && !['waitingFood', 'eating', 'dessertReady', 'dessertWait', 'dessertEat', 'paying'].includes(p.state)) moveGuest(g, dt, speed);
-    }
   }
+  moveGuests(sim, dt);
   const before = S.parties.length;
   S.parties = S.parties.filter((p) => !p.gone);
   if (S.parties.length !== before) assignQueue(sim);
