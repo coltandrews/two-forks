@@ -6,6 +6,7 @@ import { Sim } from '../src/sim/sim.js';
 import { actE, findTarget } from '../src/sim/kitchen.js';
 import { walkable, footprint, validateLayout } from '../src/sim/world.js';
 import { ING } from '../src/data/ingredients.js';
+import { frontDoor, roomSize } from '../src/data/layout.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
 import { autofillPlan, placementStatus, tryMove } from '../src/sim/economy.js';
 import { pathToFileURL } from 'node:url';
@@ -393,8 +394,9 @@ function verifyStartingLayouts() {
   let expectedCounts = null;
   for (const cuisine of CUISINE_ORDER) {
     const state = newState({ cuisine, name: 'Layout test', mode: 'arcade' });
+    if (JSON.stringify(roomSize(state)) !== JSON.stringify({ width: 20, height: 15 })) throw new Error(`Arcade floor size changed for ${cuisine}`);
     if (state.cash !== 3000) throw new Error(`Wrong normal arcade cash for ${cuisine}: ${state.cash}`);
-    const status = validateLayout(state, { x: 2, z: 14 });
+    const status = validateLayout(state, frontDoor(state));
     if (!status.ok) throw new Error(`Invalid starting layout for ${cuisine}: ${status.reason}`);
     const counts = Object.fromEntries([...new Set(state.objects.map((o) => o.type))].sort().map((type) => [type, state.objects.filter((o) => o.type === type).length]));
     if (!expectedCounts) expectedCounts = counts;

@@ -1,7 +1,7 @@
 // Wires everything together: lobby, session (host / client / solo), the
 // local chef's movement, the 3D view, HUD, office and sound.
 import { CFG } from './config.js';
-import { SPAWN_POINTS } from './data/layout.js';
+import { spawnPoints } from './data/layout.js';
 import { newState, deserialize, encodeSave } from './sim/state.js';
 import { collide } from './sim/world.js';
 import { describe } from './sim/kitchen.js';
@@ -63,14 +63,23 @@ class App {
   // ------------------------------------------------------------ starting and leaving
 
   async start({ mode, state, saveId, loaded }) {
+    if (this.lobby.starting) return;
     unlockAudio();
     if (loaded) {
       try { state = deserialize(state); } catch (e) { alert('That save could not be loaded: ' + e.message); return; }
     }
     this.saveId = saveId;
     this.code = mode === 'host' ? makeCode() : null;
+    this.lobby.setStarting(true);
+    try {
+      this.session = await Session.host(state, this.profile, this.code, mode === 'host');
+    } catch (e) {
+      alert('The kitchen could not open: ' + e.message);
+      return;
+    } finally {
+      this.lobby.setStarting(false);
+    }
     this.lobby.hide();
-    this.session = await Session.host(state, this.profile, this.code, mode === 'host');
     if (this.session.netError) { this.hud.toast(this.session.netError, 'warn', 6000); this.code = null; }
     this.wireSession();
     this.enterGame();
@@ -102,7 +111,7 @@ class App {
   enterGame() {
     const st = this.session.state;
     const me = st.players[this.selfPid];
-    const sp = me || SPAWN_POINTS[0];
+    const sp = me || spawnPoints(st)[0];
     this.local = { x: sp.x, z: sp.z, rot: Math.PI, vx: 0, vz: 0 };
     this.lastPhase = st.phase;
     this.view.clear();
@@ -354,7 +363,7 @@ class App {
       // The host moves everyone back to the start at the end of each day.
       if (st0.phase === 'office' || st0.phase === 'morning') {
         const me = st0.players[this.selfPid];
-        const sp = SPAWN_POINTS[me ? me.slot : 0];
+        const sp = spawnPoints(st0)[me ? me.slot : 0];
         Object.assign(this.local, { x: sp.x, z: sp.z, rot: Math.PI, vx: 0, vz: 0 });
       }
       if (st0.phase === 'office' && !this.office.open) this.office.show(st0, 'report');

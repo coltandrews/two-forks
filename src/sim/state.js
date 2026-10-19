@@ -2,11 +2,11 @@
 import { BUILD, CFG } from '../config.js';
 import { CUISINES } from '../data/cuisines.js';
 import { ING } from '../data/ingredients.js';
-import { startingObjects } from '../data/layout.js';
+import { startingObjects, STORY_BUILDING } from '../data/layout.js';
 import { isStory, storyObjects, STARTERS, startingDrinks, XP_LEVELS } from '../data/progression.js';
 import { dailyGoal } from './progression.js';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function nextId(state, prefix = 'o') {
@@ -134,6 +134,7 @@ export function newState({ cuisine, name, mode = 'arcade', cash = 3000 }) {
     unlocked: [],                    // dish ids announced as unlocked
     tip: 0,                          // tutorial step
   };
+  if (isStory(state)) state.building = { ...STORY_BUILDING, divider: { ...STORY_BUILDING.divider } };
   state.objects = buildObjects(state);
   if (isStory(state)) {
     Object.assign(state, { xp: 0, level: 1, prestige: 0, owned: { licenses: {}, stations: {}, areas: {}, features: {} }, chapter: 1, storyStats: { paidGuests: 0, bestPaidDay: 0, criticPassed: false }, debt: 600, debtDays: 0 });
@@ -185,6 +186,10 @@ export function deserialize(obj) {
   s.v = SAVE_VERSION;
   delete s.pendingPurchase;
   if (isStory(s)) {
+    // Old saves keep the original footprint and all furniture coordinates.
+    s.building ||= { width: 20, height: 15, divider: { from: 1, to: 12 } };
+    const b = s.building;
+    if (!Number.isInteger(b.width) || b.width < 14 || b.width > 64 || !Number.isInteger(b.height) || b.height < 12 || b.height > 24 || !Number.isInteger(b.divider?.from) || !Number.isInteger(b.divider?.to) || b.divider.from < 1 || b.divider.to < b.divider.from || b.divider.to >= b.width - 1) throw new Error('Invalid restaurant floor dimensions');
     s.xp = Math.max(0, Number(s.xp) || 0);
     s.level = XP_LEVELS.reduce((level, at, i) => s.xp >= at ? i + 1 : level, 1);
     s.prestige = Math.floor(Math.max(0, s.xp - XP_LEVELS[19]) / 2000);

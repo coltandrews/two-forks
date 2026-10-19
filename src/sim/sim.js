@@ -4,7 +4,7 @@ import { isStory, chapterInfo, CHAPTERS, AREAS, unlockList } from '../data/progr
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { dailyGoal } from './progression.js';
 import { CFG } from '../config.js';
-import { SPAWN_POINTS, FRONT_DOOR } from '../data/layout.js';
+import { spawnPoints } from '../data/layout.js';
 import { ING } from '../data/ingredients.js';
 import { buildGrid, collide } from './world.js';
 import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId } from './state.js';
@@ -52,7 +52,7 @@ export class Sim {
       this.emit({ type: 'toast', text: 'Purchase canceled because a chef joined.', kind: 'warn' });
     }
     const slot = Object.values(S.players).some((p) => p.slot === 0) ? 1 : 0;
-    const sp = SPAWN_POINTS[slot];
+    const sp = spawnPoints(S)[slot];
     S.players[pid] = {
       id: pid, slot, name: (profile.name || 'Chef').slice(0, 16), look: sanitizeLook(profile.look),
       x: sp.x, z: sp.z, rot: Math.PI, hand: null, tips: 0, last: {}, working: null,
@@ -134,7 +134,7 @@ export class Sim {
     const S = this.state;
     if (c.c === 'chapter') {
       const info = chapterInfo(S);
-      return info?.ready ? { name: info.area ? 'Lease: ' + AREAS.find((a) => a.id === info.area).name : 'Finish the story', price: info.price } : null;
+      return info?.ready ? { name: info.area ? AREAS.find((a) => a.id === info.area).name : 'Finish the story', price: info.price } : null;
     }
     if (c.c === 'unlock') {
       const row = unlockList(S).find((u) => u.kind === c.kind && u.id === c.id && u.can);
@@ -296,7 +296,7 @@ export class Sim {
     S.phase = 'office';
     S.ready = {};
     for (const p of Object.values(S.players)) {
-      const sp = SPAWN_POINTS[p.slot];
+      const sp = spawnPoints(S)[p.slot];
       p.x = sp.x; p.z = sp.z; p.rot = Math.PI; p.hand = null;
     }
     if (S.marketing && S.marketing.days > 0) { S.marketing.days -= 1; if (S.marketing.days <= 0) S.marketing = null; }

@@ -6,7 +6,7 @@ import { CFG } from '../config.js';
 import { ING, statesOf } from '../data/ingredients.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { BUILDER, PAIRS } from '../data/cuisines.js';
-import { KITCHEN_MAX_Z, LAYOUT_MIN_Z, LAYOUT_MAX_Z, FRONT_DOOR, QUEUE_SPOTS, HEAT_TYPES, SPAWN_POINTS } from '../data/layout.js';
+import { KITCHEN_MAX_Z, LAYOUT_MIN_Z, HEAT_TYPES, roomSize, frontDoor, queueSpots, spawnPoints, FLOOR_EXPANSION_WIDTH } from '../data/layout.js';
 import {
   allDishes, dishById, dishCost, cuisineOf, nextId, initObject, numberTables, courseSlot, menuLimits, drinkById,
 } from './state.js';
@@ -239,22 +239,23 @@ export function applyAutofill(state, players = 2) {
 const KITCHEN_TYPES = new Set(['fridge', 'freezer', 'pantry', 'counter', 'board', 'grill', 'pan', 'pot', 'fryer', 'oven', 'well', 'rack', 'sink', 'bin', 'dock']);
 const DINING_TYPES = new Set(['table', 'host']);
 
-export function zoneOf(type) {
+export function zoneOf(type, state) {
   if (KITCHEN_TYPES.has(type)) return [1, KITCHEN_MAX_Z];
-  if (DINING_TYPES.has(type)) return [6, 13];
+  if (DINING_TYPES.has(type)) return [6, roomSize(state).height - 2];
   return null;
 }
 
-function protectedTile(x, z) {
-  if (SPAWN_POINTS.some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
-  if (QUEUE_SPOTS.some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
-  if (x === FRONT_DOOR.x && z === FRONT_DOOR.z - 1) return true;
+function protectedTile(state, x, z) {
+  const door = frontDoor(state);
+  if (spawnPoints(state).some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
+  if (queueSpots(state).some((s) => Math.floor(s.x) === x && Math.floor(s.z) === z)) return true;
+  if (x === door.x && z === door.z - 1) return true;
   return false;
 }
 
 function footprintFree(state, f, zone, ignoreId) {
   if (!fits(state, f, zone[0], zone[1], ignoreId)) return false;
-  for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) if (protectedTile(f.x + dx, f.z + dz)) return false;
+  for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) if (protectedTile(state, f.x + dx, f.z + dz)) return false;
   return true;
 }
 
@@ -273,12 +274,13 @@ export function placementStatus(state, id, x, z) {
   if (!o) return { ok: false, reason: 'Nothing there.' };
   if (o.type === 'table' && (o.party || o.dirty)) return { ok: false, reason: 'Clear the table first.' };
   const f = { ...footprint(o), x, z };
-  const fullFloor = [LAYOUT_MIN_Z, LAYOUT_MAX_Z];
+  if (!Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'Choose a whole floor cell.' };
+  const fullFloor = [LAYOUT_MIN_Z, roomSize(state).height - 2];
   if (!footprintFree(state, f, fullFloor, id)) return { ok: false, reason: "It doesn't fit there." };
   if (o.type === 'table' && !tableSpacingOk(state, f, id)) return { ok: false, reason: 'Tables need a walkway around them.' };
   const ox = o.x, oz = o.z;
   o.x = x; o.z = z;
-  const result = validateLayout(state, FRONT_DOOR);
+  const result = validateLayout(state, frontDoor(state));
   o.x = ox; o.z = oz;
   return result;
 }
@@ -293,10 +295,11 @@ export function tryMove(state, id, x, z) {
 }
 
 function placeNew(state, o) {
-  const zone = zoneOf(o.type);
+  const zone = zoneOf(o.type, state);
+  const size = roomSize(state);
   const cands = [];
   for (let z = zone[0]; z <= zone[1]; z++) {
-    for (let x = 1; x < 19; x++) cands.push({ x, z });
+    for (let x = 1; x < size.width - 1; x++) cands.push({ x, z });
   }
   if (o.type === 'table') {
     cands.sort((a, b) => (Math.abs(a.z - 9) - Math.abs(b.z - 9)) || (Math.abs(a.x - 10) - Math.abs(b.x - 10)));
@@ -311,7 +314,7 @@ function placeNew(state, o) {
     if (!footprintFree(state, f, zone, o.id)) continue;
     if (o.type === 'table' && !tableSpacingOk(state, f, o.id)) continue;
     o.x = c.x; o.z = c.z;
-    if (validateLayout(state, FRONT_DOOR).ok) {
+    if (validateLayout(state, frontDoor(state)).ok) {
       if (o.type === 'table') numberTables(state);
       return true;
     }
@@ -565,7 +568,10 @@ export function completeChapter(state) {
   if (!chapter || !chapter.ready) return { ok: false, reason: chapter?.reason || 'The story is complete.' };
   state.cash = round2(state.cash - chapter.price);
   state.spentUpgrades = round2((state.spentUpgrades || 0) + chapter.price);
-  if (chapter.area) state.owned.areas[chapter.area] = true;
+  if (chapter.area) {
+    state.owned.areas[chapter.area] = true;
+    state.building.width += FLOOR_EXPANSION_WIDTH;
+  }
   state.chapter++;
   state.chapterDay = state.day;
   awardXP(state, 150, 'Chapter goal');

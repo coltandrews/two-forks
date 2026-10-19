@@ -1,7 +1,7 @@
 // Story rules are shared by the host, the office and the floor planner.
 import { CUISINES } from './cuisines.js';
 import { ING } from './ingredients.js';
-import { STATION_NAMES } from './layout.js';
+import { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } from './layout.js';
 
 export const XP_LEVELS = [0, 120, 480, 800, 1200, 1650, 2200, 2800, 3500, 4200, 5000, 5800, 6600, 7400, 8200, 9000, 9800, 10600, 11400, 12200];
 export const STARTERS = {
@@ -12,15 +12,15 @@ export const STARTERS = {
   noodle: ['veggie_ramen', 'teriyaki_salmon', 'cucumber_salad'],
 };
 export const AREAS = [
-  { id: 'main_room', name: 'Main Room', x: 4, z: 6, w: 15, h: 4, kind: 'dining', level: 4, price: 1500 },
-  { id: 'kitchen_bay', name: 'Kitchen Bay', x: 12, z: 1, w: 7, h: 4, kind: 'kitchen', level: 8, price: 1000 },
-  { id: 'dining_wing', name: 'Dining Wing', x: 14, z: 10, w: 5, h: 4, kind: 'dining', level: 14, price: 1500 },
+  { id: 'main_room', name: 'Floor expansion 1', level: 4, price: 1500 },
+  { id: 'kitchen_bay', name: 'Floor expansion 2', level: 8, price: 1000 },
+  { id: 'dining_wing', name: 'Floor expansion 3', level: 14, price: 1500 },
 ];
 export const CHAPTERS = [
-  { id: 1, title: 'A small beginning', text: 'The landlord hands you $600 and the keys. Start with three tables. Serve your first regulars and save for the Main Room.', level: 4, price: 1500, goal: 'Serve 40 paying guests.', area: 'main_room' },
-  { id: 2, title: 'The regulars', text: 'The neighbors now know your name. Your regulars bring friends. Build a steady service and lease the rest of the kitchen.', level: 8, price: 1000, goal: 'Serve 120 paying guests.', area: 'kitchen_bay' },
-  { id: 3, title: 'A table for the critic', text: 'A local food critic wants to try your food. Expect a visit at the next service. Earn a good review and open the Dining Wing.', level: 14, price: 1500, goal: 'Earn a paid critic review of at least 4 stars.', area: 'dining_wing' },
-  { id: 4, title: 'Your own place', text: 'The whole building is yours to use. Show that your crew can run a full service. Then keep growing for as long as you like.', level: 20, price: 600, goal: 'Serve 20 paying guests in one day.' },
+  { id: 1, title: 'A small beginning', text: 'The landlord hands you $600 and the keys. Start with three tables. Serve your first regulars and save for your first floor expansion.', level: 4, price: 1500, goal: 'Serve 40 paying guests.', area: 'main_room' },
+  { id: 2, title: 'The regulars', text: 'The neighbors now know your name. Your regulars bring friends. Build a steady service and add another section of floor space.', level: 8, price: 1000, goal: 'Serve 120 paying guests.', area: 'kitchen_bay' },
+  { id: 3, title: 'A table for the critic', text: 'A local food critic wants to try your food. Expect a visit at the next service. Earn a good review and expand your floor again.', level: 14, price: 1500, goal: 'Earn a paid critic review of at least 4 stars.', area: 'dining_wing' },
+  { id: 4, title: 'Your own place', text: 'Your small counter has grown into a full restaurant. Show that your crew can run a full service. Then keep growing for as long as you like.', level: 20, price: 600, goal: 'Serve 20 paying guests in one day.' },
 ];
 export const LICENSES = [
   { id: 'fryer_basics', name: 'Fryer basics', level: 2, price: 80, ingredients: ['fries', 'rings', 'chicken_thigh', 'churros', 'gyoza', 'tenders'] },
@@ -52,7 +52,7 @@ export function isOwned(state, kind, id) {
   }
   return !!state.owned?.[kind]?.[id];
 }
-export function lockedAreas(state) { return isStory(state) ? AREAS.filter((a) => !isOwned(state, 'areas', a.id)) : []; }
+
 export function starterIngredients(cuisine) {
   return [...new Set(CUISINES[cuisine].dishes.filter((d) => STARTERS[cuisine].includes(d.id)).flatMap((d) => d.comps.map(([i]) => i)))];
 }
@@ -109,8 +109,8 @@ export function storyObjects(cuisine) {
   }
   const types = ['fridge', 'pantry', 'board', 'grill', 'pot', ...[...stations].filter((s) => !['board', 'grill', 'pot'].includes(s)), 'sink', 'rack', 'bin'];
   const objects = types.map((type, i) => ({ type, x: i + 1, z: 1 }));
-  objects.push({ type: 'counter', x: 5, z: 3 }, { type: 'counter', x: 6, z: 3 }, { type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 12, z: 5 }, { type: 'host', x: 4, z: 13 });
-  for (const x of [4, 8, 11]) objects.push({ type: 'table', seats: 2, x, z: x === 11 ? 12 : 10 });
+  objects.push({ type: 'counter', x: 5, z: 3 }, { type: 'counter', x: 6, z: 3 }, { type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 10, z: 5 }, { type: 'host', x: 4, z: 10 });
+  for (const [x, z] of [[4, 7], [8, 7], [6, 9]]) objects.push({ type: 'table', seats: 2, x, z });
   return objects;
 }
 export function chapterInfo(state) {
@@ -126,7 +126,7 @@ export function unlockList(state) {
   const rows = [
     ...LICENSES.map((l) => ({ ...l, kind: 'licenses', desc: l.id === 'bar' ? 'Add beer, wine and cocktails to your menu.' : 'Order this ingredient group from the supplier.' })),
     ...EQUIPMENT.map((e) => ({ ...e, name: STATION_NAMES[e.id], kind: 'stations', desc: 'Adds one station to your kitchen.' })),
-    ...AREAS.map((a) => ({ ...a, kind: 'areas', desc: 'Complete the chapter and pay the lease deposit.' })),
+    ...AREAS.map((a) => ({ ...a, kind: 'areas', desc: `Add ${FLOOR_EXPANSION_WIDTH} × ${roomSize(state).height - 2} floor cells. The outside wall moves and your furniture stays in place.` })),
     ...FEATURES.map((f) => ({ ...f, kind: 'features', desc: 'Available at this Chef Level.' })),
     ...CUISINES[state.cuisine].dishes.map((d) => ({ id: d.id, name: d.name, level: recipeLevel(state, d), price: 0, kind: 'recipes', desc: recipeRequirements(state, d).join(' · ') || 'Ready for your menu.' })),
   ];
@@ -147,7 +147,7 @@ export function upgradeRequirements(state, u) {
   if (state.level < levels[u.id]) needs.push(`Chef Level ${levels[u.id]}`);
   if (u.station && !state.objects.some((o) => o.type === u.station) && ['fryer', 'oven', 'pan'].includes(u.station)) needs.push(`Buy the first ${STATION_NAMES[u.station].toLowerCase()} in Unlocks`);
   if (u.table) {
-    if (!isOwned(state, 'areas', 'main_room')) needs.push('Main Room lease');
+    if (!isOwned(state, 'areas', 'main_room')) needs.push('First floor expansion');
     const limit = isOwned(state, 'areas', 'dining_wing') ? 9 : 6;
     if (state.objects.filter((o) => o.type === 'table').length >= limit) needs.push(`Table limit: ${limit}`);
   }

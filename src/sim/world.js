@@ -1,23 +1,10 @@
 // Tile grid, collision, pathfinding and placement rules. Pure functions over
 // the game state; no rendering here.
-import { MAP, TABLE_SIZE } from '../data/layout.js';
-import { isStory, lockedAreas } from '../data/progression.js';
-
-export const W = MAP[0].length;
-export const H = MAP.length;
-
-export function baseTile(x, z) {
-  if (x < 0 || z < 0 || x >= W || z >= H) return '#';
-  return MAP[z][x];
-}
+import { TABLE_SIZE, roomSize, layoutTile, frontDoor } from '../data/layout.js';
 
 export function isWallChar(c) { return c === '#' || c === 'B'; }
 
-/** Story keeps an aisle between the front counter and the small kitchen. */
-export function isWallTile(state, x, z) {
-  if (isStory(state) && z === 5 && x >= 1 && x <= 3) return false;
-  return isWallChar(baseTile(x, z));
-}
+export function isWallTile(state, x, z) { return isWallChar(layoutTile(state, x, z)); }
 
 export function footprint(o) {
   if (o.type === 'table') {
@@ -29,36 +16,36 @@ export function footprint(o) {
 
 /** Builds the blocked grid and the tile -> object lookup. */
 export function buildGrid(state) {
+  const { width: W, height: H } = roomSize(state);
   const blocked = new Uint8Array(W * H);
   const owner = new Array(W * H).fill(null);
   for (let z = 0; z < H; z++) {
     for (let x = 0; x < W; x++) if (isWallTile(state, x, z)) blocked[z * W + x] = 1;
   }
-  for (const area of lockedAreas(state)) {
-    for (let z = area.z; z < area.z + area.h; z++) {
-      for (let x = area.x; x < area.x + area.w; x++) blocked[z * W + x] = 1;
-    }
-  }
   for (const o of state.objects) {
     const f = footprint(o);
     for (let dz = 0; dz < f.h; dz++) {
       for (let dx = 0; dx < f.w; dx++) {
-        const i = (f.z + dz) * W + (f.x + dx);
+        const x = f.x + dx, z = f.z + dz;
+        if (x < 0 || z < 0 || x >= W || z >= H) continue;
+        const i = z * W + x;
         blocked[i] = 1;
         owner[i] = o.id;
       }
     }
   }
-  return { blocked, owner };
+  return { width: W, height: H, blocked, owner };
 }
 
 export function walkable(grid, x, z) {
+  const { width: W, height: H } = grid;
   if (x < 0 || z < 0 || x >= W || z >= H) return false;
   return !grid.blocked[z * W + x];
 }
 
 /** Pushes a circle out of blocked tiles. Mutates and returns pos. */
 export function collide(grid, pos, r) {
+  const { width: W, height: H } = grid;
   for (let iter = 0; iter < 2; iter++) {
     const x0 = Math.floor(pos.x - r - 1), x1 = Math.floor(pos.x + r + 1);
     const z0 = Math.floor(pos.z - r - 1), z1 = Math.floor(pos.z + r + 1);
@@ -92,7 +79,9 @@ export function collide(grid, pos, r) {
 
 /** 4-way BFS between tiles. Returns tile centers after the start, or null. */
 export function findPath(grid, sx, sz, tx, tz) {
+  const { width: W, height: H } = grid;
   sx = Math.floor(sx); sz = Math.floor(sz); tx = Math.floor(tx); tz = Math.floor(tz);
+  if ([sx, sz, tx, tz].some((n) => !Number.isFinite(n)) || sx < 0 || sx >= W || tx < 0 || tx >= W || sz < 0 || sz >= H || tz < 0 || tz >= H) return null;
   if (sx === tx && sz === tz) return [];
   const prev = new Int32Array(W * H).fill(-2);
   const start = sz * W + sx, goal = tz * W + tx;
@@ -156,13 +145,17 @@ export function approachTile(grid, tx, tz, px = tx, pz = tz) {
  * Checks a layout: every walkable tile connected to the front door, and every
  * object usable from at least one walkable neighbor.
  */
-export function validateLayout(state, door) {
-  for (const area of lockedAreas(state)) {
-    for (const o of state.objects) {
-      const f = footprint(o);
-      if (f.x < area.x + area.w && f.x + f.w > area.x && f.z < area.z + area.h && f.z + f.h > area.z) {
-        return { ok: false, reason: `Lease the ${area.name} before placing objects there.` };
-      }
+export function validateLayout(state, door = frontDoor(state)) {
+  const { width: W, height: H } = roomSize(state);
+  const occupied = new Set();
+  for (const o of state.objects) {
+    const f = footprint(o);
+    if (!Number.isInteger(f.x) || !Number.isInteger(f.z)) return { ok: false, reason: 'Place objects on whole floor cells.' };
+    for (let dz = 0; dz < f.h; dz++) for (let dx = 0; dx < f.w; dx++) {
+      const x = f.x + dx, z = f.z + dz, key = z * W + x;
+      if (x < 1 || z < 1 || x >= W - 1 || z >= H - 1 || isWallTile(state, x, z)) return { ok: false, reason: 'Place objects inside the current walls.' };
+      if (occupied.has(key)) return { ok: false, reason: 'Objects cannot share the same floor cell.' };
+      occupied.add(key);
     }
   }
   const grid = buildGrid(state);
@@ -210,7 +203,7 @@ export function fits(state, f, zMin, zMax, ignoreId = null) {
       const x = f.x + dx, z = f.z + dz;
       if (z < zMin || z > zMax) return false;
       if (!walkable(grid, x, z)) return false;
-      const c = baseTile(x, z);
+      const c = layoutTile(state, x, z);
       if (c === 'D') return false;
     }
   }

@@ -10,7 +10,6 @@ import { creditWork } from './progression.js';
 import { CFG } from '../config.js';
 import { ING, stateInfo, stepFor } from '../data/ingredients.js';
 import { HEAT_TYPES, STORE_TYPES, STATION_NAMES } from '../data/layout.js';
-import { W, H } from './world.js';
 import { drinkById } from './state.js';
 import {
   ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts,
@@ -26,6 +25,7 @@ export function objById(state, id) { return state.objects.find((o) => o.id === i
 
 /** The object a chef is facing within reach, preferring what is straight ahead. */
 export function findTarget(state, grid, p) {
+  const { width: W, height: H } = grid;
   const fx = Math.sin(p.rot), fz = Math.cos(p.rot);
   const reach = CFG.move.reach;
   let best = null, bs = Infinity;

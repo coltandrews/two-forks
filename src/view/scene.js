@@ -2,18 +2,16 @@
 // state every frame. Knows nothing about networking.
 import * as THREE from 'three';
 import { CUISINES } from '../data/cuisines.js';
-import { MAP } from '../data/layout.js';
-import { isStory, lockedAreas } from '../data/progression.js';
+import { roomSize, layoutTile } from '../data/layout.js';
 import { footprint, seatsOf, buildGrid, walkable, isWallTile } from '../sim/world.js';
 import { itemSig } from '../sim/items.js';
 import { stepFor } from '../data/ingredients.js';
 import { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } from './models.js';
-import { buildRoom, skyColor, syncRoomAreas, disposeRoomAreas } from './room.js';
+import { buildRoom, skyColor, disposeRoom } from './room.js';
 import { itemMesh, potContents } from './food.js';
 import { Shape, MAT, meshOf } from './shape.js';
 import { mix } from './shape.js';
 
-const RW = MAP[0].length, RH = MAP.length;
 const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
 const _shadowMatrix = new THREE.Matrix4();
@@ -24,10 +22,11 @@ const _shadowRotation = new THREE.Quaternion();
 export class View {
   constructor(container) {
     this.container = container;
+    this.dimensions = roomSize({ mode: 'arcade' });
     const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.08;
     r.domElement.id = 'game-canvas';
@@ -98,15 +97,18 @@ export class View {
 
   /** Places the overview camera so the whole room fits between the HUD bars. */
   fitOverview() {
+    const { width: RW, height: RH } = this.dimensions;
     const pitch = THREE.MathUtils.degToRad(54);
     const dir = new THREE.Vector3(0, Math.sin(pitch), Math.cos(pitch));
     const cam = this.camera;
+    cam.far = Math.max(120, Math.hypot(RW, RH) * 8);
+    cam.updateProjectionMatrix();
     const pts = [];
-    for (const x of [0.2, RW - 0.2]) {
-      pts.push(new THREE.Vector3(x, 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, 0.5, RH), new THREE.Vector3(x, 0, RH));
+    for (const x of [-0.05, RW + 0.05]) {
+      pts.push(new THREE.Vector3(x, 2.9, 0.5), new THREE.Vector3(x, 0, 0.5), new THREE.Vector3(x, 0.5, RH + 0.05), new THREE.Vector3(x, 0, RH + 0.05));
     }
     const W = this.container.clientWidth || 1;
-    const mt = 0.1, mb = 0.09, ms = 0.015, ml = Math.min(0.3, (this.insetLeft || 0) / W);
+    const mt = 0.1, mb = 0.09, ms = 0.03, ml = Math.min(0.3, (this.insetLeft || 0) / W);
     const target = new THREE.Vector3();
     const fits = (tz, d, tx = RW / 2) => {
       target.set(tx, 0, tz);
@@ -124,13 +126,15 @@ export class View {
     const txs = ml > 0.01 ? [RW / 2, RW / 2 - 1, RW / 2 - 2, RW / 2 - 3, RW / 2 - 4] : [RW / 2];
     for (const tx of txs) {
       for (let tz = RH / 2 - 3; tz <= RH / 2 + 3; tz += 0.25) {
-        let lo = 6, hi = 90;
+        let lo = 6, hi = Math.max(90, Math.hypot(RW, RH) * 6);
         if (!fits(tz, hi, tx)) continue;
         for (let i = 0; i < 24; i++) { const d = (lo + hi) / 2; if (fits(tz, d, tx)) hi = d; else lo = d; }
         if (hi < best.d) best = { d: hi, tz, tx };
       }
     }
     target.set(best.tx, 0, best.tz);
+    this.scene.fog.near = Math.max(30, best.d - 12);
+    this.scene.fog.far = Math.max(68, best.d + 26);
     this.overview = { pos: target.clone().addScaledVector(dir, best.d), look: target.clone() };
     if (!this.camInit) { this.camPos.copy(this.overview.pos); this.camLook.copy(this.overview.look); this.camInit = true; }
     cam.position.copy(this.camPos);
@@ -157,17 +161,25 @@ export class View {
   // ------------------------------------------------------------ static build
 
   ensureLayout(state) {
+    const size = roomSize(state);
+    const dimensionsChanged = size.width !== this.dimensions.width || size.height !== this.dimensions.height;
+    if (dimensionsChanged) {
+      this.dimensions = size;
+      this.fitOverview();
+    }
     const decorKey = ['decor1', 'decor2', 'decor3'].map((k) => state.upgrades[k] ? 1 : 0).join('');
-    const roomKey = state.cuisine + '|' + state.name + '|' + decorKey + '|' + isStory(state);
-    if (roomKey !== this.roomKey) {
-      if (this.room) { this.world.remove(this.room.root); disposeRoomAreas(this.room); disposeTree(this.room.root); }
+    const roomKey = `${state.cuisine}|${state.name}|${decorKey}|${state.mode}|${JSON.stringify(state.building || null)}`;
+    const roomChanged = roomKey !== this.roomKey;
+    if (roomChanged) {
+      if (this.room) { this.world.remove(this.room.root); disposeRoom(this.room); }
       this.room = buildRoom(CUISINES[state.cuisine], state.name, state.upgrades, state);
       this.world.add(this.room.root);
       this.roomKey = roomKey;
       this.layoutKey = '';
+      this.placeLights(size);
     }
     this.layoutGuide.setState(state);
-    const key = state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
+    const key = `${size.width}:${size.height}|` + state.objects.map((o) => `${o.id}:${o.type}:${o.x}:${o.z}`).join('|');
     if (key === this.layoutKey) return;
     this.layoutKey = key;
     const pal = CUISINES[state.cuisine].palette;
@@ -176,7 +188,7 @@ export class View {
     for (const o of state.objects) {
       seen.add(o.id);
       let e = this.objs.get(o.id);
-      if (e && (e.x !== o.x || e.z !== o.z)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(o.id); e = null; }
+      if (e && (roomChanged || e.x !== o.x || e.z !== o.z)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(o.id); e = null; }
       if (e) continue;
       e = this.buildObject(o, pal, grid, state);
       this.objs.set(o.id, e);
@@ -186,6 +198,20 @@ export class View {
       if (!seen.has(id)) { this.world.remove(e.group); disposeTree(e.group); this.objs.delete(id); }
     }
     this.contacts.syncStatic(state);
+  }
+
+  placeLights({ width, height }) {
+    const centerX = width / 2, centerZ = height / 2;
+    this.sun.position.set(centerX - 16, 22, centerZ + 8.5);
+    this.sun.target.position.set(centerX, 0, centerZ - 0.5);
+    const span = Math.max(15, width * 0.65);
+    Object.assign(this.sun.shadow.camera, { left: -span, right: span, top: Math.max(13, height * 0.8), bottom: -Math.max(13, height * 0.8), far: Math.max(60, width + height) });
+    this.sun.shadow.camera.updateProjectionMatrix();
+    const diningZ = (6 + height - 1) / 2;
+    for (const [index, [x, z]] of [[width * 0.3, diningZ], [width * 0.7, diningZ], [centerX, 2.5]].entries()) {
+      this.lamps[index].position.set(x, 2.4, z);
+      this.lamps[index].distance = Math.max(9, width * 0.4);
+    }
   }
 
   buildObject(o, pal, grid, state) {
@@ -221,7 +247,6 @@ export class View {
   sync(state, dt, opts = {}) {
     this.t += dt;
     this.ensureLayout(state);
-    syncRoomAreas(this.room, state, dt);
     this.state = state;
     for (const o of state.objects) {
       const e = this.objs.get(o.id);
@@ -457,6 +482,7 @@ export class View {
 
   updateCamera(dt, opts) {
     if (!this.overview) return;
+    const { width: RW, height: RH } = this.dimensions;
     if (this.zoom == null) { this.zoom = 0; }
     if (this.zoomTarget == null) this.zoomTarget = DEFAULT_ZOOM;
     this.zoom += (this.zoomTarget - this.zoom) * Math.min(1, dt * 8);
@@ -472,8 +498,13 @@ export class View {
     }
     const z = this.zoom;
     const look = this._look || (this._look = new THREE.Vector3());
-    look.set(OL.x + (fx - OL.x) * z, OL.y + (0.5 - OL.y) * z, OL.z + (fz - OL.z) * z);
-    const dist = d0 * (1 - 0.62 * z);
+    const follow = Math.min(1, z / DEFAULT_ZOOM);
+    look.set(OL.x + (fx - OL.x) * follow, OL.y + (0.5 - OL.y) * z, OL.z + (fz - OL.z) * follow);
+    // Gameplay zoom has a fixed scale even after the building grows.
+    const followDistance = Math.min(d0, 28), closeDistance = Math.min(d0, 16);
+    const dist = z <= DEFAULT_ZOOM
+      ? THREE.MathUtils.lerp(d0, followDistance, z / DEFAULT_ZOOM)
+      : THREE.MathUtils.lerp(followDistance, closeDistance, (z - DEFAULT_ZOOM) / (1 - DEFAULT_ZOOM));
     const pos = this._pos || (this._pos = new THREE.Vector3());
     pos.copy(look).addScaledVector(dir, dist);
     const k = Math.min(1, dt * 6);
@@ -486,7 +517,12 @@ export class View {
   setLayoutMode(on, state) {
     if (on) {
       if (this.layoutZoom == null) this.layoutZoom = this.zoomTarget == null ? DEFAULT_ZOOM : this.zoomTarget;
-      this.zoomTarget = 0;
+      this.zoom = this.zoomTarget = 0;
+      this.fitOverview();
+      this.camPos.copy(this.overview.pos);
+      this.camLook.copy(this.overview.look);
+      this.camera.position.copy(this.camPos);
+      this.camera.lookAt(this.camLook);
       this.layoutGuide.setPalette(CUISINES[state.cuisine].palette.accent);
       this.layoutGuide.setState(state);
     } else if (this.layoutZoom != null) {
@@ -563,7 +599,7 @@ export class View {
     this.chefs.clear();
     for (const [, c] of this.guests) this.world.remove(c.m.root);
     this.guests.clear();
-    if (this.room) { this.world.remove(this.room.root); disposeRoomAreas(this.room); this.room = null; }
+    if (this.room) { this.world.remove(this.room.root); disposeRoom(this.room); this.room = null; }
     this.contacts.clear();
     this.layoutKey = ''; this.roomKey = '';
   }
@@ -590,7 +626,10 @@ function lerpAngle(a, b, t) {
 
 function disposeTree(obj) {
   obj.traverse((o) => {
-    if (o.isMesh && o.material && o.material !== MAT.solid && o.material !== MAT.glow && o.material.dispose && !o.userData.sig) {
+    // Food meshes with a signature share cached geometry between instances.
+    if (!o.isMesh || o.userData.sig) return;
+    if (o.geometry) o.geometry.dispose();
+    if (o.material && o.material !== MAT.solid && o.material !== MAT.glow && o.material !== MAT.glass && o.material.dispose) {
       if (o.material.map) o.material.map.dispose();
       o.material.dispose();
     }
@@ -612,15 +651,14 @@ class LayoutGuide {
   }
 
   setState(state) {
-    const areas = lockedAreas(state);
-    const key = `${isStory(state)}:${areas.map((area) => area.id).join(',')}`;
+    const { width: RW, height: RH } = roomSize(state);
+    const key = `${state.mode}:${RW}:${RH}:${JSON.stringify(state.building?.divider || null)}`;
     if (key === this.key) return;
     this.key = key;
     const gridShape = new Shape(false);
     for (let z = 1; z < RH - 1; z++) {
       for (let x = 1; x < RW - 1; x++) {
-        if (isWallTile(state, x, z) || MAP[z][x] === 'D') continue;
-        if (areas.some((area) => x >= area.x && x < area.x + area.w && z >= area.z && z < area.z + area.h)) continue;
+        if (isWallTile(state, x, z) || layoutTile(state, x, z) === 'D') continue;
         gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.06);
         gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.94);
         gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.06, 0.035, z + 0.5);

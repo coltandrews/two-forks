@@ -4,7 +4,7 @@ import { CFG } from '../config.js';
 import { ING, stateInfo, statesOf } from '../data/ingredients.js';
 import { CUISINES, BUILDER } from '../data/cuisines.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
-import { STATION_NAMES } from '../data/layout.js';
+import { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } from '../data/layout.js';
 import { isOwned, recipeRequirements, drinkRequirements, ingredientAllowed, unlockList, chapterInfo } from '../data/progression.js';
 import { allDishes, dishById, drinkById, dishCost, courseSlot, menuLimits, menuIngredients, WEEKDAYS, dishVeg } from '../sim/state.js';
 import {
@@ -96,7 +96,7 @@ export class Office {
 
   sigFor(state) {
     return JSON.stringify([this.tab, state.phase, state.day, state.cash, state.menu, state.custom, state.orders, state.upgrades, state.marketing, state.ready, Object.keys(state.players), state.rep.level,
-      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev, state.mode, state.xp, state.level, state.owned, state.chapter, state.goal, state.pendingPurchase]);
+      this.tab === 'supplier' ? state.stock : 0, this.draft, this.showAllIngs, state.report ? state.report.day : 0, state.layoutRev, state.building, state.mode, state.xp, state.level, state.owned, state.chapter, state.goal, state.pendingPurchase]);
   }
 
   foot(state) {
@@ -275,6 +275,7 @@ export class Office {
   // ------------------------------------------------------------ upgrades
 
   unlocks(state) {
+    const floor = roomSize(state);
     const entries = unlockList(state);
     const chapter = chapterInfo(state);
     const card = (item) => `<div class="unlock-card ${item.owned ? 'owned' : item.level > state.level ? 'locked' : ''}"><span class="unlock-kind">${esc(item.kind)} · Chef Level ${item.level}</span><h4>${esc(item.name)}</h4><p>${esc(item.desc)}</p>${item.owned ? '<b>✓ Owned</b>' : `<span class="unlock-price">${item.price ? money0(item.price) : 'Free'}</span><button class="btn small ${item.can ? 'primary' : ''}" data-act="unlock" data-kind="${esc(item.kind)}" data-id="${esc(item.id)}" ${item.can && !state.pendingPurchase ? '' : 'disabled'}>${item.can ? (item.price ? 'Buy' : 'Get') : esc(item.reason || `Needs Chef Level ${item.level}`)}</button>`}</div>`;
@@ -283,9 +284,9 @@ export class Office {
       ['Buy now', entries.filter((x) => !x.owned && x.level <= state.level)],
       ['Coming at higher levels', entries.filter((x) => !x.owned && x.level > state.level)],
     ];
-    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><p>${esc(chapter.text)}</p><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? 'Complete chapter' : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Your restaurant is open</h3><p>The story is complete. Keep serving, improve the room, and earn prestige stars.</p></div>';
+    const gate = chapter ? `<div class="card chapter-gate"><h3>${esc(chapter.title)}</h3><p>${esc(chapter.text)}</p><div class="requirements"><span>Chef Level ${chapter.level}</span><span>${money0(chapter.price)}</span><span>${esc(chapter.goal)}</span></div><button class="btn ${chapter.ready ? 'primary' : ''}" data-act="chapter" ${chapter.ready && !state.pendingPurchase ? '' : 'disabled'}>${chapter.ready ? (chapter.area ? 'Buy floor expansion' : 'Complete chapter') : esc(chapter.reason || 'Keep serving to meet the chapter goal')}</button></div>` : '<div class="card chapter-gate"><h3>Your restaurant is open</h3><p>The story is complete. Keep serving, improve the room, and earn prestige stars.</p></div>';
     const tables = UPGRADES.filter((u) => u.table).map((u) => this.upgradeCard(state, u)).join('');
-    return `<div class="unlock-summary"><div><h3>Chef Level ${state.level}</h3><span class="tip">Levels make items available. Cash buys them. Your crew shares all progress.</span></div><b>${money(state.cash)} available</b></div>${gate}<div class="section-title">Tables</div><p class="tip">Open more dining space to add tables. Each table must have a clear path to the door.</p><div class="ups">${tables}</div><div class="section-title">More unlocks</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">Nothing here yet.</div>'}</section>`).join('')}</div>`;
+    return `<div class="unlock-summary"><div><h3>Chef Level ${state.level}</h3><span class="tip">Levels make items available. Cash buys them. Your crew shares all progress.</span><p>Current floor: <b>${floor.width - 2} × ${floor.height - 2}</b> cells. Each expansion adds ${FLOOR_EXPANSION_WIDTH} × ${floor.height - 2} cells.</p></div><b>${money(state.cash)} available</b></div>${gate}<div class="section-title">Tables</div><p class="tip">Open more dining space to add tables. Each table must have a clear path to the door.</p><div class="ups">${tables}</div><div class="section-title">More unlocks</div><div class="unlock-columns">${groups.map(([title, items]) => `<section class="unlock-column"><h3>${title}</h3>${items.map(card).join('') || '<div class="empty">Nothing here yet.</div>'}</section>`).join('')}</div>`;
   }
 
   upgradeCard(state, upgrade) {
@@ -314,7 +315,7 @@ export class Office {
   // ------------------------------------------------------------ layout
 
   layoutTab(state) {
-    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. ${state.mode === 'story' ? 'You can use every room that you have leased. Buy leases in the Unlocks tab to open more floor space.' : 'You can use the full floor.'} The grid will show if the new place is safe. Doors and walls stay fixed.</p>
+    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. ${state.mode === 'story' ? 'Buy floor expansions in the Unlocks tab. Each purchase moves the outside wall and adds usable floor.' : 'You can use the full floor.'} The grid will show if the new place is safe. You can move items within the current walls.</p>
       <button class="btn primary" data-act="layout">Open floor planner</button></div>`;
   }
 

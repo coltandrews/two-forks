@@ -2,7 +2,7 @@
 import { isStory, drinkRequirements } from '../data/progression.js';
 import { awardXP, paidProgress, creditWork } from './progression.js';
 import { CFG } from '../config.js';
-import { QUEUE_SPOTS, FRONT_DOOR } from '../data/layout.js';
+import { queueSpots, frontDoor } from '../data/layout.js';
 import { ING } from '../data/ingredients.js';
 import { dishById, drinkById, dishVeg, courseSlot, repLevel, nextId } from './state.js';
 import { findPath, seatsOf, walkable } from './world.js';
@@ -69,6 +69,7 @@ function rollSize(maxSeats) {
 
 export function spawnParty(sim, opts = {}) {
   const S = sim.state;
+  const door = frontDoor(S);
   const waiting = S.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
   if (waiting.length >= CFG.queueMax) { S.today.turnedAway++; return null; }
   const maxSeats = Math.max(...S.objects.filter((o) => o.type === 'table').map((t) => t.seats), 2);
@@ -86,7 +87,7 @@ export function spawnParty(sim, opts = {}) {
   };
   for (let i = 0; i < size; i++) {
     party.guests.push({
-      id: party.id + 'g' + i, x: FRONT_DOOR.x + 0.5 + rand(-0.2, 0.2), z: FRONT_DOOR.z + 0.4, rot: Math.PI,
+      id: party.id + 'g' + i, x: door.x + 0.5 + rand(-0.2, 0.2), z: door.z + 0.4, rot: Math.PI,
       path: [], tx: null, tz: null, seat: -1, look: guestLook(critic && i === 0), veg: Math.random() < 0.12,
       eating: false,
     });
@@ -95,18 +96,19 @@ export function spawnParty(sim, opts = {}) {
   S.today.parties++;
   S.today.covers += size;
   assignQueue(sim);
-  sim.emit({ type: 'sfx', name: 'door', x: FRONT_DOOR.x, z: FRONT_DOOR.z });
+  sim.emit({ type: 'sfx', name: 'door', x: door.x, z: door.z });
   if (critic) sim.emit({ type: 'toast', text: 'A food critic just walked in. Make it count.', kind: 'warn' });
   return party;
 }
 
 /** Gives every waiting party a queue spot in arrival order. */
 function assignQueue(sim) {
+  const spots = queueSpots(sim.state);
   const q = sim.state.parties.filter((p) => p.state === 'entering' || p.state === 'waiting');
   q.forEach((p, i) => {
     if (p.spot === i) return;
     p.spot = i;
-    const s = QUEUE_SPOTS[Math.min(i, QUEUE_SPOTS.length - 1)];
+    const s = spots[Math.min(i, spots.length - 1)];
     p.guests.forEach((g, k) => {
       const ox = ((k % 2) - 0.5) * 0.36, oz = (k >> 1) * 0.3 - 0.15;
       goTo(sim, g, s.x + ox, s.z + oz);
@@ -448,7 +450,8 @@ export function leave(sim, party, paid) {
   party.state = 'leaving';
   party.t = 0;
   party.leader = null;
-  party.guests.forEach((g) => { g.eating = false; goTo(sim, g, FRONT_DOOR.x + 0.5, FRONT_DOOR.z + 0.5); });
+  const door = frontDoor(S);
+  party.guests.forEach((g) => { g.eating = false; goTo(sim, g, door.x + 0.5, door.z + 0.5); });
   assignQueue(sim);
 }
 
@@ -516,7 +519,7 @@ function review(sim, party, paid) {
   }
   const r = { day: S.day, stars, text, name: party.name, critic: party.kind === 'critic', size: party.size };
   const rt = S.objects.find((o) => o.id === party.table);
-  const at = rt ? { x: rt.x + (rt.seats === 4 ? 1 : 1.5), z: rt.z + (rt.seats === 4 ? 1.5 : 0.5) } : { x: 2.5, z: 12.5 };
+  const at = rt ? { x: rt.x + (rt.seats === 4 ? 1 : 1.5), z: rt.z + (rt.seats === 4 ? 1.5 : 0.5) } : queueSpots(S)[0];
   S.reviews.unshift(r);
   if (S.reviews.length > 30) S.reviews.pop();
   sim.emit({ type: 'review', review: r, x: at.x, z: at.z });
@@ -630,9 +633,10 @@ function compRemaining(p) {
 }
 
 export function sendHome(sim, p) {
+  const door = frontDoor(sim.state);
   p.state = 'leaving';
   p.t = 0;
-  p.guests.forEach((g) => goTo(sim, g, FRONT_DOOR.x + 0.5, FRONT_DOOR.z + 0.5));
+  p.guests.forEach((g) => goTo(sim, g, door.x + 0.5, door.z + 0.5));
   assignQueue(sim);
 }
 

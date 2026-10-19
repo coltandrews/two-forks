@@ -7,16 +7,16 @@ import { Sim } from '../src/sim/sim.js';
 import { awardXP } from '../src/sim/progression.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
 import { ING } from '../src/data/ingredients.js';
-import { FRONT_DOOR } from '../src/data/layout.js';
-import { buildGrid, walkable, validateLayout } from '../src/sim/world.js';
+import { roomSize, frontDoor, spawnPoints, queueSpots, KITCHEN_MAX_Z } from '../src/data/layout.js';
+import { buildGrid, walkable, validateLayout, findPath, approachTile } from '../src/sim/world.js';
 import { placementStatus, fixedCosts, placeOrder, toggleDish, createDish, buyUpgrade, autofillPlan } from '../src/sim/economy.js';
 import { spawnParty, serveTo, tableWork, leave, compItem } from '../src/sim/guests.js';
 import { ingItem } from '../src/sim/items.js';
 import { isOwned, ingredientAllowed, recipeRequirements, unlockList, chapterInfo, XP_LEVELS } from '../src/data/progression.js';
 import { useBot, playDay, seededRandom } from './simtest.mjs';
 import { Session } from '../src/net/session.js';
-import { actE, takeFromStore } from '../src/sim/kitchen.js';
-import { TICK } from '../src/config.js';
+import { actE, takeFromStore, findTarget } from '../src/sim/kitchen.js';
+import { CFG, TICK } from '../src/config.js';
 
 function restaurant(cuisine = 'southern', mode = 'story') {
   const sim = new Sim(newState({ cuisine, name: 'Story test', mode }));
@@ -27,7 +27,7 @@ function restaurant(cuisine = 'southern', mode = 'story') {
 
 function saveRoundTrip(sim) {
   const copy = deserialize(JSON.parse(JSON.stringify(serialize(sim.state))));
-  for (const key of ['mode', 'xp', 'level', 'owned', 'chapter', 'goal', 'cash']) {
+  for (const key of ['mode', 'xp', 'level', 'owned', 'chapter', 'goal', 'cash', 'building']) {
     assert.deepEqual(copy[key], sim.state[key], `${key} must survive a save`);
   }
   const next = new Sim(copy);
@@ -41,6 +41,7 @@ function verifyStartsAndMigration() {
     const { state } = restaurant(cuisine);
     assert.equal(state.mode, 'story');
     assert.equal(state.cash, 600);
+    assert.deepEqual(roomSize(state), { width: 14, height: 12 });
     assert.equal(state.xp, 0);
     assert.equal(state.level, 1);
     assert.equal(fixedCosts(state).rent, 40);
@@ -53,7 +54,7 @@ function verifyStartsAndMigration() {
     assert.equal(active.filter((d) => courseSlot(d.course) === 'starter').length, 1);
     assert.equal(state.menu.drinks.filter((d) => d.on).length, 2);
     for (const dish of active) assert.deepEqual(recipeRequirements(state, dish), [], `${cuisine}/${dish.id} must be cookable`);
-    assert(validateLayout(state, FRONT_DOOR).ok, `${cuisine}: valid starting floor`);
+    assert(validateLayout(state, frontDoor(state)).ok, `${cuisine}: valid starting floor`);
     const firstLocked = Object.keys(ING).find((id) => !ingredientAllowed(state, id));
     assert(firstLocked, 'Story must restrict some ingredients');
     const cash = state.cash, orders = JSON.stringify(state.orders);
@@ -72,6 +73,7 @@ function verifyStartsAndMigration() {
 
     const arcade = newState({ cuisine, mode: 'arcade' });
     assert.equal(arcade.cash, 3000);
+    assert.deepEqual(roomSize(arcade), { width: 20, height: 15 });
     assert(isOwned(arcade, 'areas', 'main_room'));
     for (const id of Object.keys(ING)) assert(ingredientAllowed(arcade, id));
     for (const dish of arcade.menu.dishes) assert.deepEqual(recipeRequirements(arcade, dishById(arcade, dish.id)), []);
@@ -88,6 +90,24 @@ function verifyStartsAndMigration() {
     assert.equal(migrated.cash, 731.25);
     assert.deepEqual(migrated.objects, expectedObjects);
     assert.deepEqual(migrated.menu, expectedMenu);
+    assert.deepEqual(roomSize(migrated), { width: 20, height: 15 });
+
+    // Story saves from the fixed building keep their floor and purchases.
+    const oldStory = serialize(state);
+    delete oldStory.building;
+    oldStory.objects = structuredClone(arcade.objects);
+    oldStory.cash = 912.75;
+    oldStory.owned.areas.main_room = true;
+    const oldStoryObjects = structuredClone(oldStory.objects);
+    const oldStoryOwned = structuredClone(oldStory.owned);
+    const migratedStory = deserialize(oldStory);
+    assert.deepEqual(roomSize(migratedStory), { width: 20, height: 15 });
+    assert.equal(migratedStory.cash, 912.75);
+    assert.deepEqual(migratedStory.objects, oldStoryObjects);
+    assert.deepEqual(migratedStory.owned, oldStoryOwned);
+    assert(validateLayout(migratedStory, frontDoor(migratedStory)).ok);
+    const migratedAgain = deserialize(serialize(migratedStory));
+    assert.deepEqual(migratedAgain.building, migratedStory.building, 'Migration must not change size on each load');
   }
   for (const cash of [1500, 3000, 5000]) {
     assert.equal(newState({ cuisine: 'southern', mode: 'arcade', cash }).cash, cash);
@@ -95,19 +115,89 @@ function verifyStartsAndMigration() {
   console.log('checked story starts, recipe dependencies, order gates, and old saves');
 }
 
-function verifyLockedFloor() {
-  const { state } = restaurant();
-  const grid = buildGrid(state);
-  const open = buildGrid({ ...state, mode: 'arcade' });
-  const counter = state.objects.find((o) => o.type === 'counter');
-  let checked = 0;
-  for (let z = 1; z < 14; z++) for (let x = 1; x < 19; x++) {
-    if (!walkable(open, x, z) || walkable(grid, x, z)) continue;
-    assert.equal(placementStatus(state, counter.id, x, z).ok, false, `Locked tile ${x},${z}`);
-    checked++;
+function verifyFloor(state) {
+  const size = roomSize(state), grid = buildGrid(state), door = frontDoor(state);
+  assert.equal(grid.width, size.width);
+  assert.equal(grid.height, size.height);
+  assert.equal(grid.blocked.length, size.width * size.height);
+  const valid = validateLayout(state, door);
+  assert(valid.ok, `${state.cuisine}, chapter ${state.chapter}: ${valid.reason}`);
+  assert(walkable(grid, door.x, door.z), 'The front door must be open');
+  for (const point of [...spawnPoints(state), ...queueSpots(state)]) {
+    const x = Math.floor(point.x), z = Math.floor(point.z);
+    assert(walkable(grid, x, z), `Blocked spawn or queue at ${x},${z}`);
+    assert(findPath(grid, door.x, door.z, x, z), `No route from the door to ${x},${z}`);
   }
-  assert(checked > 20, 'Story must block a meaningful part of the building');
-  console.log(`checked ${checked} locked floor cells`);
+  const counter = state.objects.find((o) => o.type === 'counter');
+  for (let z = 0; z < size.height; z++) {
+    for (const x of [-1, 0, size.width - 1, size.width]) {
+      assert.equal(walkable(grid, x, z), false, `Side wall ${x},${z}`);
+      assert.equal(placementStatus(state, counter.id, x, z).ok, false);
+    }
+  }
+  for (let x = 0; x < size.width; x++) {
+    assert.equal(walkable(grid, x, 0), false, `Back wall ${x},0`);
+    assert.equal(walkable(grid, x, size.height), false);
+    assert.equal(placementStatus(state, counter.id, x, size.height - 1).ok, false);
+    if (x !== door.x) assert.equal(walkable(grid, x, size.height - 1), false);
+  }
+  assert.equal(findPath(grid, door.x, door.z, size.width, door.z), null, 'A path cannot leave the building');
+}
+
+function verifyFloorExpansions() {
+  for (const cuisine of CUISINE_ORDER) {
+    const sim = restaurant(cuisine), state = sim.state;
+    assert(state.objects.filter((o) => ['board', 'grill', 'pan', 'pot', 'oven'].includes(o.type)).every((o) => o.z <= KITCHEN_MAX_Z));
+    assert(state.objects.filter((o) => o.type === 'table').every((o) => o.z > KITCHEN_MAX_Z + 1));
+    verifyFloor(state);
+    state.cash = 10000;
+    state.level = 20;
+    state.xp = XP_LEVELS.at(-1);
+    state.storyStats = { paidGuests: 500, bestPaidDay: 99, criticPassed: true };
+    for (let chapter = 1; chapter <= 4; chapter++) {
+      const before = roomSize(state), objects = structuredClone(state.objects);
+      assert.equal(chapterInfo(state).ready, true);
+      const result = approve(sim, sim.command('A', { c: 'chapter' }));
+      assert.equal(result.ok, true);
+      const after = roomSize(state);
+      assert.equal(after.width, before.width + (chapter <= 3 ? 10 : 0));
+      assert.equal(after.height, before.height);
+      assert.deepEqual(state.objects, objects, 'An expansion must keep furniture positions');
+      verifyFloor(state);
+      if (chapter <= 3) {
+        const counter = state.objects.find((o) => o.type === 'counter');
+        let target;
+        for (let x = after.width - 2; x >= before.width && !target; x--) {
+          for (let z = 1; z < after.height - 1; z++) {
+            if (placementStatus(state, counter.id, x, z).ok) { target = { x, z }; break; }
+          }
+        }
+        assert(target, 'The new floor must accept furniture');
+        assert.equal(sim.command('A', { c: 'move', id: counter.id, ...target }).layout, true);
+        const approach = approachTile(sim.grid, counter.x, counter.z);
+        assert(approach, 'The moved station must be reachable');
+        const x = approach.x + 0.5, z = approach.z + 0.5;
+        sim.setPose('A', x, z, Math.atan2(counter.x + 0.5 - x, counter.z + 0.5 - z));
+        assert.equal(state.players.A.x, x, 'Host movement must use the expanded bounds');
+        assert.equal(findTarget(state, sim.grid, state.players.A)?.id, counter.id);
+        const item = ingItem('lettuce', 'raw', ING.lettuce.cost);
+        state.players.A.hand = item;
+        assert.equal(actE(sim, 'A', false), 'ok');
+        assert.equal(counter.slot.ing, item.ing, 'A station in the new floor must accept an item');
+        assert.equal(actE(sim, 'A', false), 'ok');
+        assert.equal(state.players.A.hand.ing, item.ing);
+        state.players.A.hand = null;
+        verifyFloor(state);
+      }
+      const saved = deserialize(serialize(state));
+      assert.deepEqual(saved.building, state.building);
+      assert.deepEqual(saved.objects, state.objects);
+      assert.equal(saved.cash, state.cash);
+      verifyFloor(saved);
+    }
+    assert.equal(state.chapter, 5);
+  }
+  console.log('checked every Story floor, three expansions, final chapter, boundaries, routes, furniture, and station interaction');
 }
 
 function approve(sim, result) {
@@ -250,7 +340,11 @@ async function verifySessionSnapshots() {
   assert.equal(client.state.mode, 'story');
   assert.equal(client.state.xp, state.xp);
   assert.deepEqual(client.state.owned, state.owned);
-  assert.equal(walkable(client.gridFor(), 4, 6), false, 'The client must block the unleased Main Room');
+  assert.deepEqual(roomSize(client.state), roomSize(state));
+  const initialGrid = client.gridFor(), initialWidth = initialGrid.width;
+  const probe = { x: initialWidth, z: KITCHEN_MAX_Z };
+  assert.equal(walkable(initialGrid, probe.x, probe.z), false, 'The client must block land outside its building');
+  const initialObjects = structuredClone(state.objects);
   host.sendSnapshots();
   assert.equal(flush().length, 0, 'Unchanged state must not resend slow or meta messages');
   host.sim.drain();
@@ -276,7 +370,11 @@ async function verifySessionSnapshots() {
     assert.equal(client.state.level, state.level, 'Chef Level must arrive before its event');
     assert.equal(client.state.chapter, 2, 'The chapter snapshot must arrive before its card');
     assert.equal(client.state.owned.areas.main_room, true);
-    assert.equal(walkable(client.gridFor(), 4, 6), true, 'The client collision grid must update when the lease arrives');
+    assert.deepEqual(roomSize(client.state), roomSize(state));
+    assert.equal(client.gridFor().width, initialWidth + 10, 'The client grid must use the expanded width');
+    assert.notEqual(client.gridFor(), initialGrid, 'The client must rebuild the grid when only the building changes');
+    assert.deepEqual(client.state.objects, initialObjects, 'The expansion must keep object positions');
+    assert.equal(walkable(client.gridFor(), probe.x, probe.z), true, 'The client must be able to use the new floor');
     events.push(event);
   });
   host.command({ c: 'approvePurchase', id: request.id, approve: true });
@@ -288,7 +386,11 @@ async function verifySessionSnapshots() {
   assert.deepEqual(events.map((event) => event.type).sort(), ['chapter', 'chefLevelUp']);
   assert(!client.state.pendingPurchase);
   assert.deepEqual(client.state.owned, state.owned);
-  console.log('checked Session snapshots, shared approval, lease collision, and event order with a local test transport');
+  client.setPose(probe.x + 0.5, probe.z + 0.5, 0, false);
+  client.update(TICK);
+  assert.equal(state.players.C.x, probe.x + 0.5, 'Host movement must accept the client on its new floor');
+  assert.equal(state.players.C.z, probe.z + 0.5);
+  console.log('checked Session building snapshots, shared approval, client movement, grid rebuilds, and event order with a local test transport');
 }
 
 function verifyCrewPlating() {
@@ -370,6 +472,17 @@ function verifyXP() {
   const comped = restaurant();
   servedFixture(comped, { comp: true });
   assert.equal(comped.state.xp, 0, 'A comped dish must not award XP');
+  const queued = restaurant();
+  const waiting = spawnParty(queued, { size: 1, critic: false });
+  waiting.state = 'waiting';
+  queued.drain();
+  leave(queued, waiting, false);
+  const review = queued.drain().find((event) => event.type === 'review');
+  assert(review, 'A queued walkout must leave a review');
+  const size = roomSize(queued.state);
+  assert(review.x >= 0 && review.x < size.width && review.z >= 0 && review.z < size.height, 'The review must appear inside the current building');
+  assert(walkable(queued.grid, Math.floor(review.x), Math.floor(review.z)), 'A queued review must appear on open floor');
+  assert.equal(queued.state.xp, 0);
   const arcade = restaurant('southern', 'arcade');
   servedFixture(arcade);
   assert.equal(arcade.state.xp || 0, 0, 'Arcade must not gain story XP');
@@ -398,8 +511,8 @@ function verifyDebtSetback() {
 }
 
 function buyProgress(sim) {
-  // Save for room leases first. Buy only affordable optional upgrades after
-  // retaining the next deposit plus a supplier reserve.
+  // Save for floor expansions first. Buy only affordable optional upgrades
+  // after retaining the next deposit plus a supplier reserve.
   const state = sim.state;
   let chapter = chapterInfo(state);
   if (chapter?.ready) {
@@ -407,7 +520,10 @@ function buyProgress(sim) {
     assert(!result?.reason, `Chapter purchase: ${result?.reason}`);
     chapter = chapterInfo(state);
   }
-  if (isOwned(state, 'areas', 'main_room') && state.objects.filter((o) => o.type === 'table').length < 4 && state.cash >= 500) {
+  // More tables also bring more guests. Add seats only when the kitchen can
+  // serve a two-top within its food grace period, with no walkouts.
+  const canServeMore = !state.report.walkouts && state.report.ticketTime <= CFG.party.foodGrace + 2 * CFG.party.gracePerDish;
+  if (canServeMore && isOwned(state, 'areas', 'main_room') && state.objects.filter((o) => o.type === 'table').length < 4 && state.cash >= 500) {
     approve(sim, sim.command('A', { c: 'upgrade', id: 'table2' }));
   }
   const reserve = (chapter?.price || 0) + 250;
@@ -454,7 +570,7 @@ function runStory(cuisine, days = 25) {
 
 if (!process.argv.includes('--balance-only')) {
   verifyStartsAndMigration();
-  verifyLockedFloor();
+  verifyFloorExpansions();
   verifyPurchaseApproval();
   verifyChapterReport();
   await verifySessionSnapshots();

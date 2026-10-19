@@ -54,6 +54,9 @@ export class Lobby {
   constructor(app) {
     this.app = app;
     this.root = document.getElementById('lobby');
+    this.card = document.createElement('div');
+    this.card.className = 'lobby-card';
+    this.root.replaceChildren(this.card);
     this.screen = 'title';
     this.mode = 'host';
     this.pick = 'southern';
@@ -75,14 +78,20 @@ export class Lobby {
 
   hide() { this.root.hidden = true; this.stopPreview(); }
 
+  setStarting(on) {
+    this.starting = on;
+    this.root.setAttribute('aria-busy', String(on));
+    if (!this.root.hidden) this.render();
+  }
+
   go(screen) {
     this.screen = screen;
     this.err = '';
     this.render();
+    this.card.scrollTop = 0;
   }
 
   render() {
-    this.stopPreview();
     let h = '';
     const prof = this.app.profile;
     switch (this.screen) {
@@ -110,7 +119,7 @@ export class Lobby {
         const c = CUISINES[this.pick];
         h = `<button class="btn small ghost back" data-act="saves">← Back</button><div class="title"><h1 class="small">What kind of place?</h1><p>The cuisine sets the menu, the decor and the drinks. It can't be changed later for this restaurant.</p></div>
         <div class="mode-choices" aria-label="Game mode">
-          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600 and a small counter. Earn XP, buy equipment, and open each room.</span></button>
+          <button class="mode-choice ${this.gameMode === 'story' ? 'sel' : ''}" data-act="gameMode" data-id="story" aria-pressed="${this.gameMode === 'story'}"><b>Story</b><span>Start with $600, a kitchen, and a small dining room. Earn XP, buy equipment, and expand your floor space.</span></button>
           <button class="mode-choice ${this.gameMode === 'arcade' ? 'sel' : ''}" data-act="gameMode" data-id="arcade" aria-pressed="${this.gameMode === 'arcade'}"><b>Arcade</b><span>The full building and menu are open. Design and run your restaurant at your own pace.</span></button>
         </div>
         ${this.gameMode === 'arcade' ? `<div class="field arcade-cash"><label>Starting cash</label><div class="seg">${[[5000, 'Relaxed'], [3000, 'Normal'], [1500, 'Tight']].map(([cash, name]) => `<button class="${this.startCash === cash ? 'on' : ''}" data-act="startCash" data-cash="${cash}" aria-pressed="${this.startCash === cash}">${name} · ${money0(cash)}</button>`).join('')}</div></div>` : '<p class="hint-line">Four chapters · About 20 days · Shared progress · Setbacks without a game over</p>'}
@@ -139,8 +148,24 @@ export class Lobby {
         h = this.chefHtml();
         break;
     }
-    this.root.innerHTML = `<div class="lobby-card">${h}</div>`;
-    if (this.screen === 'chef') this.startPreview();
+    if (this.screen === 'chef' && this.preview) {
+      // Keep the canvas and its WebGL context when the editor changes.
+      const content = document.createElement('div');
+      content.innerHTML = h;
+      this.card.querySelector('.opts').replaceWith(content.querySelector('.opts'));
+    } else {
+      this.stopPreview();
+      this.card.innerHTML = h;
+      if (this.screen === 'chef') this.startPreview();
+    }
+    if (this.starting) {
+      for (const control of this.card.querySelectorAll('button, input, textarea')) control.disabled = true;
+      const status = document.createElement('p');
+      status.className = 'hint-line';
+      status.setAttribute('role', 'status');
+      status.textContent = 'Opening the kitchen…';
+      this.card.appendChild(status);
+    }
     const ci = this.root.querySelector('[data-in=code]');
     if (ci) ci.focus();
   }
@@ -194,7 +219,7 @@ export class Lobby {
       if (!pv.alive) return;
       const key = JSON.stringify(this.chefDraft.look);
       if (key !== pv.key) {
-        if (pv.model) scene.remove(pv.model.root);
+        if (pv.model) { scene.remove(pv.model.root); disposePreviewModel(pv.model); }
         pv.model = makePerson(this.chefDraft.look, true);
         scene.add(pv.model.root);
         pv.key = key;
@@ -211,7 +236,9 @@ export class Lobby {
   stopPreview() {
     if (!this.preview) return;
     this.preview.alive = false;
+    if (this.preview.model) disposePreviewModel(this.preview.model);
     this.preview.r.dispose();
+    this.preview.r.forceContextLoss();
     this.preview = null;
   }
 
@@ -268,13 +295,7 @@ export class Lobby {
         sfx('pick');
         const name = this.root.querySelector('[data-in=cname]');
         if (name) this.chefDraft.name = name.value;
-        const keepPreview = this.preview;
-        this.preview = null;
-        const card = this.root.querySelector('.opts');
-        const tmp = document.createElement('div');
-        tmp.innerHTML = this.chefHtml();
-        card.replaceWith(tmp.querySelector('.opts'));
-        this.preview = keepPreview;
+        this.render();
         break;
       }
       case 'chefsave': {
@@ -334,4 +355,9 @@ export class Lobby {
       this.render();
     }
   }
+}
+
+function disposePreviewModel(model) {
+  model.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  model.material.dispose();
 }

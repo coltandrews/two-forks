@@ -28,7 +28,6 @@ export const MAP = [
 
 export const KITCHEN_MAX_Z = 4; // rows 1..4 are kitchen floor; 6..13 dining
 export const LAYOUT_MIN_Z = 1;
-export const LAYOUT_MAX_Z = MAP.length - 2;
 
 export const CHAR_TYPES = {
   F: 'fridge', Z: 'freezer', P: 'pantry', c: 'counter', b: 'board', g: 'grill', p: 'pan', o: 'pot',
@@ -89,6 +88,40 @@ export const QUEUE_SPOTS = [
   { x: 1.6, z: 11.1 }, { x: 2.5, z: 11.1 }, { x: 1.6, z: 10.2 }, { x: 2.5, z: 10.2 },
 ];
 export const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }];
+
+export const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
+export const FLOOR_EXPANSION_WIDTH = 10;
+
+/** Saved dimensions keep furniture coordinates stable when the room grows. */
+export function roomSize(state) {
+  const building = state.mode === 'story' && state.building;
+  return building ? { width: building.width, height: building.height } : { width: MAP[0].length, height: MAP.length };
+}
+
+export function frontDoor(state) { return { x: FRONT_DOOR.x, z: roomSize(state).height - 1 }; }
+
+export function spawnPoints(state) {
+  return state.mode === 'story' && state.building?.height === STORY_BUILDING.height
+    ? [{ x: 9.5, z: 4.5 }, { x: 10.5, z: 4.5 }]
+    : SPAWN_POINTS;
+}
+
+export function queueSpots(state) {
+  const offset = roomSize(state).height - MAP.length;
+  return QUEUE_SPOTS.map((spot) => ({ x: spot.x, z: spot.z + offset }));
+}
+
+export function layoutTile(state, x, z) {
+  const { width, height } = roomSize(state);
+  if (x < 0 || z < 0 || x >= width || z >= height) return '#';
+  if (state.mode !== 'story') return MAP[z][x];
+  if (x === FRONT_DOOR.x && z === height - 1) return 'D';
+  if (x === 0 && z === 3) return 'B';
+  if (x === 0 || z === 0 || x === width - 1 || z === height - 1) return '#';
+  const divider = state.building?.divider || { from: 1, to: 12 };
+  if (z === 5 && (x < divider.from || x > divider.to)) return '#';
+  return '.';
+}
 
 /** Static station types that use a single item slot. */
 export const SLOT_TYPES = new Set(['counter', 'board', 'grill', 'pan', 'pot', 'fryer', 'oven', 'pass']);

@@ -2,11 +2,8 @@
 // cuisine's decor. Rebuilt when the layout or decor upgrades change.
 import * as THREE from 'three';
 import { Shape, MAT, meshOf, shade, mix } from './shape.js';
-import { MAP, KITCHEN_MAX_Z } from '../data/layout.js';
-import { lockedAreas } from '../data/progression.js';
-import { isWallTile } from '../sim/world.js';
+import { KITCHEN_MAX_Z, roomSize, layoutTile, frontDoor } from '../data/layout.js';
 
-const W = MAP[0].length, H = MAP.length;
 const WALL_H = 2.8, DIVIDER_H = 1.05, FRONT_H = 0.45;
 
 function nameSign(name, style, pal) {
@@ -45,10 +42,11 @@ function nameSign(name, style, pal) {
 
 export function buildRoom(cuisine, name, upgrades, state) {
   const pal = cuisine.palette;
+  const { width: W, height: H } = roomSize(state);
   const root = new THREE.Group();
   const s = new Shape();
   const glow = new Shape(false);
-  const isWall = (x, z) => isWallTile(state, x, z);
+  const isWall = (x, z) => ['#', 'B'].includes(layoutTile(state, x, z));
 
   // Floors.
   for (let z = 0; z < H; z++) {
@@ -69,8 +67,9 @@ export function buildRoom(cuisine, name, upgrades, state) {
   }
   if (upgrades.decor3) {
     // Renovation: a big rug under the tables.
-    s.box(13, 0.012, 6.2, mix(pal.accent, 0x2a2a2a, 0.35), 10.5, 0.006, 9.6);
-    s.box(12.4, 0.014, 5.6, mix(pal.accent2, 0xf0e6d0, 0.4), 10.5, 0.008, 9.6);
+    const width = W - 7, depth = H - 8.8, centerZ = (6 + H - 1) / 2;
+    s.box(width, 0.012, depth, mix(pal.accent, 0x2a2a2a, 0.35), W / 2 + 0.5, 0.006, centerZ);
+    s.box(width - 0.6, 0.014, depth - 0.6, mix(pal.accent2, 0xf0e6d0, 0.4), W / 2 + 0.5, 0.008, centerZ);
   }
 
   // Walls.
@@ -79,7 +78,7 @@ export function buildRoom(cuisine, name, upgrades, state) {
     for (let x = 0; x < W; x++) {
       if (!isWall(x, z)) continue;
       const cx = x + 0.5, cz = z + 0.5;
-      if (MAP[z][x] === 'B') {
+      if (layoutTile(state, x, z) === 'B') {
         // Back door: frame and a door slab.
         s.box(1, WALL_H, 1, wallC, cx, WALL_H / 2, cz);
         s.box(0.06, 2.1, 0.9, 0x7a5a3a, cx + 0.5, 1.05, cz);
@@ -93,7 +92,7 @@ export function buildRoom(cuisine, name, upgrades, state) {
         s.box(1.02, 0.06, 1.04, trimC, cx, FRONT_H + 0.03, cz);
         continue;
       }
-      if (z === 5) {
+      if (z === 5 && x > 0 && x < W - 1) {
         s.box(1, DIVIDER_H, 1, wallC, cx, DIVIDER_H / 2, cz);
         s.box(1.02, 0.06, 1.04, trimC, cx, DIVIDER_H + 0.03, cz);
         s.box(1.0, 0.3, 0.02, shade(wallC, 0.85), cx, 0.15, cz + 0.51);
@@ -115,25 +114,30 @@ export function buildRoom(cuisine, name, upgrades, state) {
   // Subway tile bands on the kitchen back wall.
   for (let i = 0; i < 8; i++) {
     const y = 0.95 + i * 0.16;
-    s.box(18, 0.012, 0.01, shade(pal.kitchenA, 0.86), 10, y, 1.005);
+    s.box(W - 2, 0.012, 0.01, shade(pal.kitchenA, 0.86), W / 2, y, 1.005);
   }
-  // Shelves with pans either side of the name sign.
-  for (const cx of [4.6, 15.4]) {
-    s.box(4.2, 0.05, 0.3, 0x8a8f94, cx, 2.35, 1.15);
-    for (let i = 0; i < 3; i++) {
-      const x = cx - 1.3 + i * 1.3;
-      if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
-      else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+  // Short shelves keep their scale on both sides of the name sign.
+  for (const [left, right] of [[1.5, W / 2 - 3.1], [W / 2 + 3.1, W - 1.5]]) {
+    const span = right - left;
+    const count = Math.max(1, Math.ceil(span / 5));
+    const width = Math.min(4.2, span / count - 0.15);
+    for (let shelf = 0; shelf < count; shelf++) {
+      const cx = left + (shelf + 0.5) * span / count;
+      s.box(width, 0.05, 0.3, 0x8a8f94, cx, 2.35, 1.15);
+      const pans = Math.max(1, Math.floor(width / 1.1));
+      for (let i = 0; i < pans; i++) {
+        const x = cx + (i - (pans - 1) / 2) * 1.1;
+        if (i % 2) s.cyl(0.18, 0.15, 0.2, 8, 0x9aa0a6, x, 2.48, 1.15);
+        else s.cyl(0.14, 0.14, 0.12, 8, 0x5a5654, x, 2.44, 1.15);
+      }
+      glow.box(width * 0.86, 0.05, 0.08, 0xfffbf0, cx, 2.72, 1.1);
     }
   }
-  // Fluorescent strips (glow).
-  glow.box(3.6, 0.05, 0.08, 0xfffbf0, 4.6, 2.72, 1.1);
-  glow.box(3.6, 0.05, 0.08, 0xfffbf0, 15.4, 2.72, 1.1);
 
   // Windows on the dining side walls.
   const winGeo = new Shape(false);
   const outside = new Shape(false);
-  for (const z of [7.5, 10.5]) {
+  for (const z of [6 + (H - 7) * 0.1875, 6 + (H - 7) * 0.5625]) {
     for (const x of [0.5 + 0.52, W - 0.5 - 0.52]) {
       const face = x < W / 2 ? 1 : -1;
       const front = x + face * 0.018;
@@ -156,153 +160,33 @@ export function buildRoom(cuisine, name, upgrades, state) {
   root.add(new THREE.Mesh(winGeo.build(), winMat), new THREE.Mesh(outside.build(), outsideMat));
 
   // Front door gap: mat and an OPEN sign.
-  s.box(1.0, 0.012, 0.7, 0x5a3a2a, 2.5, 0.006, 13.6);
-  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 1.95, 0.75, 14.5);
-  s.box(0.06, 0.6, 0.06, 0x5a4a3a, 3.05, 0.75, 14.5);
+  const door = frontDoor(state);
+  s.box(1.0, 0.012, 0.7, 0x5a3a2a, door.x + 0.5, 0.006, door.z - 0.4);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, door.x - 0.05, 0.75, door.z + 0.5);
+  s.box(0.06, 0.6, 0.06, 0x5a4a3a, door.x + 1.05, 0.75, door.z + 0.5);
 
   // Cuisine decor and upgrades.
-  decor(s, glow, cuisine, pal, upgrades);
+  decor(s, glow, cuisine, pal, upgrades, W, H, state.mode === 'story' ? (state.building?.divider?.to || 12) : 12);
 
   root.add(meshOf(s, MAT.solid, false, true));
   if (glow.parts.length) root.add(new THREE.Mesh(glow.build(), MAT.glow));
 
   const sign = nameSign(name, cuisine.style, pal);
-  sign.position.set(10, 2.3, 1.03);
+  sign.position.set(W / 2, 2.3, 1.03);
   root.add(sign);
 
-  const room = { root, winMat, outsideMat, pal, locks: new Map(), releasing: [] };
-  syncRoomAreas(room, state, 0);
-  return room;
+  return { root, winMat, outsideMat };
 }
 
-function leaseSign(name) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512; canvas.height = 160;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#eee1bc';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#66543a';
-  ctx.lineWidth = 10;
-  ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#473a2b';
-  ctx.font = 'bold 52px sans-serif';
-  ctx.fillText('FOR LEASE', 256, 69);
-  ctx.font = '28px sans-serif';
-  ctx.fillText(name, 256, 120, 460);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.78), new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
-}
-
-/** One merged mesh per fence edge; all boards share the room's flat material. */
-function lockedAreaModel(area, pal) {
-  const root = new THREE.Group();
-  root.position.set(area.x, 0, area.z);
-  const ground = new Shape();
-  const panels = [];
-  const covers = [];
-  ground.box(area.w - 0.08, 0.014, area.h - 0.08, area.kind === 'kitchen' ? 0x5d686b : mix(pal.floorB, 0x665b4c, 0.65), area.w / 2, 0.012, area.h / 2);
-  const edges = [
-    [area.w / 2, area.h - 0.09, area.w - 0.18, 0],
-    [area.w / 2, 0.09, area.w - 0.18, Math.PI],
-    [0.09, area.h / 2, area.h - 0.18, -Math.PI / 2],
-    [area.w - 0.09, area.h / 2, area.h - 0.18, Math.PI / 2],
-  ];
-  for (const [x, z, length, yaw] of edges) {
-    const panel = new THREE.Group();
-    panel.position.set(x, 0, z);
-    panel.rotation.order = 'YXZ';
-    panel.rotation.y = yaw;
-    const s = new Shape();
-    if (area.kind === 'dining') {
-      for (const y of [0.24, 0.65, 1.06]) {
-        s.box(length, 0.36, 0.075, y === 0.65 ? 0xad8759 : 0xbd9869, 0, y, 0);
-        s.box(length, 0.025, 0.08, 0xcba77a, 0, y + 0.16, 0);
-      }
-      const count = Math.ceil(length / 2);
-      for (let i = 0; i <= count; i++) {
-        const px = -length / 2 + i * length / count;
-        s.box(0.095, 1.28, 0.13, 0x7e6343, px, 0.64, -0.02);
-      }
-    } else {
-      // A tape border stays low, so the covered kitchen bays remain visible.
-      s.box(length, 0.018, 0.13, 0xe2ba59, 0, 0.035, 0);
-      for (let px = -length / 2 + 0.16; px < length / 2; px += 0.5) {
-        s.box(0.23, 0.019, 0.13, 0x3f4544, px, 0.038, 0);
-      }
-    }
-    panel.add(meshOf(s));
-    root.add(panel);
-    panels.push(panel);
-  }
-  if (area.kind === 'dining') {
-    const sign = leaseSign(area.name);
-    sign.position.set(0, 0.8, 0.075);
-    panels[0].add(sign);
-  } else {
-    // Four-sided draped covers give the bay a clear silhouette at a distance.
-    const count = Math.max(1, Math.floor(area.w / 2.5));
-    for (let i = 0; i < count; i++) {
-      const s = new Shape();
-      const x = (i + 0.5) * area.w / count;
-      s.cyl(0.6, 0.88, 0.85, 4, i % 2 ? 0x748c94 : 0x657e89, 0, 0.43, 0, 0, Math.PI / 4);
-      s.box(1.0, 0.03, 0.78, 0x899fa5, 0, 0.87, 0);
-      const cover = meshOf(s);
-      cover.position.set(x, 0, area.h / 2);
-      root.add(cover);
-      covers.push(cover);
-    }
-  }
-  root.add(meshOf(ground, MAT.solid, false, true));
-  return { root, panels, covers, elapsed: 0 };
-}
-
-function disposeLockedArea(lock) {
-  lock.root.traverse((o) => {
-    if (!o.isMesh) return;
-    o.geometry.dispose();
-    if (o.material === MAT.solid) return;
-    if (o.material.map) o.material.map.dispose();
-    o.material.dispose();
+/** The shell owns its geometry and window/sign materials. */
+export function disposeRoom(room) {
+  room.root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.geometry.dispose();
+    if (obj.material === MAT.solid || obj.material === MAT.glow) return;
+    if (obj.material.map) obj.material.map.dispose();
+    obj.material.dispose();
   });
-}
-
-export function disposeRoomAreas(room) {
-  for (const lock of [...room.locks.values(), ...room.releasing]) {
-    room.root.remove(lock.root);
-    disposeLockedArea(lock);
-  }
-  room.locks.clear();
-  room.releasing.length = 0;
-}
-
-/** Area ownership is shared state, so the same transition runs on each client. */
-export function syncRoomAreas(room, state, dt) {
-  const areas = lockedAreas(state);
-  const ids = new Set(areas.map((area) => area.id));
-  for (const [id, lock] of room.locks) {
-    if (ids.has(id)) continue;
-    room.locks.delete(id);
-    room.releasing.push(lock);
-  }
-  for (const area of areas) {
-    if (room.locks.has(area.id)) continue;
-    const lock = lockedAreaModel(area, room.pal);
-    room.locks.set(area.id, lock);
-    room.root.add(lock.root);
-  }
-  for (let i = room.releasing.length - 1; i >= 0; i--) {
-    const lock = room.releasing[i];
-    lock.elapsed += dt;
-    const t = Math.min(1, lock.elapsed / 0.75);
-    for (const panel of lock.panels) panel.rotation.x = -Math.PI / 2 * t * t;
-    for (const cover of lock.covers) cover.scale.y = Math.max(0.02, 1 - t * t);
-    if (t < 1) continue;
-    room.root.remove(lock.root);
-    disposeLockedArea(lock);
-    room.releasing.splice(i, 1);
-  }
 }
 
 function frame(s, x, y, z, w, h, c, face) {
@@ -320,67 +204,71 @@ function plant(s, x, z, big = 1) {
   }
 }
 
-function decor(s, glow, cuisine, pal, up) {
+function decor(s, glow, cuisine, pal, up, W, H, openingEnd) {
   const id = cuisine.id;
   const L = 1.02, R = W - 1.02;
-  // Art on dining walls between windows.
-  frame(s, L, 1.7, 9.0, 0.9, 0.7, pal.accent, 1);
-  frame(s, R, 1.7, 9.0, 0.9, 0.7, pal.accent2, -1);
+  // Move accents with the walls; keep each primitive at its original scale.
+  const X = (x) => 1 + (x - 1) * (W - 2) / 18;
+  const Z = (z) => 6 + (z - 6) * (H - 7) / 8;
+  frame(s, L, 1.7, Z(9), 0.9, 0.7, pal.accent, 1);
+  frame(s, R, 1.7, Z(9), 0.9, 0.7, pal.accent2, -1);
   if (id === 'southern') {
-    for (const z of [6.4, 12.6]) { plant(s, 1.4, z, 0.9); }
-    for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, x, 2.55, 9.6); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, x, 2.25, 9.6); }
+    for (const z of [6.4, 12.6]) plant(s, 1.4, Z(z), 0.9);
+    for (const x of [6, 10, 14]) { s.cyl(0.004, 0.004, 0.5, 3, 0x3a3a3a, X(x), 2.55, Z(9.6)); glow.cyl(0.07, 0.09, 0.16, 7, 0xffe0a0, X(x), 2.25, Z(9.6)); }
     for (const x of [6, 14]) {
-      s.cyl(0.035, 0.035, 0.3, 7, 0x594435, x, 2.62, 10.6);
-      s.cyl(0.11, 0.13, 0.08, 8, 0x6f5038, x, 2.45, 10.6);
-      s.box(1.35, 0.045, 0.14, 0x7b593e, x, 2.43, 10.6, 0, 0.28);
-      s.box(1.35, 0.045, 0.14, 0x7b593e, x, 2.43, 10.6, 0, Math.PI / 2 + 0.28);
+      s.cyl(0.035, 0.035, 0.3, 7, 0x594435, X(x), 2.62, Z(10.6));
+      s.cyl(0.11, 0.13, 0.08, 8, 0x6f5038, X(x), 2.45, Z(10.6));
+      s.box(1.35, 0.045, 0.14, 0x7b593e, X(x), 2.43, Z(10.6), 0, 0.28);
+      s.box(1.35, 0.045, 0.14, 0x7b593e, X(x), 2.43, Z(10.6), 0, Math.PI / 2 + 0.28);
     }
-    s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, 12.4);
+    s.box(0.04, 0.9, 1.3, 0x2a3a2a, R + 0.01, 1.6, Z(12.4));
   } else if (id === 'italian') {
-    for (let i = 0; i < 18; i++) { const t = i / 17; glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * 17, 2.6 - Math.sin(t * Math.PI) * 0.35, 6.4); }
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, 12.0 + j * 0.15, 0, 0, Math.PI / 2);
-    s.box(0.04, 1.3, 0.6, 0x6a4a2a, R + 0.0, 1.35, 12.15);
-    for (const x of [6, 10, 14]) { s.cyl(0.012, 0.012, 0.38, 5, 0x3b3029, x, 2.62, 10.4); glow.cone(0.17, 0.18, 10, 0xffcf82, x, 2.35, 10.4); }
-    for (const z of [6.7, 11.8]) { s.box(0.045, 1.15, 0.66, 0x6d4a31, L, 1.5, z); s.torus(0.32, 0.035, pal.accent, L + 0.025, 2.05, z, 0, Math.PI / 2, 0, Math.PI, 12); }
+    const bulbs = Math.ceil(W * 0.9);
+    for (let i = 0; i < bulbs; i++) { const t = i / (bulbs - 1); glow.sphere(0.05, i % 3 === 0 ? 0xffe4a0 : i % 3 === 1 ? 0xfff0c8 : 0xffd080, 1.5 + t * (W - 3), 2.6 - Math.sin(t * Math.PI) * 0.35, Z(6.4)); }
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) s.cyl(0.04, 0.04, 0.3, 6, j % 2 ? 0x5a1a24 : 0x2a4a2a, R - 0.1, 0.9 + i * 0.3, Z(12.15) + (j - 1) * 0.15, 0, 0, Math.PI / 2);
+    s.box(0.04, 1.3, 0.6, 0x6a4a2a, R, 1.35, Z(12.15));
+    for (const x of [6, 10, 14]) { s.cyl(0.012, 0.012, 0.38, 5, 0x3b3029, X(x), 2.62, Z(10.4)); glow.cone(0.17, 0.18, 10, 0xffcf82, X(x), 2.35, Z(10.4)); }
+    for (const z of [6.7, 11.8]) { s.box(0.045, 1.15, 0.66, 0x6d4a31, L, 1.5, Z(z)); s.torus(0.32, 0.035, pal.accent, L + 0.025, 2.05, Z(z), 0, Math.PI / 2, 0, Math.PI, 12); }
   } else if (id === 'mexican') {
     const colors = [0xe0407a, 0xf2c030, 0x2a9a8e, 0xf07830, 0x8a4ac8];
-    for (const zz of [7.0, 10.0, 12.6]) for (let i = 0; i < 16; i++) s.box(0.3, 0.3, 0.018, colors[i % 5], 2 + i * 1.05, 2.45, zz, 0, 0, Math.PI / 4);
-    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 0.18, 0.42, colors[i % 5], x, 0.72, 6.3 + i * 0.5);
-    plant(s, 1.4, 6.4, 0.8);
-    s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, 12.8);
+    const flags = Math.max(4, Math.floor((W - 4) / 1.05));
+    for (const zz of [7, 10, 12.6]) for (let i = 0; i < flags; i++) s.box(0.3, 0.3, 0.018, colors[i % 5], 2 + i * (W - 4) / (flags - 1), 2.45, Z(zz), 0, 0, Math.PI / 4);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 0.18, 0.3, colors[i % 5], x, 0.72, Z(6.3 + i * 0.5));
+    plant(s, 1.4, Z(6.4), 0.8);
+    s.cyl(0.14, 0.18, 0.5, 8, 0x3a8a3a, R - 0.4, 0.25, Z(12.8));
   } else if (id === 'diner') {
-    glow.box(0.04, 0.5, 2.0, 0xff3a4a, R - 0.03, 2.2, 12.0);
-    glow.box(0.04, 0.06, 2.2, 0x3ad0f0, R - 0.035, 1.9, 12.0);
-    s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, 6.4);
-    glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1.0, 6.66);
-    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1, 0xc8d0d3, x, 0.8, 9.7); s.box(0.052, 0.035, 7.1, pal.accent, x, 0.88, 9.7); }
-    for (const x of [5.5, 10, 14.5]) glow.box(1.8, 0.045, 0.1, 0xfff0cf, x, 2.58, 10.4);
+    glow.box(0.04, 0.5, Math.min(2, H - 9), 0xff3a4a, R - 0.03, 2.2, Z(12));
+    glow.box(0.04, 0.06, Math.min(2.2, H - 8.8), 0x3ad0f0, R - 0.035, 1.9, Z(12));
+    s.box(0.7, 1.4, 0.5, 0xc8282e, R - 0.4, 0.7, Z(6.4));
+    glow.box(0.5, 0.4, 0.02, 0xffd060, R - 0.4, 1, Z(6.4) + 0.26);
+    for (const x of [L, R]) { s.box(0.05, 0.06, 7.1 * (H - 7) / 8, 0xc8d0d3, x, 0.8, Z(9.7)); s.box(0.052, 0.035, 7.1 * (H - 7) / 8, pal.accent, x, 0.88, Z(9.7)); }
+    for (const x of [5.5, 10, 14.5]) glow.box(1.8, 0.045, 0.1, 0xfff0cf, X(x), 2.58, Z(10.4));
   } else if (id === 'noodle') {
     for (const [x, z] of [[4, 8.5], [10, 8.5], [16, 8.5], [7, 11.5], [13, 11.5]]) {
-      s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, x, 2.6, z);
-      glow.sphere(0.2, 0xff5a3a, x, 2.25, z, 1, 1.25, 1, 8);
-      s.cyl(0.12, 0.12, 0.04, 8, 0x2a1e18, x, 2.5, z);
+      s.cyl(0.004, 0.004, 0.4, 3, 0x2a2a2a, X(x), 2.6, Z(z));
+      glow.sphere(0.2, 0xff5a3a, X(x), 2.25, Z(z), 1, 1.25, 1, 8);
+      s.cyl(0.12, 0.12, 0.04, 8, 0x2a1e18, X(x), 2.5, Z(z));
     }
-    // Noren curtain over the kitchen opening.
-    for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, 10.25 + i * 0.5, 2.0, 5.5);
-    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1.0, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, 6.3 + i * 0.52);
-    for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, z); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, z); }
+    // The opening stays in the same place when the room expands.
+    for (let i = 0; i < 4; i++) s.box(0.48, 0.55, 0.02, i % 2 ? 0x2a4a5a : 0x24404e, openingEnd - 1.75 + i * 0.5, 2, 5.5);
+    for (const x of [L, R]) for (let i = 0; i < 13; i++) s.box(0.045, 1, 0.055, i % 2 ? 0x68472f : 0x795239, x, 1.4, Z(6.3 + i * 0.52));
+    for (const z of [6.6, 12.5]) { s.box(0.04, 0.82, 1.05, 0x29231f, R, 1.72, Z(z)); for (let i = 0; i < 4; i++) s.box(0.045, 0.055, 0.72, 0xd9b867, R - 0.025, 1.95 - i * 0.17, Z(z)); }
   }
   if (up.decor1) {
-    plant(s, 18.3, 6.5, 1.1);
-    plant(s, 18.3, 12.8, 1.0);
-    frame(s, L, 1.6, 12.2, 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
+    plant(s, W - 1.7, Z(6.5), 1.1);
+    plant(s, W - 1.7, Z(12.8), 1);
+    frame(s, L, 1.6, Z(12.2), 0.7, 0.9, mix(pal.accent2, 0xffffff, 0.3), 1);
   }
   if (up.decor2) {
     for (const x of [5, 9, 13, 17]) {
-      s.cyl(0.004, 0.004, 0.45, 3, 0x2a2a2a, x, 2.6, 11.2);
-      glow.cone(0.16, 0.14, 8, 0xffd890, x, 2.32, 11.2);
+      s.cyl(0.004, 0.004, 0.45, 3, 0x2a2a2a, X(x), 2.6, Z(11.2));
+      glow.cone(0.16, 0.14, 8, 0xffd890, X(x), 2.32, Z(11.2));
     }
-    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.25, 2.3, 6.3);
+    s.box(0.25, 0.4, 0.2, 0x2a2a2a, 1.25, 2.3, Z(6.3));
   }
   if (up.decor3) {
-    glow.sphere(0.25, 0xfff0c0, 10, 2.3, 9.2, 1, 0.6, 1, 8);
-    s.cyl(0.4, 0.3, 0.1, 10, 0xc8a050, 10, 2.45, 9.2);
+    glow.sphere(0.25, 0xfff0c0, W / 2, 2.3, Z(9.2), 1, 0.6, 1, 8);
+    s.cyl(0.4, 0.3, 0.1, 10, 0xc8a050, W / 2, 2.45, Z(9.2));
   }
 }
 
