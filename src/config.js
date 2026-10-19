@@ -1,6 +1,6 @@
 // Every tuning number in one place. Times are real seconds unless noted.
 
-export const BUILD = 'tf-1.2.3-guest-spacing';
+export const BUILD = 'tf-1.2.4-shorter-service';
 export const APP_ID = 'two-forks-bistro-game-2026';
 
 export const CFG = {
@@ -8,11 +8,11 @@ export const CFG = {
   slowHz: 8,     // full game-state snapshots to the partner
   fastHz: 20,    // positions only
 
-  // A service covers 11:00 to 22:00 (660 game minutes) in 15 real minutes.
+  // A service covers 11:00 to 22:00 (660 game minutes) in 10 real minutes.
   serviceStart: 11 * 60,
   doorsLock: 21 * 60 + 30,
   serviceEnd: 22 * 60,
-  serviceRealSeconds: 15 * 60,
+  serviceRealSeconds: 10 * 60,
 
   move: { speed: 4.6, accel: 30, radius: 0.32, reach: 1.25 },
 
