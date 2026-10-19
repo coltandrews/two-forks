@@ -4,11 +4,12 @@
 import { newState, dishById, serialize, deserialize } from '../src/sim/state.js';
 import { Sim } from '../src/sim/sim.js';
 import { actE, findTarget, describe } from '../src/sim/kitchen.js';
-import { walkable, footprint, buildGrid } from '../src/sim/world.js';
+import { walkable, footprint, buildGrid, validateLayout } from '../src/sim/world.js';
 import { ING } from '../src/data/ingredients.js';
 import { CUISINE_ORDER } from '../src/data/cuisines.js';
 import { HEAT_TYPES } from '../src/data/layout.js';
-import { autofillPlan, stockCount } from '../src/sim/economy.js';
+import { autofillPlan, stockCount, placementStatus, tryMove } from '../src/sim/economy.js';
+import { CFG } from '../src/config.js';
 
 const DT = 1 / 30;
 let sim;
@@ -318,7 +319,37 @@ function cookEveryDish() {
   }
 }
 
+function verifyStartingLayouts() {
+  const signatures = new Set();
+  let expectedCounts = null;
+  for (const cuisine of CUISINE_ORDER) {
+    const state = newState({ cuisine, name: 'Layout test' });
+    if (state.cash !== CFG.money.startCash || state.cash !== 1500) throw new Error(`Wrong starting cash for ${cuisine}: ${state.cash}`);
+    const status = validateLayout(state, { x: 2, z: 14 });
+    if (!status.ok) throw new Error(`Invalid starting layout for ${cuisine}: ${status.reason}`);
+    const counts = Object.fromEntries([...new Set(state.objects.map((o) => o.type))].sort().map((type) => [type, state.objects.filter((o) => o.type === type).length]));
+    if (!expectedCounts) expectedCounts = counts;
+    else if (JSON.stringify(counts) !== JSON.stringify(expectedCounts)) throw new Error(`Equipment count changed for ${cuisine}`);
+    signatures.add(state.objects.map((o) => `${o.type}:${o.x},${o.z}`).sort().join('|'));
+  }
+  if (signatures.size !== CUISINE_ORDER.length) throw new Error('Starting layouts are not unique');
+
+  const state = newState({ cuisine: 'southern', name: 'Move test' });
+  const drinks = state.objects.find((o) => o.type === 'drinks');
+  let target = null;
+  for (let z = 6; z <= 13 && !target; z++) {
+    for (let x = 1; x <= 18; x++) {
+      if (placementStatus(state, drinks.id, x, z).ok) { target = { x, z }; break; }
+    }
+  }
+  if (!target) throw new Error('A service item cannot move across the full floor');
+  const moved = tryMove(state, drinks.id, target.x, target.z);
+  if (!moved.ok || drinks.x !== target.x || drinks.z !== target.z) throw new Error('Drag placement did not move the service item');
+  console.log('checked five unique layouts, starting cash, and full-floor item movement');
+}
+
 const itemsMod = await import('../src/sim/items.js');
+verifyStartingLayouts();
 cookEveryDish();
 const only = process.argv[2];
 const days = +(process.argv[3] || 3);

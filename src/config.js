@@ -52,7 +52,7 @@ export const CFG = {
   },
 
   money: {
-    startCash: 3000,
+    startCash: 1500,
     rent: 120,
     loan: 40,
     utilities: 30,

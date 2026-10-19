@@ -64,6 +64,8 @@ export class View {
 
     this.world = new THREE.Group();
     scene.add(this.world);
+    this.layoutGuide = new LayoutGuide();
+    this.world.add(this.layoutGuide.root);
     this.contacts = new ContactShadows(scene);
     this.objs = new Map();
     this.chefs = new Map();
@@ -478,6 +480,53 @@ export class View {
     this.camera.lookAt(this.camLook);
   }
 
+  setLayoutMode(on, state) {
+    if (on) {
+      if (this.layoutZoom == null) this.layoutZoom = this.zoomTarget == null ? DEFAULT_ZOOM : this.zoomTarget;
+      this.zoomTarget = 0;
+      this.layoutGuide.setPalette(CUISINES[state.cuisine].palette.accent);
+    } else if (this.layoutZoom != null) {
+      this.zoomTarget = this.layoutZoom;
+      this.layoutZoom = null;
+      this.clearLayoutPreview();
+    }
+    this.layoutGuide.root.visible = !!on;
+    this.renderer.domElement.classList.toggle('layout-edit', !!on);
+    if (!on) { this.renderer.domElement.classList.remove('layout-dragging'); this.layoutGuide.clear(); }
+  }
+
+  setLayoutSelection(state, id) {
+    const o = id && state && state.objects.find((item) => item.id === id);
+    this.layoutGuide.setOrigin(o ? footprint(o) : null);
+  }
+
+  previewLayoutObject(state, id, x, z, valid) {
+    this.clearObjectPreview();
+    const o = state.objects.find((item) => item.id === id);
+    const e = this.objs.get(id);
+    if (!o || !e) return;
+    this.previewId = id;
+    if (o.type === 'table') e.group.position.set(x, 0, z);
+    else e.group.position.set(x + 0.5, 0, z + 0.5);
+    this.layoutGuide.setTarget({ ...footprint(o), x, z }, valid);
+  }
+
+  clearObjectPreview() {
+    if (!this.previewId || !this.state) return;
+    const o = this.state.objects.find((item) => item.id === this.previewId);
+    const e = this.objs.get(this.previewId);
+    if (o && e) {
+      if (o.type === 'table') e.group.position.set(o.x, 0, o.z);
+      else e.group.position.set(o.x + 0.5, 0, o.z + 0.5);
+    }
+    this.previewId = null;
+  }
+
+  clearLayoutPreview() {
+    this.clearObjectPreview();
+    this.layoutGuide.setTarget(null);
+  }
+
   render() { this.renderer.render(this.scene, this.camera); }
 
   /** World position of an object's slot (for overlay markers). */
@@ -542,6 +591,56 @@ function disposeTree(obj) {
       o.material.dispose();
     }
   });
+}
+
+class LayoutGuide {
+  constructor() {
+    this.root = new THREE.Group();
+    this.root.visible = false;
+    const gridShape = new Shape(false);
+    for (let z = 1; z < RH - 1; z++) {
+      for (let x = 1; x < RW - 1; x++) {
+        if (MAP[z][x] === '#' || MAP[z][x] === 'B' || MAP[z][x] === 'D') continue;
+        gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.06);
+        gridShape.box(0.9, 0.018, 0.025, 0xffffff, x + 0.5, 0.035, z + 0.94);
+        gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.06, 0.035, z + 0.5);
+        gridShape.box(0.025, 0.018, 0.9, 0xffffff, x + 0.94, 0.035, z + 0.5);
+      }
+    }
+    this.gridMat = new THREE.MeshBasicMaterial({ color: 0x48b7c4, vertexColors: true, transparent: true, opacity: 0.58, depthWrite: false });
+    this.grid = meshOf(gridShape, this.gridMat, false, false);
+    this.grid.renderOrder = 4;
+    this.root.add(this.grid);
+    this.origin = this.marker(0xf0c060, 0.28);
+    this.target = this.marker(0x54bd68, 0.52);
+    this.root.add(this.origin, this.target);
+  }
+
+  marker(color, opacity) {
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 0.035, 1), material);
+    mesh.visible = false;
+    mesh.renderOrder = 5;
+    return mesh;
+  }
+
+  setPalette(color) { this.gridMat.color.setHex(color); }
+
+  place(mesh, f, y) {
+    if (!f) { mesh.visible = false; return; }
+    mesh.visible = true;
+    mesh.position.set(f.x + f.w / 2, y, f.z + f.h / 2);
+    mesh.scale.set(Math.max(0.08, f.w - 0.1), 1, Math.max(0.08, f.h - 0.1));
+  }
+
+  setOrigin(f) { this.place(this.origin, f, 0.055); }
+
+  setTarget(f, valid = true) {
+    this.target.material.color.setHex(valid ? 0x54bd68 : 0xd84c3f);
+    this.place(this.target, f, 0.08);
+  }
+
+  clear() { this.setOrigin(null); this.setTarget(null); }
 }
 
 class ContactShadows {

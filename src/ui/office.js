@@ -7,7 +7,7 @@ import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { STATION_NAMES } from '../data/layout.js';
 import { allDishes, dishById, drinkById, dishCost, courseSlot, menuLimits, menuIngredients, WEEKDAYS, dishVeg } from '../sim/state.js';
 import {
-  stockCount, casePrice, pendingCases, autofillPlan, expectedParties, upgradeStatus, rateCustom, classTip, avgRating, forecastDishes,
+  stockCount, casePrice, pendingCases, autofillPlan, expectedParties, upgradeStatus, rateCustom, classTip, avgRating, forecastDishes, placementStatus,
 } from '../sim/economy.js';
 import { footprint } from '../sim/world.js';
 import { esc } from './overlay.js';
@@ -25,6 +25,7 @@ export class Office {
     this.tab = 'report';
     this.open = false;
     this.layoutMode = false;
+    this.drag = null;
     this.draft = { name: '', course: 'main', tpl: 'burger', comps: [] };
     this.showAllIngs = false;
     this.root.addEventListener('click', (e) => this.onClick(e));
@@ -42,10 +43,28 @@ export class Office {
 
   hide() {
     this.open = false;
-    this.layoutMode = false;
+    this.stopLayout(false);
     this.root.hidden = true;
-    this.root.classList.remove('layout-mode');
+  }
+
+  startLayout(state) {
+    this.layoutMode = true;
+    this.drag = null;
+    this.root.classList.add('layout-mode');
+    document.body.classList.add('layout-planning');
     this.app.layoutSel = null;
+    this.app.view.setLayoutMode(true, state);
+    this.render(state, true);
+  }
+
+  stopLayout(render = true) {
+    this.layoutMode = false;
+    this.drag = null;
+    this.root.classList.remove('layout-mode');
+    document.body.classList.remove('layout-planning');
+    this.app.layoutSel = null;
+    this.app.view.setLayoutMode(false, this.state);
+    if (render && this.state) this.render(this.state, true);
   }
 
   update(state) {
@@ -266,14 +285,14 @@ export class Office {
   // ------------------------------------------------------------ layout
 
   layoutTab(state) {
-    return `<div class="card"><h3>Rearrange the restaurant</h3><p>Move stations around the kitchen and tables around the dining room. Click something to pick it up, then click where it should go. Everything has to stay reachable, and tables need a walkway around them.</p>
-      <button class="btn primary" data-act="layout">Start rearranging</button></div>`;
+    return `<div class="card"><h3>Redesign the restaurant</h3><p>Drag any station, pass, table, or service item to a cell. You can use the full floor. The grid will show if the new place is safe. Doors and walls stay fixed.</p>
+      <button class="btn primary" data-act="layout">Open floor planner</button></div>`;
   }
 
   renderLayoutBar(state, force) {
     const sel = this.app.layoutSel;
     const o = sel && state.objects.find((x) => x.id === sel);
-    const html = `<div class="panel layout-bar"><p>${o ? `Moving <b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''}. Click an empty spot.` : 'Click a station or table to pick it up.'}</p>
+    const html = `<div class="panel layout-bar"><p>${o ? `Move <b>${esc(STATION_NAMES[o.type] || o.type)}</b>${o.type === 'table' ? ` ${o.num}` : ''}. Drag it, or click a cell to place it.` : 'Drag any item to a grid cell. Green means valid.'}</p>
       ${o ? '<button class="btn small ghost" data-act="unsel">Cancel</button>' : ''}<button class="btn small primary" data-act="layoutdone">Done</button></div>`;
     if (!force && html === this.lastBar) return;
     this.lastBar = html;
@@ -328,9 +347,9 @@ export class Office {
       case 'allings': this.showAllIngs = !this.showAllIngs; this.render(s, true); break;
       case 'buy': cmd({ c: 'upgrade', id: b.dataset.id }); break;
       case 'market': cmd({ c: 'marketing', id: b.dataset.id }); break;
-      case 'layout': this.layoutMode = true; this.root.classList.add('layout-mode'); this.app.layoutSel = null; this.render(s, true); break;
-      case 'layoutdone': this.layoutMode = false; this.root.classList.remove('layout-mode'); this.app.layoutSel = null; this.render(s, true); break;
-      case 'unsel': this.app.layoutSel = null; this.render(s, true); break;
+      case 'layout': this.startLayout(s); break;
+      case 'layoutdone': this.stopLayout(); break;
+      case 'unsel': this.drag = null; this.app.layoutSel = null; this.app.view.setLayoutSelection(s, null); this.app.view.clearLayoutPreview(); this.render(s, true); break;
       case 'chef': this.app.editChef(); break;
       case 'code': this.app.showSaveCode(); break;
     }
@@ -354,25 +373,60 @@ export class Office {
     if (t.dataset.draft === 'name') this.draft.name = t.value;
   }
 
-  /** Layout editor click on the 3D floor. */
-  floorClick(x, z) {
-    const s = this.state;
+  objectAt(x, z) {
     const tx = Math.floor(x), tz = Math.floor(z);
-    const sel = this.app.layoutSel;
-    const hit = s.objects.find((o) => { const f = footprint(o); return tx >= f.x && tx < f.x + f.w && tz >= f.z && tz < f.z + f.h; });
-    if (!sel) {
-      if (hit) { this.app.layoutSel = hit.id; sfx('pick'); }
-    } else if (hit && hit.id !== sel) {
-      this.app.layoutSel = hit.id; sfx('pick');
-    } else {
-      const o = s.objects.find((q) => q.id === sel);
+    return this.state.objects.find((o) => {
       const f = footprint(o);
-      // Click picks the center of the footprint.
-      const nx = tx - Math.floor((f.w - 1) / 2), nz = tz - Math.floor((f.h - 1) / 2);
-      this.app.command({ c: 'move', id: sel, x: nx, z: nz });
+      return tx >= f.x && tx < f.x + f.w && tz >= f.z && tz < f.z + f.h;
+    });
+  }
+
+  floorPointerDown(x, z, pointerId) {
+    const hit = this.objectAt(x, z);
+    const o = hit || this.state.objects.find((item) => item.id === this.app.layoutSel);
+    if (!o) return false;
+    const f = footprint(o);
+    const onObject = hit && hit.id === o.id;
+    this.app.layoutSel = o.id;
+    this.drag = {
+      id: o.id, pointerId, fromX: o.x, fromZ: o.z, x: o.x, z: o.z,
+      grabX: onObject ? Math.floor(x) - f.x : Math.floor((f.w - 1) / 2),
+      grabZ: onObject ? Math.floor(z) - f.z : Math.floor((f.h - 1) / 2),
+      valid: true, reason: '',
+    };
+    this.app.view.setLayoutSelection(this.state, o.id);
+    this.floorPointerMove(x, z, pointerId);
+    this.render(this.state, true);
+    sfx('pick');
+    return true;
+  }
+
+  floorPointerMove(x, z, pointerId) {
+    if (!this.drag || this.drag.pointerId !== pointerId) return;
+    const nx = Math.floor(x) - this.drag.grabX;
+    const nz = Math.floor(z) - this.drag.grabZ;
+    if (nx === this.drag.x && nz === this.drag.z) return;
+    const status = placementStatus(this.state, this.drag.id, nx, nz);
+    Object.assign(this.drag, { x: nx, z: nz, valid: status.ok, reason: status.reason || '' });
+    this.app.view.previewLayoutObject(this.state, this.drag.id, nx, nz, status.ok);
+  }
+
+  floorPointerUp(x, z, pointerId, cancelled = false) {
+    if (!this.drag || this.drag.pointerId !== pointerId) return;
+    this.floorPointerMove(x, z, pointerId);
+    const drag = this.drag;
+    this.drag = null;
+    this.app.view.clearLayoutPreview();
+    const moved = drag.x !== drag.fromX || drag.z !== drag.fromZ;
+    if (!cancelled && moved && drag.valid) {
+      this.app.command({ c: 'move', id: drag.id, x: drag.x, z: drag.z });
       this.app.layoutSel = null;
+      this.app.view.setLayoutSelection(this.state, null);
       sfx('drop');
+    } else {
+      this.app.view.setLayoutSelection(this.state, drag.id);
+      if (!cancelled && moved && drag.reason) { this.app.hud.toast(drag.reason, 'bad'); sfx('bad'); }
     }
-    this.render(s, true);
+    this.render(this.state, true);
   }
 }

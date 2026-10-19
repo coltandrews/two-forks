@@ -4,7 +4,7 @@ import { CFG } from '../config.js';
 import { ING, statesOf } from '../data/ingredients.js';
 import { UPGRADES, MARKETING } from '../data/upgrades.js';
 import { BUILDER, PAIRS } from '../data/cuisines.js';
-import { KITCHEN_MAX_Z, FRONT_DOOR, QUEUE_SPOTS, HEAT_TYPES, SPAWN_POINTS } from '../data/layout.js';
+import { KITCHEN_MAX_Z, LAYOUT_MIN_Z, LAYOUT_MAX_Z, FRONT_DOOR, QUEUE_SPOTS, HEAT_TYPES, SPAWN_POINTS } from '../data/layout.js';
 import {
   allDishes, dishById, dishCost, cuisineOf, nextId, initObject, numberTables, courseSlot, menuLimits, drinkById,
 } from './state.js';
@@ -264,19 +264,26 @@ function tableSpacingOk(state, f, ignoreId) {
   return true;
 }
 
-export function tryMove(state, id, x, z) {
+export function placementStatus(state, id, x, z) {
   const o = state.objects.find((q) => q.id === id);
   if (!o) return { ok: false, reason: 'Nothing there.' };
-  const zone = zoneOf(o.type);
-  if (!zone) return { ok: false, reason: 'That one is built in.' };
   if (o.type === 'table' && (o.party || o.dirty)) return { ok: false, reason: 'Clear the table first.' };
   const f = { ...footprint(o), x, z };
-  if (!footprintFree(state, f, zone, id)) return { ok: false, reason: "It doesn't fit there." };
+  const fullFloor = [LAYOUT_MIN_Z, LAYOUT_MAX_Z];
+  if (!footprintFree(state, f, fullFloor, id)) return { ok: false, reason: "It doesn't fit there." };
   if (o.type === 'table' && !tableSpacingOk(state, f, id)) return { ok: false, reason: 'Tables need a walkway around them.' };
   const ox = o.x, oz = o.z;
   o.x = x; o.z = z;
-  const v = validateLayout(state, FRONT_DOOR);
-  if (!v.ok) { o.x = ox; o.z = oz; return v; }
+  const result = validateLayout(state, FRONT_DOOR);
+  o.x = ox; o.z = oz;
+  return result;
+}
+
+export function tryMove(state, id, x, z) {
+  const result = placementStatus(state, id, x, z);
+  if (!result.ok) return result;
+  const o = state.objects.find((q) => q.id === id);
+  o.x = x; o.z = z;
   if (o.type === 'table') numberTables(state);
   return { ok: true };
 }

@@ -2,7 +2,7 @@
 import { BUILD, CFG } from '../config.js';
 import { CUISINES } from '../data/cuisines.js';
 import { ING } from '../data/ingredients.js';
-import { MAP, CHAR_TYPES, DEFAULT_TABLES } from '../data/layout.js';
+import { startingObjects } from '../data/layout.js';
 
 export const SAVE_VERSION = 1;
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -75,22 +75,7 @@ export function menuIngredients(state) {
 }
 
 function buildObjects(state) {
-  const objects = [];
-  for (let z = 0; z < MAP.length; z++) {
-    for (let x = 0; x < MAP[z].length; x++) {
-      const t = CHAR_TYPES[MAP[z][x]];
-      if (!t) continue;
-      const o = { id: nextId(state), type: t, x, z };
-      initObject(o);
-      objects.push(o);
-    }
-  }
-  for (const t of DEFAULT_TABLES) {
-    const o = { id: nextId(state), type: 'table', x: t.x, z: t.z, seats: t.seats };
-    initObject(o);
-    objects.push(o);
-  }
-  return objects;
+  return startingObjects(state.cuisine).map((spec) => initObject({ id: nextId(state), ...spec }));
 }
 
 export function initObject(o) {

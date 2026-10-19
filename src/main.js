@@ -34,7 +34,11 @@ class App {
     this.saveTimer = 0;
     this.bindKeys();
     this.hookModalClose();
-    this.view.renderer.domElement.addEventListener('pointerdown', (e) => this.canvasClick(e));
+    const canvas = this.view.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => this.canvasPointerDown(e));
+    canvas.addEventListener('pointermove', (e) => this.canvasPointerMove(e));
+    canvas.addEventListener('pointerup', (e) => this.canvasPointerUp(e));
+    canvas.addEventListener('pointercancel', (e) => this.canvasPointerUp(e, true));
     window.addEventListener('wheel', (e) => {
       if (!this.session || !this.lobby.root.hidden || this.office.open || this.hud.modalOpen) return;
       e.preventDefault();
@@ -221,7 +225,7 @@ class App {
     this.input.on('esc', () => {
       if (!this.session) return;
       if (!this.lobby.root.hidden) return;
-      if (this.office.layoutMode) { this.office.layoutMode = false; this.office.root.classList.remove('layout-mode'); this.layoutSel = null; this.office.render(this.session.state, true); return; }
+      if (this.office.layoutMode) { this.office.stopLayout(); return; }
       if (this.hud.modalOpen) { this.hud.closeModal(); return; }
       if (this.office.open && this.session.state.phase === 'morning') { this.closeOffice(); return; }
       this.openPause();
@@ -268,11 +272,28 @@ class App {
     this.hud.modal.querySelector('[data-act=copy]').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(code); this.hud.toast('Save code copied', 'good'); };
   }
 
-  canvasClick(e) {
+  canvasPointerDown(e) {
     unlockAudio();
     if (!this.session || !this.office.layoutMode) return;
     const p = this.view.floorAt(e.clientX, e.clientY);
-    if (p) this.office.floorClick(p.x, p.z);
+    if (!p || !this.office.floorPointerDown(p.x, p.z, e.pointerId)) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.classList.add('layout-dragging');
+  }
+
+  canvasPointerMove(e) {
+    if (!this.session || !this.office.layoutMode) return;
+    const p = this.view.floorAt(e.clientX, e.clientY);
+    if (p) this.office.floorPointerMove(p.x, p.z, e.pointerId);
+  }
+
+  canvasPointerUp(e, cancelled = false) {
+    if (!this.session || !this.office.layoutMode) return;
+    const p = this.view.floorAt(e.clientX, e.clientY);
+    if (p) this.office.floorPointerUp(p.x, p.z, e.pointerId, cancelled);
+    e.currentTarget.classList.remove('layout-dragging');
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
   // ------------------------------------------------------------ frame loop
