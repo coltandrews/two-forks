@@ -4,7 +4,7 @@ import { CFG } from '../config.js';
 import { ING, stateInfo } from '../data/ingredients.js';
 import { CUISINES } from '../data/cuisines.js';
 import { STATION_NAMES } from '../data/layout.js';
-import { playerArea, hasSmokeBoost } from '../data/alley.js';
+import { playerArea, hasSmokeBoost, cookingMultiplier } from '../data/alley.js';
 import { XP_LEVELS, ingredientAllowed } from '../data/progression.js';
 import { dishById, drinkById, WEEKDAYS, menuIngredients, courseSlot } from '../sim/state.js';
 import { storeList } from '../sim/kitchen.js';
@@ -27,8 +27,15 @@ export function stars(n) { const r = Math.round(n); return '★'.repeat(r) + '�
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const lc = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 
+function stepTime(step, state) {
+  const base = step.t / (step.at === 'board' && state.upgrades.knife ? CFG.chopSpeedKnife : 1);
+  const speed = cookingMultiplier(state), time = base / speed;
+  const seconds = (value) => Math.round(value * 10) / 10;
+  return `${seconds(time)}s${speed > 1 ? ` (−${seconds(base - time)}s smoking)` : ''}`;
+}
+
 /** Station steps from raw to a state, as readable text. */
-export function howTo(ing, st) {
+export function howTo(ing, st, state) {
   const d = ING[ing];
   if (st === 'raw') return `from the ${STATION_NAMES[d.store].toLowerCase()}`;
   const steps = [];
@@ -36,7 +43,7 @@ export function howTo(ing, st) {
   while (cur !== 'raw' && guard++ < 6) {
     const s = d.steps.find((x) => x.to === cur);
     if (!s) break;
-    steps.unshift(s.at === 'board' ? 'board' : `${STATION_NAMES[s.at].toLowerCase()} ${s.t}s`);
+    steps.unshift(`${s.at === 'board' ? 'board' : STATION_NAMES[s.at].toLowerCase()} ${stepTime(s, state)}`);
     cur = s.from;
   }
   return steps.join(' → ');
@@ -198,6 +205,7 @@ export class Hud {
         e.closing.innerHTML = `Closing time · ${left} table${left === 1 ? '' : 's'} still here`;
       }
       if (this.modalKind === 'picker' && this.pickerState) this.renderPicker(state);
+      if (this.modalKind === 'cookbook') this.updateCookbook(state);
     }
   }
 
@@ -547,14 +555,27 @@ export class Hud {
     }
     const card = ({ d, m }) => `<div class="recipe"><h4>${esc(d.name)} <small>${money(m.price)}</small></h4><ol>${d.comps.map(([i, s]) => {
       const info = stateInfo(i, s);
-      const how = i === 'dough' ? 'add toppings on raw dough, then oven ' + ING.dough.steps[0].t + 's' : howTo(i, s);
-      return `<li><span class="sw" style="background:${hex(info.color)}"></span>${esc(info.label)}<span class="how">${esc(how)}</span></li>`;
+      return `<li><span class="sw" style="background:${hex(info.color)}"></span>${esc(info.label)}<span class="how" data-ing="${esc(i)}" data-state="${esc(s)}"></span></li>`;
     }).join('')}</ol></div>`;
     const drinks = state.menu.drinks.filter((m) => m.on).map((m) => drinkById(state, m.id).name).join(' · ');
     const html = `<button class="icon-btn close" aria-label="Close">✕</button><h2>Cookbook</h2>
       ${['main', 'starter', 'dessert'].map((k) => groups[k].length ? `<div class="section-title">${k === 'starter' ? 'Starters & sides' : k + 's'}</div><div class="cols">${groups[k].map(card).join('')}</div>` : '').join('')}
       <div class="section-title">Drinks</div><div>${esc(drinks)}</div>`;
     this.openSheet('cookbook', html);
+    this.cookbookSpeed = null;
+    this.updateCookbook(state);
+  }
+
+  updateCookbook(state) {
+    const speed = cookingMultiplier(state), knife = !!state.upgrades.knife;
+    if (this.cookbookSpeed === speed && this.cookbookKnife === knife) return;
+    this.cookbookSpeed = speed;
+    this.cookbookKnife = knife;
+    this.modal.querySelectorAll('.recipe .how').forEach((el) => {
+      const { ing, state: target } = el.dataset;
+      const how = ing === 'dough' ? 'add toppings on raw dough, then oven ' + stepTime(ING.dough.steps[0], state) : howTo(ing, target, state);
+      setText(el, how);
+    });
   }
 
   openRush(state) {
