@@ -412,7 +412,8 @@ export class Hud {
     let { chapter, title, text } = card;
     if (this.modalKind === 'pause') this.closeModal();
     chapter = chapter || (this.app.session && this.app.session.state.chapter) || 1;
-    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><div class="chapter-label">${chapter > 4 ? 'Story complete' : `Chapter ${chapter}`}</div><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">Back to the restaurant</button>`);
+    const nextLabel = chapter === 1 ? 'Enter the restaurant' : 'Back to the restaurant';
+    this.openSheet('story-card', `<button class="icon-btn close" aria-label="Close">✕</button><div class="chapter-label">${chapter > 4 ? 'Story complete' : `Chapter ${chapter}`}</div><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary story-next">${nextLabel}</button>`);
     this.modal.querySelector('.story-next').onclick = () => this.closeModal();
   }
 
