@@ -355,7 +355,6 @@ export class View {
             const m = itemMesh(state, { k: 'box', ing: b.ing }, 1);
             const col = i % 2, row = (i >> 1) % 2, lvl = i >> 2;
             m.position.set((col - 0.5) * 0.45, lvl * 0.31, (row - 0.5) * 0.4);
-            m.rotation.y = (i % 3 - 1) * 0.08;
             g.add(m);
           });
           e.item = g;

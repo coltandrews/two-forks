@@ -237,10 +237,11 @@ function drinkShape(s, color, glass, k) {
 function boxShape(s, ing, k) {
   const d = ING[ing];
   s.box(0.42 * k, 0.3 * k, 0.34 * k, CARD, 0, 0.15 * k, 0);
-  s.box(0.43 * k, 0.04 * k, 0.345 * k, CARD_D, 0, 0.28 * k, 0);
-  s.box(0.16 * k, 0.12 * k, 0.005 * k, 0xf4f0e6, 0, 0.16 * k, 0.172 * k);
-  s.box(0.1 * k, 0.07 * k, 0.006 * k, d.look.color, 0, 0.16 * k, 0.175 * k);
-  addIng(s, d.look.shape, d.look.color, 0, 0.3 * k, 0, k * 0.7);
+  // Keep tape and labels above the box faces, below the next stack layer.
+  s.box(0.06 * k, 0.006 * k, 0.34 * k, CARD_D, 0, 0.303 * k, 0);
+  for (const side of [-1, 1]) s.box(0.06 * k, 0.3 * k, 0.006 * k, CARD_D, 0, 0.15 * k, side * 0.173 * k);
+  s.box(0.16 * k, 0.12 * k, 0.006 * k, 0xf4f0e6, 0, 0.16 * k, 0.179 * k);
+  s.box(0.1 * k, 0.07 * k, 0.004 * k, d.look.color, 0, 0.16 * k, 0.184 * k);
 }
 
 function dirtyShape(s, n, k) {

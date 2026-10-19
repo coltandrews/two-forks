@@ -92,10 +92,9 @@ export function stationModel(type, pal) {
     case 'pot': {
       counterBase(s, pal);
       s.box(0.86, 0.04, 0.8, DARK, 0, COUNTER_H + 0.02, 0);
-      s.add(new THREE.CylinderGeometry(0.27, 0.25, 0.36, 12, 1, true), STEEL, 0, COUNTER_H + 0.22, 0);
-      s.add(new THREE.CylinderGeometry(0.26, 0.24, 0.36, 12, 1, true), STEEL_D, 0, COUNTER_H + 0.22, 0, Math.PI);
-      s.cyl(0.25, 0.25, 0.02, 12, STEEL_D, 0, COUNTER_H + 0.05, 0);
-      s.torus(0.27, 0.015, STEEL, 0, COUNTER_H + 0.4, 0);
+      // One closed shell joins the base, outside wall, rim and inside wall.
+      const profile = [[0, 0.04], [0.27, 0.04], [0.27, 0.4], [0.235, 0.4], [0.235, 0.08], [0, 0.08]];
+      s.add(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), 16), STEEL, 0, COUNTER_H, 0);
       for (const k of [-1, 1]) s.box(0.1, 0.03, 0.04, DARK, k * 0.32, COUNTER_H + 0.34, 0);
       const flame = new Shape(false);
       for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; flame.cone(0.03, 0.06, 4, 0x4ab0ff, Math.cos(a) * 0.2, COUNTER_H + 0.06, Math.sin(a) * 0.2); }
