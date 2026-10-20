@@ -205,6 +205,31 @@ export function stationModel(type, pal) {
 
 // ------------------------------------------------------------------ tables
 
+/** A little retro radio for the counter. Faces +Z; dyn.dial glows when on. */
+export function radioModel() {
+  const g = new THREE.Group();
+  const s = new Shape();
+  const BODY = 0xc8483a, CREAM = 0xf1e4c8;
+  s.box(0.36, 0.2, 0.14, BODY, 0, 0.1, 0);
+  s.box(0.37, 0.025, 0.15, shade(BODY, 0.75), 0, 0.012, 0);
+  s.cyl(0.065, 0.065, 0.02, 10, 0x3a3230, -0.08, 0.1, 0.07, Math.PI / 2, 0, 0);
+  s.cyl(0.05, 0.05, 0.022, 10, 0x5a4e48, -0.08, 0.1, 0.072, Math.PI / 2, 0, 0);
+  s.box(0.13, 0.05, 0.015, CREAM, 0.09, 0.13, 0.07);
+  s.cyl(0.018, 0.018, 0.02, 8, CREAM, 0.06, 0.06, 0.075, Math.PI / 2, 0, 0);
+  s.cyl(0.018, 0.018, 0.02, 8, CREAM, 0.12, 0.06, 0.075, Math.PI / 2, 0, 0);
+  s.box(0.2, 0.02, 0.03, DARK, 0, 0.23, 0);
+  s.box(0.02, 0.04, 0.03, DARK, -0.09, 0.21, 0);
+  s.box(0.02, 0.04, 0.03, DARK, 0.09, 0.21, 0);
+  s.cyl(0.006, 0.006, 0.34, 5, STEEL, 0.15, 0.36, -0.03, 0, 0, -0.35);
+  s.sphere(0.012, STEEL, 0.21, 0.52, -0.03);
+  g.add(meshOf(s));
+  const d = new Shape(false);
+  d.box(0.11, 0.035, 0.01, 0xffc860, 0.09, 0.13, 0.079);
+  const dial = glowMesh(d);
+  g.add(dial);
+  return { group: g, dyn: { dial } };
+}
+
 export function tableModel(seats, pal, cloth, cuisine = 'southern') {
   const g = new THREE.Group();
   const s = new Shape();

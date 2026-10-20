@@ -149,6 +149,7 @@ kbd {
 .float.money { color: #a8f07a; }
 .float.star { color: var(--yellow); font-size: 24px; }
 .float.heart { color: var(--pink); }
+.float.note { color: #ffd27a; font-size: 20px; opacity: 0.85; }
 
 /* ---------------------------------------------------------- HUD */
 #hud { --hud-paper: rgba(255, 248, 234, 0.95); --hud-gap: 12px; --hud-width: 240px; position: absolute; inset: 0; pointer-events: none; z-index: 5; }

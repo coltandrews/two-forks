@@ -7,7 +7,9 @@ import { ALLEY_SIZE, ALLEY_OBJECTS, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, pl
 import { footprint, seatsOf, buildGrid, walkable, isWallTile } from '../sim/world.js';
 import { itemSig } from '../sim/items.js';
 import { stepFor } from '../data/ingredients.js';
-import { stationModel, tableModel, makePerson, animatePerson, COUNTER_H } from './models.js';
+import { stationModel, tableModel, makePerson, animatePerson, radioModel, COUNTER_H } from './models.js';
+import { radioCounter, radioStation, RADIO_OFF } from '../data/radio.js';
+import { musicPulse } from '../audio.js';
 import { buildRoom, skyColor, disposeRoom } from './room.js';
 import { buildAlley, trashBagModel, cigaretteModel } from './alley.js';
 import { itemMesh, potContents } from './food.js';
@@ -281,11 +283,32 @@ export class View {
       const e = this.objs.get(o.id);
       if (e) { e.group.visible = inside; this.syncObject(e, o, state, dt); }
     }
+    this.syncRadio(state, dt);
     this.syncPeople(state, dt, opts);
     this.contacts.syncPeople(this.chefs, this.guests);
     this.syncLighting(state, dt);
     this.particles.update(dt, this.area);
     this.updateCamera(dt, opts);
+  }
+
+  /** The radio rides on whichever counter is nearest the delivery pallet. */
+  syncRadio(state, dt) {
+    if (!this.radio) this.radio = radioModel();
+    const r = this.radio;
+    const c = radioCounter(state);
+    const e = c && this.objs.get(c.id);
+    if (!e) { if (r.group.parent) r.group.parent.remove(r.group); return; }
+    if (r.group.parent !== e.group) {
+      if (r.group.parent) r.group.parent.remove(r.group);
+      r.group.position.set(0.26, e.slotY ?? COUNTER_H, -0.24);
+      r.group.rotation.y = -0.3;
+      e.group.add(r.group);
+    }
+    const on = radioStation(state) !== RADIO_OFF;
+    const pulse = on ? musicPulse() : 0;
+    r.group.scale.set(1 + pulse * 0.03, 1 + pulse * 0.07, 1 + pulse * 0.03);
+    const op = r.dyn.dial.material;
+    op.opacity += ((on ? 0.9 : 0) - op.opacity) * Math.min(1, dt * 6);
   }
 
   setSlotItem(e, it, state, k = 1.25) {

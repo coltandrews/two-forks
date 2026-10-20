@@ -13,6 +13,7 @@ import { HEAT_TYPES, STORE_TYPES, STATION_NAMES } from '../data/layout.js';
 import { ALLEY_SPAWN, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, cookingMultiplier, playerArea, areaObjects } from '../data/alley.js';
 import { drinkById, addTrash, returnTrashBag } from './state.js';
 import { buildGrid, walkable } from './world.js';
+import { RADIO_OFF, radioCounter, radioStation, stationLabel } from '../data/radio.js';
 import {
   ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts,
   stationCapacity, PLATE_MAX,
@@ -637,9 +638,17 @@ export function takeDrink(ctx, pid, objId, id) {
 export function actQ(ctx, pid, dry) {
   const S = ctx.state;
   const p = S.players[pid];
-  if (!p || playerArea(p) !== 'restaurant' || p.hand?.k === 'trash') return null;
+  if (!p || playerArea(p) !== 'restaurant') return null;
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
+  if (o.type === 'counter' && radioCounter(S)?.id === o.id) {
+    const next = (radioStation(S) + 1) % (RADIO_OFF + 1);
+    if (dry) return next === RADIO_OFF ? 'Turn off the radio' : 'Change radio station';
+    S.radio = next;
+    ctx.emit({ type: 'toast', text: next === RADIO_OFF ? '📻 Radio off' : `📻 Now playing ${stationLabel(next)}`, kind: 'good' });
+    return 'ok';
+  }
+  if (p.hand?.k === 'trash') return null;
   const last = p.last && p.last[o.type];
   if (!last) return null;
   if (STORE_TYPES.has(o.type)) {

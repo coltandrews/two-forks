@@ -16,7 +16,8 @@ import { Session } from './net/session.js';
 import { makeCode } from './net/net.js';
 import { Input } from './input.js';
 import { ChatBox, cleanChat } from './ui/chat.js';
-import { sfx, unlockAudio, startMusic, setCrowd } from './audio.js';
+import { sfx, unlockAudio, startMusic, setCrowd, setStation, setMuffled } from './audio.js';
+import { radioStation, radioCounter, RADIO_OFF } from './data/radio.js';
 
 class App {
   constructor() {
@@ -442,6 +443,16 @@ class App {
     let guestsIn = 0;
     for (const p of st.parties) guestsIn += p.guests.length;
     setCrowd(area === 'restaurant' && (st.phase === 'service' || st.phase === 'closing') ? guestsIn : 0);
+    const station = radioStation(st);
+    setStation(station);
+    setMuffled(area === 'alley');
+    // A musical note drifts up from the radio now and then.
+    this.noteIn = (this.noteIn ?? 1.5) - dt;
+    if (this.noteIn <= 0) {
+      this.noteIn = 1.6 + Math.random() * 1.4;
+      const rc = station !== RADIO_OFF && area === 'restaurant' ? radioCounter(st) : null;
+      if (rc) this.overlay.float(Math.random() < 0.5 ? '♪' : '♫', rc.x + 0.5, 1.35, rc.z + 0.5, 'note');
+    }
   }
 }
 
