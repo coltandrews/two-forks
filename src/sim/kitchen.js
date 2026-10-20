@@ -642,10 +642,12 @@ export function actQ(ctx, pid, dry) {
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
   if (o.type === 'counter' && radioCounter(S)?.id === o.id) {
-    const next = (radioStation(S) + 1) % (RADIO_OFF + 1);
-    if (dry) return next === RADIO_OFF ? 'Turn off the radio' : 'Change radio station';
+    // Tap Q: next station (or back on, if it was off). Hold Q: off (radioOff).
+    const cur = radioStation(S);
+    const next = cur === RADIO_OFF ? (Number.isInteger(S.radioLast) && S.radioLast < RADIO_OFF ? S.radioLast : 0) : (cur + 1) % RADIO_OFF;
+    if (dry) return cur === RADIO_OFF ? 'Turn on the radio' : 'Next station (hold to turn off)';
     S.radio = next;
-    ctx.emit({ type: 'toast', text: next === RADIO_OFF ? '📻 Radio off' : `📻 Now playing ${stationLabel(next)}`, kind: 'good' });
+    ctx.emit({ type: 'toast', text: `📻 Now playing ${stationLabel(next)}`, kind: 'good' });
     return 'ok';
   }
   if (p.hand?.k === 'trash') return null;
@@ -662,6 +664,19 @@ export function actQ(ctx, pid, dry) {
     if (dry) return `Pour another ${lc(drinkById(S, last).name)}`;
     return takeDrink(ctx, pid, o.id, last) ? 'ok' : null;
   }
+  return null;
+}
+
+/** Holding Q at the radio switches it off. */
+export function radioOff(ctx, pid) {
+  const S = ctx.state;
+  const p = S.players[pid];
+  if (!p || playerArea(p) !== 'restaurant') return null;
+  const cur = radioStation(S);
+  if (cur === RADIO_OFF) return null;
+  S.radioLast = cur;
+  S.radio = RADIO_OFF;
+  ctx.emit({ type: 'toast', text: '📻 Radio off', kind: 'good' });
   return null;
 }
 

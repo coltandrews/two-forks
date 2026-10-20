@@ -91,6 +91,7 @@ export class Input {
     const m = this.moveFor(e.code);
     if (m) this.held[m] = false;
     if (e.code === 'Space') this.held.space = false;
+    if (e.code === 'KeyQ' && this.handlers.qup) this.handlers.qup();
   }
 
   axis() {

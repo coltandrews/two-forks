@@ -232,7 +232,21 @@ class App {
     const inGame = () => this.session && this.lobby.root.hidden;
     const canAct = () => inGame() && !this.office.open && !(this.hud.modalOpen && this.hud.modalKind !== 'picker');
     this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); this.turnToTarget = 0.35; });
-    this.input.on('q', () => { if (canAct()) this.session.press('q'); });
+    // At the radio, a tap changes station and a hold (0.5 s) turns it off.
+    // Everywhere else Q acts on press, as before.
+    this.input.on('q', () => {
+      if (!canAct()) return;
+      const atRadio = this.aimTarget && this.aimTarget.id === radioCounter(this.session.state)?.id;
+      if (!atRadio || radioStation(this.session.state) === RADIO_OFF) { this.session.press('q'); return; }
+      clearTimeout(this.qHold);
+      this.qHold = setTimeout(() => { this.qHold = null; this.command({ c: 'radioOff' }); }, 500);
+    });
+    this.input.on('qup', () => {
+      if (!this.qHold) return;
+      clearTimeout(this.qHold);
+      this.qHold = null;
+      if (canAct()) this.session.press('q');
+    });
     this.input.on('b', () => {
       if (!inGame() || this.office.open) return;
       if (this.hud.modalKind === 'cookbook') this.hud.closeModal(); else this.hud.openCookbook(this.session.state);

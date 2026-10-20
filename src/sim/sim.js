@@ -10,7 +10,7 @@ import { ING } from '../data/ingredients.js';
 import { buildGrid, collide, walkable } from './world.js';
 import { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } from './state.js';
 import {
-  actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
+  actE, actSpace, actQ, radioOff, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById,
 } from './kitchen.js';
 import { updateParties, spawnParty, buildSchedule, compItem, sendHome, pay } from './guests.js';
 import {
@@ -244,6 +244,7 @@ export class Sim {
         const r = tryMove(S, c.id, c.x | 0, c.z | 0);
         return r.ok ? { layout: true } : r;
       }
+      case 'radioOff': radioOff(this, pid); return null;
       case 'profile': this.updateProfile(pid, c); return null;
       case 'skip': if (S.phase === 'closing') this.endDay(); return null;
     }

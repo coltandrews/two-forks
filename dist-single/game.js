@@ -4044,10 +4044,12 @@ function actQ(ctx, pid, dry) {
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
   if (o.type === 'counter' && radioCounter(S)?.id === o.id) {
-    const next = (radioStation(S) + 1) % (RADIO_OFF + 1);
-    if (dry) return next === RADIO_OFF ? 'Turn off the radio' : 'Change radio station';
+    // Tap Q: next station (or back on, if it was off). Hold Q: off (radioOff).
+    const cur = radioStation(S);
+    const next = cur === RADIO_OFF ? (Number.isInteger(S.radioLast) && S.radioLast < RADIO_OFF ? S.radioLast : 0) : (cur + 1) % RADIO_OFF;
+    if (dry) return cur === RADIO_OFF ? 'Turn on the radio' : 'Next station (hold to turn off)';
     S.radio = next;
-    ctx.emit({ type: 'toast', text: next === RADIO_OFF ? '📻 Radio off' : `📻 Now playing ${stationLabel(next)}`, kind: 'good' });
+    ctx.emit({ type: 'toast', text: `📻 Now playing ${stationLabel(next)}`, kind: 'good' });
     return 'ok';
   }
   if (p.hand?.k === 'trash') return null;
@@ -4064,6 +4066,19 @@ function actQ(ctx, pid, dry) {
     if (dry) return `Pour another ${lc(drinkById(S, last).name)}`;
     return takeDrink(ctx, pid, o.id, last) ? 'ok' : null;
   }
+  return null;
+}
+
+/** Holding Q at the radio switches it off. */
+function radioOff(ctx, pid) {
+  const S = ctx.state;
+  const p = S.players[pid];
+  if (!p || playerArea(p) !== 'restaurant') return null;
+  const cur = radioStation(S);
+  if (cur === RADIO_OFF) return null;
+  S.radioLast = cur;
+  S.radio = RADIO_OFF;
+  ctx.emit({ type: 'toast', text: '📻 Radio off', kind: 'good' });
   return null;
 }
 
@@ -4187,7 +4202,7 @@ function cleanup(ctx) {
 }
 
 
-return { objById, findTarget, actE, actSpace, storeList, takeFromStore, takeDrink, actQ, describe, tickStations, dropHeld, cleanup, shelfLife };
+return { objById, findTarget, actE, actSpace, storeList, takeFromStore, takeDrink, actQ, radioOff, describe, tickStations, dropHeld, cleanup, shelfLife };
 })();
 
 // ---- src/view/shape.js ----
@@ -7410,6 +7425,7 @@ class Input {
     const m = this.moveFor(e.code);
     if (m) this.held[m] = false;
     if (e.code === 'Space') this.held.space = false;
+    if (e.code === 'KeyQ' && this.handlers.qup) this.handlers.qup();
   }
 
   axis() {
@@ -8652,7 +8668,7 @@ const { playerArea } = __m.data_alley;
 const { ING } = __m.data_ingredients;
 const { buildGrid, collide, walkable } = __m.sim_world;
 const { freshToday, dishById, cuisineOf, allDishes, WEEKDAYS, nextId, addTrash } = __m.sim_state;
-const { actE, actSpace, actQ, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById } = __m.sim_kitchen;
+const { actE, actSpace, actQ, radioOff, tickStations, takeFromStore, takeDrink, dropHeld, cleanup, objById } = __m.sim_kitchen;
 const { updateParties, spawnParty, buildSchedule, compItem, sendHome, pay } = __m.sim_guests;
 const { spoil, deliverOrders, expectedParties, closeBooks, placeOrder, cancelOrder, applyAutofill, buyUpgrade, buyMarketing, setPrice, toggleDish, createDish, deleteDish, tryMove, addLot, buyUnlock, completeChapter, upgradeStatus, autofillPlan, casePrice } = __m.sim_economy;
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -8881,6 +8897,7 @@ class Sim {
         const r = tryMove(S, c.id, c.x | 0, c.z | 0);
         return r.ok ? { layout: true } : r;
       }
+      case 'radioOff': radioOff(this, pid); return null;
       case 'profile': this.updateProfile(pid, c); return null;
       case 'skip': if (S.phase === 'closing') this.endDay(); return null;
     }
@@ -10158,7 +10175,21 @@ class App {
     const inGame = () => this.session && this.lobby.root.hidden;
     const canAct = () => inGame() && !this.office.open && !(this.hud.modalOpen && this.hud.modalKind !== 'picker');
     this.input.on('e', () => { if (!canAct()) return; if (this.hud.modalKind === 'picker') this.hud.closeModal(); this.session.press('e'); this.turnToTarget = 0.35; });
-    this.input.on('q', () => { if (canAct()) this.session.press('q'); });
+    // At the radio, a tap changes station and a hold (0.5 s) turns it off.
+    // Everywhere else Q acts on press, as before.
+    this.input.on('q', () => {
+      if (!canAct()) return;
+      const atRadio = this.aimTarget && this.aimTarget.id === radioCounter(this.session.state)?.id;
+      if (!atRadio || radioStation(this.session.state) === RADIO_OFF) { this.session.press('q'); return; }
+      clearTimeout(this.qHold);
+      this.qHold = setTimeout(() => { this.qHold = null; this.command({ c: 'radioOff' }); }, 500);
+    });
+    this.input.on('qup', () => {
+      if (!this.qHold) return;
+      clearTimeout(this.qHold);
+      this.qHold = null;
+      if (canAct()) this.session.press('q');
+    });
     this.input.on('b', () => {
       if (!inGame() || this.office.open) return;
       if (this.hud.modalKind === 'cookbook') this.hud.closeModal(); else this.hud.openCookbook(this.session.state);
