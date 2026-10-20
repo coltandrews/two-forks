@@ -109,7 +109,9 @@ export function storyObjects(cuisine) {
   }
   const types = ['fridge', 'pantry', 'board', 'grill', 'pot', ...[...stations].filter((s) => !['board', 'grill', 'pot'].includes(s)), 'sink', 'rack', 'bin'];
   const objects = types.map((type, i) => ({ type, x: i + 1, z: 1 }));
-  objects.push({ type: 'counter', x: 5, z: 3 }, { type: 'counter', x: 6, z: 3 }, { type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 10, z: 5 }, { type: 'host', x: 4, z: 10 });
+  // A five-counter prep bench in the middle of the kitchen.
+  for (let x = 4; x <= 8; x++) objects.push({ type: 'counter', x, z: 3 });
+  objects.push({ type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 9, z: 5 }, { type: 'host', x: 4, z: 10 });
   for (const [x, z] of [[4, 7], [8, 7], [6, 9]]) objects.push({ type: 'table', seats: 2, x, z });
   return objects;
 }

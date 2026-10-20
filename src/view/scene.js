@@ -8,13 +8,14 @@ import { footprint, seatsOf, buildGrid, walkable, isWallTile } from '../sim/worl
 import { itemSig } from '../sim/items.js';
 import { stepFor } from '../data/ingredients.js';
 import { stationModel, tableModel, makePerson, animatePerson, radioModel, COUNTER_H } from './models.js';
-import { radioCounter, radioStation, RADIO_OFF } from '../data/radio.js';
+import { radioPlace, radioStation, RADIO_OFF } from '../data/radio.js';
 import { musicPulse } from '../audio.js';
 import { buildRoom, skyColor, disposeRoom } from './room.js';
 import { buildAlley, trashBagModel, cigaretteModel } from './alley.js';
 import { itemMesh, potContents } from './food.js';
 import { Shape, MAT, meshOf } from './shape.js';
 import { mix } from './shape.js';
+const DIVIDER_TOP = 1.11; // top of the kitchen half-wall in room.js (1.05 + trim)
 
 const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
@@ -291,19 +292,28 @@ export class View {
     this.updateCamera(dt, opts);
   }
 
-  /** The radio rides on whichever counter is nearest the delivery pallet. */
+  /** The radio sits on the kitchen half-wall by the pallet (or a counter in rooms without one). */
   syncRadio(state, dt) {
     if (!this.radio) this.radio = radioModel();
     const r = this.radio;
-    const c = radioCounter(state);
-    const e = c && this.objs.get(c.id);
-    if (!e) { if (r.group.parent) r.group.parent.remove(r.group); return; }
-    if (r.group.parent !== e.group) {
+    const place = radioPlace(state);
+    const parent = place ? (place.wall ? this.world : this.objs.get(place.id)?.group) : null;
+    if (!parent) { if (r.group.parent) r.group.parent.remove(r.group); return; }
+    const key = place ? `${place.x},${place.z},${place.wall}` : '';
+    if (r.group.parent !== parent || r.key !== key) {
       if (r.group.parent) r.group.parent.remove(r.group);
-      r.group.position.set(0.26, e.slotY ?? COUNTER_H, -0.24);
-      r.group.rotation.y = -0.3;
-      e.group.add(r.group);
+      r.key = key;
+      if (place.wall) {
+        // On the wall top, dial turned toward the camera so it reads.
+        r.group.position.set(place.x + 0.5, DIVIDER_TOP, place.z + 0.45);
+        r.group.rotation.y = 0.25;
+      } else {
+        r.group.position.set(0.26, this.objs.get(place.id).slotY ?? COUNTER_H, -0.24);
+        r.group.rotation.y = -0.3;
+      }
+      parent.add(r.group);
     }
+    r.group.visible = this.area === 'restaurant';
     const on = radioStation(state) !== RADIO_OFF;
     const pulse = on ? musicPulse() : 0;
     r.group.scale.set(1 + pulse * 0.03, 1 + pulse * 0.07, 1 + pulse * 0.03);
@@ -696,6 +706,7 @@ export class View {
       return o ? { x: o.x + (o.type === 'backdoor' ? 0.1 : (o.w || 1) / 2), y: o.type === 'backdoor' ? 2.5 : 1.8, z: o.z + (o.h || 1) / 2 } : null;
     }
     if (id === BACK_DOOR.id) return { x: BACK_DOOR.x + 0.95, y: 2.5, z: BACK_DOOR.z + 0.5 };
+    if (id === 'radio') { const p = radioPlace(this.state); return p ? { x: p.x + 0.5, y: 1.9, z: p.z + 0.4 } : null; }
     const e = this.objs.get(id);
     if (!e) return null;
     if (e.type === 'table') {

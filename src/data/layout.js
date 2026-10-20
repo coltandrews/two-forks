@@ -95,7 +95,9 @@ export const QUEUE_SPOTS = [
 ];
 export const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }, { x: 9.5, z: 4.5 }, { x: 12.5, z: 4.5 }];
 
-export const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
+// The divider row (z = 5) is a permanent half-wall except tiles from..to,
+// which hold the pass, the drink station and two walkways.
+export const STORY_BUILDING = { width: 14, height: 12, divider: { from: 6, to: 9 } };
 export const FLOOR_EXPANSION_WIDTH = 10;
 
 /** Saved dimensions keep furniture coordinates stable when the room grows. */

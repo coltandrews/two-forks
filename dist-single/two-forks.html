@@ -882,7 +882,9 @@ const QUEUE_SPOTS = [
 ];
 const SPAWN_POINTS = [{ x: 10.5, z: 4.5 }, { x: 11.5, z: 4.5 }, { x: 9.5, z: 4.5 }, { x: 12.5, z: 4.5 }];
 
-const STORY_BUILDING = { width: 14, height: 12, divider: { from: 4, to: 10 } };
+// The divider row (z = 5) is a permanent half-wall except tiles from..to,
+// which hold the pass, the drink station and two walkways.
+const STORY_BUILDING = { width: 14, height: 12, divider: { from: 6, to: 9 } };
 const FLOOR_EXPANSION_WIDTH = 10;
 
 /** Saved dimensions keep furniture coordinates stable when the room grows. */
@@ -930,9 +932,203 @@ const STATION_NAMES = {
 return { MAP, KITCHEN_MAX_Z, LAYOUT_MIN_Z, CHAR_TYPES, DEFAULT_TABLES, startingObjects, TABLE_SIZE, FRONT_DOOR, QUEUE_SPOTS, SPAWN_POINTS, STORY_BUILDING, FLOOR_EXPANSION_WIDTH, roomSize, frontDoor, spawnPoints, queueSpots, layoutTile, SLOT_TYPES, HEAT_TYPES, STORE_TYPES, STATION_NAMES };
 })();
 
+// ---- src/data/radio.js ----
+__m.data_radio = (() => {
+// The kitchen radio. Station 0 is the house jazz; 1..10 are synthesized songs;
+// the last station is off. The radio sits on the kitchen half-wall by the
+// delivery pallet; tap Q there for the next station, hold Q to switch it off.
+//
+// Song notation (all synthesized in audio.js):
+//   key     MIDI note of the tonic; melody degrees count from it (1 = tonic,
+//           8 = octave, 0 = the note below). Prefix b / # for flats / sharps.
+//   bars    one chord name per bar, e.g. 'C', 'Am', 'G7', 'Fmaj7', 'Dm7'
+//   melody  one string per bar: degrees per eighth note, '-' holds, '.' rests
+//   bass    per-sixteenth pattern: R root, 3 third, 5 fifth, 6 sixth,
+//           7 seventh, O octave, A approach to the next root, '.' rest;
+//           or 'walk' for a walking bass
+//   drums   per-sixteenth patterns: k kick, s snare, h hat, p rim/clave,
+//           c clap, z shaker. 'X' accent, 'x' hit, 'g' ghost, '.' rest
+//   comp    chord parts: { type: stab|pad|arp|strum|skank, pat, inst }
+
+const { layoutTile, roomSize } = __m.data_layout;
+const SONGS = [
+  { title: 'House Jazz', artist: 'The Two Forks Trio', legacy: true },
+  {
+    title: 'Grits & Glory', artist: 'The Skillet Kings',
+    bpm: 128, swing: 0.55, key: 55, scale: 'major', lead: 'pluck', leadOct: 12,
+    bars: ['G', 'G', 'C', 'C', 'G', 'D', 'C', 'G'],
+    melody: ['5 6 8 6 5 3 1 .', '3 5 3 2 1 - . 5', '4 6 8 6 4 - 3 4', '6 - 5 4 3 - . .',
+      '5 6 8 9 10 - 8 .', '9 - 7 5 2 - 5 .', '8 6 4 6 5 - 4 2', '1 - 3 5 8 - . .'],
+    bass: 'R.3.5.6.O.6.5.3.', bassInst: 'bass',
+    comp: [{ type: 'stab', pat: '..x...x...x...x.', inst: 'piano' }],
+    drums: { k: 'x.......x.......', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.' },
+  },
+  {
+    title: 'Meatball Mambo', artist: "Nonna's Night Out",
+    bpm: 108, swing: 0, key: 57, scale: 'minor', lead: 'brass', leadOct: 12,
+    bars: ['Am', 'Dm', 'G', 'C', 'F', 'Dm', 'E7', 'Am'],
+    melody: ['5 . 5 6 5 3 . 1', '4 . 4 6 8 6 4 .', '7 . 7 5 2 . 7 .', '3 5 8 . 7 5 3 .',
+      '6 . 8 10 9 8 6 .', '4 6 8 6 4 . 6 .', '#7 . 2 . 5 . #7 2', '1 - - . 5 . 1 .'],
+    bass: 'R..5..R...5.O...', bassInst: 'bass',
+    comp: [{ type: 'arp', pat: 'x.xx.x.xx.x.x.xx', inst: 'piano' }],
+    drums: { k: 'x.....x.x.....x.', p: 'x..x...x..x.x...', z: 'xgxgxgxgxgxgxgxg' },
+  },
+  {
+    title: 'Taco Tuesday Two-Step', artist: 'Los Tenedores',
+    bpm: 148, swing: 0, key: 60, scale: 'major', lead: 'brass', leadOct: 12, harmony: -2,
+    bars: ['C', 'C', 'G7', 'C', 'F', 'C', 'G7', 'C'],
+    melody: ['5 3 5 8 . 8 7 8', '10 . 8 . 5 . 3 .', '4 2 4 7 . 7 6 7', '8 . 5 . 3 . . .',
+      '6 4 6 8 . 8 9 10', '10 . 8 . 5 . 3 .', '2 4 7 9 11 9 7 5', '8 . 1 . 8 . . .'],
+    bass: 'R...5...R...5...', bassInst: 'bass',
+    comp: [{ type: 'strum', pat: '..x...x...x...x.', inst: 'pluck' }],
+    drums: { k: 'x.......x.......', s: '....g.......g...', h: '..x...x...x...x.' },
+  },
+  {
+    title: 'Noodle Wave', artist: 'Ramen Rider',
+    bpm: 100, swing: 0, key: 60, scale: 'major', lead: 'square', leadOct: 12,
+    bars: ['Fmaj7', 'Em7', 'Dm7', 'Cmaj7', 'Fmaj7', 'Em7', 'Dm7', 'G7'],
+    melody: ['8 . 7 8 10 . 8 .', '7 . 5 . 3 . 2 3', '4 . 6 . 8 7 6 .', '5 - - . 3 5 7 .',
+      '10 . 9 8 9 . 8 6', '7 . 5 . 7 9 . .', '8 . 6 4 6 . 8 9', '9 - 7 - 5 . . .'],
+    bass: 'R..R..O.R..R.5..', bassInst: 'synthbass',
+    comp: [{ type: 'pad', inst: 'pad' }, { type: 'arp', pat: 'x.x.x.x.x.x.x.x.', inst: 'bell', up: 12 }],
+    drums: { k: 'x...x...x...x...', c: '....x.......x...', h: '..x...x...x...x.' },
+  },
+  {
+    title: 'Order Up! (Disco Mix)', artist: 'The Ticket Rail',
+    bpm: 120, swing: 0, key: 57, scale: 'minor', lead: 'bell', leadOct: 12,
+    bars: ['Am7', 'Dm7', 'G', 'Cmaj7', 'Am7', 'Dm7', 'E7', 'Am7'],
+    melody: ['8 . 8 . 10 8 7 5', '6 . 6 . 8 6 4 .', '7 . 7 . 9 7 5 2', '3 - 5 - 7 - 8 .',
+      '12 . 10 . 8 . 10 12', '11 . 10 8 6 . 8 .', '#7 . 9 . 12 . #7 .', '8 - - - . . . .'],
+    bass: 'R.O.R.O.R.O.R.O.', bassInst: 'synthbass',
+    comp: [{ type: 'stab', pat: 'x..x..x...x..x..', inst: 'pad' }],
+    drums: { k: 'x...x...x...x...', c: '....x.......x...', h: 'gxXxgxXxgxXxgxXx' },
+  },
+  {
+    title: 'Burnt Toast Blues', artist: "Lonnie 'Two Slices' Pratt",
+    bpm: 80, swing: 0.6, key: 52, scale: 'mixolydian', lead: 'harmonica', leadOct: 12,
+    bars: ['E7', 'A7', 'E7', 'E7', 'A7', 'A7', 'E7', 'E7', 'B7', 'A7', 'E7', 'B7'],
+    melody: ['8 b10 . 8 b7 5 . .', '4 6 8 6 4 - . .', '5 . b3 3 1 - . .', '. . 1 b3 4 #4 5 .',
+      '8 . 8 6 4 . b3 .', '4 - 6 - 8 . . .', '5 b7 8 b7 5 b3 1 .', '. . . . 5 . b7 .',
+      '5 . 7 . 9 . 11 .', '8 . 6 . 4 . b3 .', '1 b3 3 5 b7 8 . .', '7 . 5 . 2 . . .'],
+    bass: 'walk', bassInst: 'bass',
+    comp: [{ type: 'stab', pat: '....x.......x...', inst: 'organ' }],
+    drums: { k: 'x.......x.......', s: '....g.......g...', h: 'x.x.x.x.x.x.x.x.' },
+  },
+  {
+    title: 'Pass the Hot Sauce', artist: 'Scoville Brass Band',
+    bpm: 100, swing: 0.25, key: 53, scale: 'major', lead: 'brass', leadOct: 12, harmony: -2,
+    bars: ['F', 'F', 'Bb', 'F', 'C7', 'Bb', 'F', 'C7'],
+    melody: ['5 . 6 8 . 6 5 .', '3 . 5 . b3 3 1 .', '4 . 6 8 . 6 4 .', '5 - 3 - 1 . . .',
+      '5 . 7 9 . 11 9 .', '11 . 10 8 6 . 4 .', '8 . 6 5 3 . 5 6', '7 . 9 . 5 . . .'],
+    bass: 'R..R..5.R.O...7.', bassInst: 'bass',
+    comp: [{ type: 'stab', pat: '..x..x....x..x..', inst: 'piano' }],
+    drums: { k: 'x..x..x...x..x..', s: '....X..g.g..X..g', h: 'x.x.x.x.x.x.x.x.' },
+  },
+  {
+    title: 'Chip Kitchen', artist: '8-Bit Brigade',
+    bpm: 144, swing: 0, key: 60, scale: 'major', lead: 'square', leadOct: 12,
+    bars: ['C', 'Am', 'F', 'G', 'C', 'Am', 'F', 'G'],
+    melody: ['8 . 5 . 8 10 12 .', '13 . 12 10 8 . 6 .', '11 . 13 . 15 13 11 .', '12 . 11 . 9 . 7 .',
+      '8 10 12 15 . 12 10 8', '6 8 10 13 . 10 8 6', '4 6 8 11 . 8 6 4', '5 7 9 12 . . 12 .'],
+    bass: 'R.O.R.O.R.O.R.O.', bassInst: 'chipbass',
+    comp: [{ type: 'arp', pat: 'xxxxxxxxxxxxxxxx', inst: 'chip', up: 12 }],
+    drums: { k: 'x.......x.x.....', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.' },
+  },
+  {
+    title: 'Reggae Reservation', artist: 'Island Table for Two',
+    bpm: 76, swing: 0.15, key: 55, scale: 'major', lead: 'organ', leadOct: 12,
+    bars: ['G', 'C', 'G', 'D', 'G', 'C', 'D', 'G'],
+    melody: ['5 . . 3 5 . 6 5', '4 . . 6 8 . 6 .', '5 . 3 . 1 . . .', '2 . . 5 7 . 9 .',
+      '8 . . 10 8 . 5 .', '6 . . 8 10 . 8 6', '5 . 7 . 9 . 7 5', '1 - - . . . . .'],
+    bass: 'R...R.5.....3.R.', bassInst: 'bass',
+    comp: [{ type: 'skank', pat: '..x...x...x...x.', inst: 'organ' }],
+    drums: { k: '........x.......', p: '........x.......', h: 'x.x.x.x.x.x.x.x.' },
+  },
+  {
+    title: 'Last Call Lullaby', artist: 'The Closing Shift',
+    bpm: 96, beats: 3, swing: 0, key: 53, scale: 'major', lead: 'bell', leadOct: 12,
+    bars: ['F', 'Dm', 'Bb', 'C7', 'F', 'Am', 'Bb', 'C7'],
+    melody: ['5 - 6 5 3 -', '6 - 8 6 3 -', '4 - 6 8 - 6', '5 - - 7 - -',
+      '8 - 10 8 6 5', '3 - 5 - 7 -', '4 - 6 4 2 -', '5 - - - . .'],
+    bass: 'R...5...5...', bassInst: 'bass',
+    comp: [{ type: 'stab', pat: '....x...x...', inst: 'piano' }, { type: 'pad', inst: 'pad' }],
+    drums: { h: '....g...g...' },
+  },
+];
+
+const RADIO_OFF = SONGS.length;
+
+function radioStation(state) {
+  const n = state?.radio;
+  return Number.isInteger(n) && n >= 0 && n <= RADIO_OFF ? n : 0;
+}
+
+function stationLabel(n) {
+  const s = SONGS[n];
+  return s ? `"${s.title}" by ${s.artist}` : 'Off';
+}
+
+/** Fallback when the room has no kitchen half-wall: the counter nearest the pallet. */
+function radioCounter(state) {
+  const objs = state?.objects || [];
+  const dock = objs.find((o) => o.type === 'dock');
+  let best = null, bd = Infinity;
+  for (const o of objs) {
+    if (o.type !== 'counter') continue;
+    const d = dock ? Math.hypot(o.x - dock.x, o.z - dock.z) : o.z * 100 + o.x;
+    if (d < bd || (d === bd && (o.z < best.z || (o.z === best.z && o.x < best.x)))) { bd = d; best = o; }
+  }
+  return best;
+}
+
+const spotCache = new WeakMap();
+
+/**
+ * The radio lives on the permanent half-wall between kitchen and dining
+ * (row 5), on the tile nearest the delivery pallet that a chef can reach
+ * from the kitchen side. Returns a fixed pseudo-object, or null.
+ */
+function radioSpot(state) {
+  if (!state?.objects) return null;
+  const dock = state.objects.find((o) => o.type === 'dock');
+  const key = `${state.mode}|${JSON.stringify(state.building || null)}|${dock ? dock.x + ',' + dock.z : ''}|` + state.objects.filter((o) => o.z === 4).map((o) => o.x).join(',');
+  const hit = spotCache.get(state);
+  if (hit && hit.key === key) return hit.spot;
+  const { width } = roomSize(state);
+  const taken = new Set(state.objects.filter((o) => o.type !== 'table').map((o) => o.x + ',' + o.z));
+  const dx = dock ? dock.x : 1, dz = dock ? dock.z : 4;
+  let spot = null, bd = Infinity;
+  for (let x = 1; x < width - 1; x++) {
+    if (layoutTile(state, x, 5) !== '#' || layoutTile(state, x, 4) === '#' || taken.has(x + ',4')) continue;
+    const d = Math.hypot(x - dx, 5 - dz);
+    if (d < bd) { bd = d; spot = { id: 'radio', type: 'radio', x, z: 5 }; }
+  }
+  spotCache.set(state, { key, spot });
+  return spot;
+}
+
+/** World position of the radio for the view: { x, z, wall } or null. */
+function radioPlace(state) {
+  const s = radioSpot(state);
+  if (s) return { x: s.x, z: s.z, wall: true };
+  const c = radioCounter(state);
+  return c ? { x: c.x, z: c.z, wall: false, id: c.id } : null;
+}
+
+/** True when the object a chef faces is the radio. */
+function isRadio(state, o) {
+  if (!o) return false;
+  if (o.type === 'radio') return true;
+  return o.type === 'counter' && !radioSpot(state) && radioCounter(state)?.id === o.id;
+}
+
+return { SONGS, RADIO_OFF, radioStation, stationLabel, radioCounter, radioSpot, radioPlace, isRadio };
+})();
+
 // ---- src/data/alley.js ----
 __m.data_alley = (() => {
 // The alley uses its own coordinates. Only the back door joins the two areas.
+const { radioSpot } = __m.data_radio;
 const ALLEY_SIZE = { width: 12, height: 8 };
 const ALLEY_SPAWN = { x: 10.5, z: 3.5, rot: -Math.PI / 2 };
 const BACK_DOOR = { id: 'back-door', type: 'backdoor', x: 0, z: 3 };
@@ -962,7 +1158,9 @@ function cookingMultiplier(state) {
 function playerArea(player) { return player?.area === 'alley' ? 'alley' : 'restaurant'; }
 
 function areaObjects(state, area = 'restaurant') {
-  return area === 'alley' ? ALLEY_OBJECTS : [...state.objects, BACK_DOOR];
+  if (area === 'alley') return ALLEY_OBJECTS;
+  const radio = radioSpot(state);
+  return radio ? [...state.objects, BACK_DOOR, radio] : [...state.objects, BACK_DOOR];
 }
 
 return { ALLEY_SIZE, ALLEY_SPAWN, BACK_DOOR, ALLEY_OBJECTS, ALLEY_OBSTACLES, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, hasSmokeBoost, movementMultiplier, cookingMultiplier, playerArea, areaObjects };
@@ -1576,7 +1774,9 @@ function storyObjects(cuisine) {
   }
   const types = ['fridge', 'pantry', 'board', 'grill', 'pot', ...[...stations].filter((s) => !['board', 'grill', 'pot'].includes(s)), 'sink', 'rack', 'bin'];
   const objects = types.map((type, i) => ({ type, x: i + 1, z: 1 }));
-  objects.push({ type: 'counter', x: 5, z: 3 }, { type: 'counter', x: 6, z: 3 }, { type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 10, z: 5 }, { type: 'host', x: 4, z: 10 });
+  // A five-counter prep bench in the middle of the kitchen.
+  for (let x = 4; x <= 8; x++) objects.push({ type: 'counter', x, z: 3 });
+  objects.push({ type: 'pass', x: 7, z: 5 }, { type: 'dock', x: 1, z: 4 }, { type: 'drinks', x: 9, z: 5 }, { type: 'host', x: 4, z: 10 });
   for (const [x, z] of [[4, 7], [8, 7], [6, 9]]) objects.push({ type: 'table', seats: 2, x, z });
   return objects;
 }
@@ -2250,157 +2450,6 @@ async function decodeSave(code) {
 }
 
 return { SAVE_VERSION, WEEKDAYS, nextId, cuisineOf, allDishes, dishById, drinkById, dishVeg, dishCost, courseSlot, menuLimits, repLevel, nextLevelAt, menuIngredients, initObject, numberTables, newState, freshToday, addTrash, returnTrashBag, serialize, deserialize, encodeSave, decodeSave };
-})();
-
-// ---- src/data/radio.js ----
-__m.data_radio = (() => {
-// The kitchen radio. Station 0 is the house jazz; 1..10 are synthesized songs;
-// the last station is off. The radio sits on the counter nearest the delivery
-// pallet, and anyone can press Q there to change the station for everyone.
-//
-// Song notation (all synthesized in audio.js):
-//   key     MIDI note of the tonic; melody degrees count from it (1 = tonic,
-//           8 = octave, 0 = the note below). Prefix b / # for flats / sharps.
-//   bars    one chord name per bar, e.g. 'C', 'Am', 'G7', 'Fmaj7', 'Dm7'
-//   melody  one string per bar: degrees per eighth note, '-' holds, '.' rests
-//   bass    per-sixteenth pattern: R root, 3 third, 5 fifth, 6 sixth,
-//           7 seventh, O octave, A approach to the next root, '.' rest;
-//           or 'walk' for a walking bass
-//   drums   per-sixteenth patterns: k kick, s snare, h hat, p rim/clave,
-//           c clap, z shaker. 'X' accent, 'x' hit, 'g' ghost, '.' rest
-//   comp    chord parts: { type: stab|pad|arp|strum|skank, pat, inst }
-
-const SONGS = [
-  { title: 'House Jazz', artist: 'The Two Forks Trio', legacy: true },
-  {
-    title: 'Grits & Glory', artist: 'The Skillet Kings',
-    bpm: 128, swing: 0.55, key: 55, scale: 'major', lead: 'pluck', leadOct: 12,
-    bars: ['G', 'G', 'C', 'C', 'G', 'D', 'C', 'G'],
-    melody: ['5 6 8 6 5 3 1 .', '3 5 3 2 1 - . 5', '4 6 8 6 4 - 3 4', '6 - 5 4 3 - . .',
-      '5 6 8 9 10 - 8 .', '9 - 7 5 2 - 5 .', '8 6 4 6 5 - 4 2', '1 - 3 5 8 - . .'],
-    bass: 'R.3.5.6.O.6.5.3.', bassInst: 'bass',
-    comp: [{ type: 'stab', pat: '..x...x...x...x.', inst: 'piano' }],
-    drums: { k: 'x.......x.......', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.' },
-  },
-  {
-    title: 'Meatball Mambo', artist: "Nonna's Night Out",
-    bpm: 108, swing: 0, key: 57, scale: 'minor', lead: 'brass', leadOct: 12,
-    bars: ['Am', 'Dm', 'G', 'C', 'F', 'Dm', 'E7', 'Am'],
-    melody: ['5 . 5 6 5 3 . 1', '4 . 4 6 8 6 4 .', '7 . 7 5 2 . 7 .', '3 5 8 . 7 5 3 .',
-      '6 . 8 10 9 8 6 .', '4 6 8 6 4 . 6 .', '#7 . 2 . 5 . #7 2', '1 - - . 5 . 1 .'],
-    bass: 'R..5..R...5.O...', bassInst: 'bass',
-    comp: [{ type: 'arp', pat: 'x.xx.x.xx.x.x.xx', inst: 'piano' }],
-    drums: { k: 'x.....x.x.....x.', p: 'x..x...x..x.x...', z: 'xgxgxgxgxgxgxgxg' },
-  },
-  {
-    title: 'Taco Tuesday Two-Step', artist: 'Los Tenedores',
-    bpm: 148, swing: 0, key: 60, scale: 'major', lead: 'brass', leadOct: 12, harmony: -2,
-    bars: ['C', 'C', 'G7', 'C', 'F', 'C', 'G7', 'C'],
-    melody: ['5 3 5 8 . 8 7 8', '10 . 8 . 5 . 3 .', '4 2 4 7 . 7 6 7', '8 . 5 . 3 . . .',
-      '6 4 6 8 . 8 9 10', '10 . 8 . 5 . 3 .', '2 4 7 9 11 9 7 5', '8 . 1 . 8 . . .'],
-    bass: 'R...5...R...5...', bassInst: 'bass',
-    comp: [{ type: 'strum', pat: '..x...x...x...x.', inst: 'pluck' }],
-    drums: { k: 'x.......x.......', s: '....g.......g...', h: '..x...x...x...x.' },
-  },
-  {
-    title: 'Noodle Wave', artist: 'Ramen Rider',
-    bpm: 100, swing: 0, key: 60, scale: 'major', lead: 'square', leadOct: 12,
-    bars: ['Fmaj7', 'Em7', 'Dm7', 'Cmaj7', 'Fmaj7', 'Em7', 'Dm7', 'G7'],
-    melody: ['8 . 7 8 10 . 8 .', '7 . 5 . 3 . 2 3', '4 . 6 . 8 7 6 .', '5 - - . 3 5 7 .',
-      '10 . 9 8 9 . 8 6', '7 . 5 . 7 9 . .', '8 . 6 4 6 . 8 9', '9 - 7 - 5 . . .'],
-    bass: 'R..R..O.R..R.5..', bassInst: 'synthbass',
-    comp: [{ type: 'pad', inst: 'pad' }, { type: 'arp', pat: 'x.x.x.x.x.x.x.x.', inst: 'bell', up: 12 }],
-    drums: { k: 'x...x...x...x...', c: '....x.......x...', h: '..x...x...x...x.' },
-  },
-  {
-    title: 'Order Up! (Disco Mix)', artist: 'The Ticket Rail',
-    bpm: 120, swing: 0, key: 57, scale: 'minor', lead: 'bell', leadOct: 12,
-    bars: ['Am7', 'Dm7', 'G', 'Cmaj7', 'Am7', 'Dm7', 'E7', 'Am7'],
-    melody: ['8 . 8 . 10 8 7 5', '6 . 6 . 8 6 4 .', '7 . 7 . 9 7 5 2', '3 - 5 - 7 - 8 .',
-      '12 . 10 . 8 . 10 12', '11 . 10 8 6 . 8 .', '#7 . 9 . 12 . #7 .', '8 - - - . . . .'],
-    bass: 'R.O.R.O.R.O.R.O.', bassInst: 'synthbass',
-    comp: [{ type: 'stab', pat: 'x..x..x...x..x..', inst: 'pad' }],
-    drums: { k: 'x...x...x...x...', c: '....x.......x...', h: 'gxXxgxXxgxXxgxXx' },
-  },
-  {
-    title: 'Burnt Toast Blues', artist: "Lonnie 'Two Slices' Pratt",
-    bpm: 80, swing: 0.6, key: 52, scale: 'mixolydian', lead: 'harmonica', leadOct: 12,
-    bars: ['E7', 'A7', 'E7', 'E7', 'A7', 'A7', 'E7', 'E7', 'B7', 'A7', 'E7', 'B7'],
-    melody: ['8 b10 . 8 b7 5 . .', '4 6 8 6 4 - . .', '5 . b3 3 1 - . .', '. . 1 b3 4 #4 5 .',
-      '8 . 8 6 4 . b3 .', '4 - 6 - 8 . . .', '5 b7 8 b7 5 b3 1 .', '. . . . 5 . b7 .',
-      '5 . 7 . 9 . 11 .', '8 . 6 . 4 . b3 .', '1 b3 3 5 b7 8 . .', '7 . 5 . 2 . . .'],
-    bass: 'walk', bassInst: 'bass',
-    comp: [{ type: 'stab', pat: '....x.......x...', inst: 'organ' }],
-    drums: { k: 'x.......x.......', s: '....g.......g...', h: 'x.x.x.x.x.x.x.x.' },
-  },
-  {
-    title: 'Pass the Hot Sauce', artist: 'Scoville Brass Band',
-    bpm: 100, swing: 0.25, key: 53, scale: 'major', lead: 'brass', leadOct: 12, harmony: -2,
-    bars: ['F', 'F', 'Bb', 'F', 'C7', 'Bb', 'F', 'C7'],
-    melody: ['5 . 6 8 . 6 5 .', '3 . 5 . b3 3 1 .', '4 . 6 8 . 6 4 .', '5 - 3 - 1 . . .',
-      '5 . 7 9 . 11 9 .', '11 . 10 8 6 . 4 .', '8 . 6 5 3 . 5 6', '7 . 9 . 5 . . .'],
-    bass: 'R..R..5.R.O...7.', bassInst: 'bass',
-    comp: [{ type: 'stab', pat: '..x..x....x..x..', inst: 'piano' }],
-    drums: { k: 'x..x..x...x..x..', s: '....X..g.g..X..g', h: 'x.x.x.x.x.x.x.x.' },
-  },
-  {
-    title: 'Chip Kitchen', artist: '8-Bit Brigade',
-    bpm: 144, swing: 0, key: 60, scale: 'major', lead: 'square', leadOct: 12,
-    bars: ['C', 'Am', 'F', 'G', 'C', 'Am', 'F', 'G'],
-    melody: ['8 . 5 . 8 10 12 .', '13 . 12 10 8 . 6 .', '11 . 13 . 15 13 11 .', '12 . 11 . 9 . 7 .',
-      '8 10 12 15 . 12 10 8', '6 8 10 13 . 10 8 6', '4 6 8 11 . 8 6 4', '5 7 9 12 . . 12 .'],
-    bass: 'R.O.R.O.R.O.R.O.', bassInst: 'chipbass',
-    comp: [{ type: 'arp', pat: 'xxxxxxxxxxxxxxxx', inst: 'chip', up: 12 }],
-    drums: { k: 'x.......x.x.....', s: '....x.......x...', h: 'x.x.x.x.x.x.x.x.' },
-  },
-  {
-    title: 'Reggae Reservation', artist: 'Island Table for Two',
-    bpm: 76, swing: 0.15, key: 55, scale: 'major', lead: 'organ', leadOct: 12,
-    bars: ['G', 'C', 'G', 'D', 'G', 'C', 'D', 'G'],
-    melody: ['5 . . 3 5 . 6 5', '4 . . 6 8 . 6 .', '5 . 3 . 1 . . .', '2 . . 5 7 . 9 .',
-      '8 . . 10 8 . 5 .', '6 . . 8 10 . 8 6', '5 . 7 . 9 . 7 5', '1 - - . . . . .'],
-    bass: 'R...R.5.....3.R.', bassInst: 'bass',
-    comp: [{ type: 'skank', pat: '..x...x...x...x.', inst: 'organ' }],
-    drums: { k: '........x.......', p: '........x.......', h: 'x.x.x.x.x.x.x.x.' },
-  },
-  {
-    title: 'Last Call Lullaby', artist: 'The Closing Shift',
-    bpm: 96, beats: 3, swing: 0, key: 53, scale: 'major', lead: 'bell', leadOct: 12,
-    bars: ['F', 'Dm', 'Bb', 'C7', 'F', 'Am', 'Bb', 'C7'],
-    melody: ['5 - 6 5 3 -', '6 - 8 6 3 -', '4 - 6 8 - 6', '5 - - 7 - -',
-      '8 - 10 8 6 5', '3 - 5 - 7 -', '4 - 6 4 2 -', '5 - - - . .'],
-    bass: 'R...5...5...', bassInst: 'bass',
-    comp: [{ type: 'stab', pat: '....x...x...', inst: 'piano' }, { type: 'pad', inst: 'pad' }],
-    drums: { h: '....g...g...' },
-  },
-];
-
-const RADIO_OFF = SONGS.length;
-
-function radioStation(state) {
-  const n = state?.radio;
-  return Number.isInteger(n) && n >= 0 && n <= RADIO_OFF ? n : 0;
-}
-
-function stationLabel(n) {
-  const s = SONGS[n];
-  return s ? `"${s.title}" by ${s.artist}` : 'Off';
-}
-
-/** The counter nearest the delivery pallet carries the radio. */
-function radioCounter(state) {
-  const objs = state?.objects || [];
-  const dock = objs.find((o) => o.type === 'dock');
-  let best = null, bd = Infinity;
-  for (const o of objs) {
-    if (o.type !== 'counter') continue;
-    const d = dock ? Math.hypot(o.x - dock.x, o.z - dock.z) : o.z * 100 + o.x;
-    if (d < bd || (d === bd && (o.z < best.z || (o.z === best.z && o.x < best.x)))) { bd = d; best = o; }
-  }
-  return best;
-}
-
-return { SONGS, RADIO_OFF, radioStation, stationLabel, radioCounter };
 })();
 
 // ---- src/sim/items.js ----
@@ -4109,7 +4158,7 @@ const { HEAT_TYPES, STORE_TYPES, STATION_NAMES } = __m.data_layout;
 const { ALLEY_SPAWN, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, cookingMultiplier, playerArea, areaObjects } = __m.data_alley;
 const { drinkById, addTrash, returnTrashBag } = __m.sim_state;
 const { buildGrid, walkable } = __m.sim_world;
-const { RADIO_OFF, radioCounter, radioStation, stationLabel } = __m.data_radio;
+const { RADIO_OFF, isRadio, radioStation, stationLabel } = __m.data_radio;
 const { ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts, stationCapacity, PLATE_MAX } = __m.sim_items;
 const { addLot, stockCount, takeStock, returnStock, shelfLife } = __m.sim_economy;
 const { greet, followingParty, seatAt, serveTo, tableWork, waitingParty } = __m.sim_guests;
@@ -4294,6 +4343,7 @@ function actE(ctx, pid, dry, target) {
   const area = playerArea(p);
   if (!areaObjects(S, area).some((item) => item.id === o.id)) return null;
 
+  if (t === 'radio') return null;
   if (t === 'backdoor') {
     if (area === 'restaurant' && followingParty(S, pid)) return dry ? { blocked: 'Seat your guests first' } : null;
     if (dry) return area === 'alley' ? 'Enter restaurant' : 'Go outside';
@@ -4733,7 +4783,7 @@ function actQ(ctx, pid, dry) {
   if (!p || playerArea(p) !== 'restaurant') return null;
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
-  if (o.type === 'counter' && radioCounter(S)?.id === o.id) {
+  if (isRadio(S, o)) {
     // Tap Q: next station (or back on, if it was off). Hold Q: off (radioOff).
     const cur = radioStation(S);
     const next = cur === RADIO_OFF ? (Number.isInteger(S.radioLast) && S.radioLast < RADIO_OFF ? S.radioLast : 0) : (cur + 1) % RADIO_OFF;
@@ -6738,13 +6788,15 @@ const { footprint, seatsOf, buildGrid, walkable, isWallTile } = __m.sim_world;
 const { itemSig } = __m.sim_items;
 const { stepFor } = __m.data_ingredients;
 const { stationModel, tableModel, makePerson, animatePerson, radioModel, COUNTER_H } = __m.view_models;
-const { radioCounter, radioStation, RADIO_OFF } = __m.data_radio;
+const { radioPlace, radioStation, RADIO_OFF } = __m.data_radio;
 const { musicPulse } = __m.audio;
 const { buildRoom, skyColor, disposeRoom } = __m.view_room;
 const { buildAlley, trashBagModel, cigaretteModel } = __m.view_alley;
 const { itemMesh, potContents } = __m.view_food;
 const { Shape, MAT, meshOf } = __m.view_shape;
 const { mix } = __m.view_shape;
+const DIVIDER_TOP = 1.11; // top of the kitchen half-wall in room.js (1.05 + trim)
+
 const DEFAULT_ZOOM = 0.55;
 const _v = new THREE.Vector3();
 const _shadowMatrix = new THREE.Matrix4();
@@ -7020,19 +7072,28 @@ class View {
     this.updateCamera(dt, opts);
   }
 
-  /** The radio rides on whichever counter is nearest the delivery pallet. */
+  /** The radio sits on the kitchen half-wall by the pallet (or a counter in rooms without one). */
   syncRadio(state, dt) {
     if (!this.radio) this.radio = radioModel();
     const r = this.radio;
-    const c = radioCounter(state);
-    const e = c && this.objs.get(c.id);
-    if (!e) { if (r.group.parent) r.group.parent.remove(r.group); return; }
-    if (r.group.parent !== e.group) {
+    const place = radioPlace(state);
+    const parent = place ? (place.wall ? this.world : this.objs.get(place.id)?.group) : null;
+    if (!parent) { if (r.group.parent) r.group.parent.remove(r.group); return; }
+    const key = place ? `${place.x},${place.z},${place.wall}` : '';
+    if (r.group.parent !== parent || r.key !== key) {
       if (r.group.parent) r.group.parent.remove(r.group);
-      r.group.position.set(0.26, e.slotY ?? COUNTER_H, -0.24);
-      r.group.rotation.y = -0.3;
-      e.group.add(r.group);
+      r.key = key;
+      if (place.wall) {
+        // On the wall top, dial turned toward the camera so it reads.
+        r.group.position.set(place.x + 0.5, DIVIDER_TOP, place.z + 0.45);
+        r.group.rotation.y = 0.25;
+      } else {
+        r.group.position.set(0.26, this.objs.get(place.id).slotY ?? COUNTER_H, -0.24);
+        r.group.rotation.y = -0.3;
+      }
+      parent.add(r.group);
     }
+    r.group.visible = this.area === 'restaurant';
     const on = radioStation(state) !== RADIO_OFF;
     const pulse = on ? musicPulse() : 0;
     r.group.scale.set(1 + pulse * 0.03, 1 + pulse * 0.07, 1 + pulse * 0.03);
@@ -7425,6 +7486,7 @@ class View {
       return o ? { x: o.x + (o.type === 'backdoor' ? 0.1 : (o.w || 1) / 2), y: o.type === 'backdoor' ? 2.5 : 1.8, z: o.z + (o.h || 1) / 2 } : null;
     }
     if (id === BACK_DOOR.id) return { x: BACK_DOOR.x + 0.95, y: 2.5, z: BACK_DOOR.z + 0.5 };
+    if (id === 'radio') { const p = radioPlace(this.state); return p ? { x: p.x + 0.5, y: 1.9, z: p.z + 0.4 } : null; }
     const e = this.objs.get(id);
     if (!e) return null;
     if (e.type === 'table') {
@@ -10651,7 +10713,7 @@ const { makeCode } = __m.net_net;
 const { Input } = __m.input;
 const { ChatBox, cleanChat } = __m.ui_chat;
 const { sfx, unlockAudio, startMusic, setCrowd, setStation, setMuffled } = __m.audio;
-const { radioStation, radioCounter, RADIO_OFF } = __m.data_radio;
+const { radioStation, radioPlace, isRadio, RADIO_OFF } = __m.data_radio;
 class App {
   constructor() {
     this.root = document.getElementById('app');
@@ -10869,7 +10931,7 @@ class App {
     // Everywhere else Q acts on press, as before.
     this.input.on('q', () => {
       if (!canAct()) return;
-      const atRadio = this.aimTarget && this.aimTarget.id === radioCounter(this.session.state)?.id;
+      const atRadio = isRadio(this.session.state, this.aimTarget);
       if (!atRadio || radioStation(this.session.state) === RADIO_OFF) { this.session.press('q'); return; }
       clearTimeout(this.qHold);
       this.qHold = setTimeout(() => { this.qHold = null; this.command({ c: 'radioOff' }); }, 500);
@@ -11097,8 +11159,8 @@ class App {
     this.noteIn = (this.noteIn ?? 1.5) - dt;
     if (this.noteIn <= 0) {
       this.noteIn = 1.6 + Math.random() * 1.4;
-      const rc = station !== RADIO_OFF && area === 'restaurant' ? radioCounter(st) : null;
-      if (rc) this.overlay.float(Math.random() < 0.5 ? '♪' : '♫', rc.x + 0.5, 1.35, rc.z + 0.5, 'note');
+      const rc = station !== RADIO_OFF && area === 'restaurant' ? radioPlace(st) : null;
+      if (rc) this.overlay.float(Math.random() < 0.5 ? '♪' : '♫', rc.x + 0.5, rc.wall ? 1.5 : 1.35, rc.z + 0.5, 'note');
     }
   }
 }

@@ -1,4 +1,5 @@
 // The alley uses its own coordinates. Only the back door joins the two areas.
+import { radioSpot } from './radio.js';
 export const ALLEY_SIZE = { width: 12, height: 8 };
 export const ALLEY_SPAWN = { x: 10.5, z: 3.5, rot: -Math.PI / 2 };
 export const BACK_DOOR = { id: 'back-door', type: 'backdoor', x: 0, z: 3 };
@@ -28,5 +29,7 @@ export function cookingMultiplier(state) {
 export function playerArea(player) { return player?.area === 'alley' ? 'alley' : 'restaurant'; }
 
 export function areaObjects(state, area = 'restaurant') {
-  return area === 'alley' ? ALLEY_OBJECTS : [...state.objects, BACK_DOOR];
+  if (area === 'alley') return ALLEY_OBJECTS;
+  const radio = radioSpot(state);
+  return radio ? [...state.objects, BACK_DOOR, radio] : [...state.objects, BACK_DOOR];
 }

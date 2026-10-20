@@ -17,7 +17,7 @@ import { makeCode } from './net/net.js';
 import { Input } from './input.js';
 import { ChatBox, cleanChat } from './ui/chat.js';
 import { sfx, unlockAudio, startMusic, setCrowd, setStation, setMuffled } from './audio.js';
-import { radioStation, radioCounter, RADIO_OFF } from './data/radio.js';
+import { radioStation, radioPlace, isRadio, RADIO_OFF } from './data/radio.js';
 
 class App {
   constructor() {
@@ -236,7 +236,7 @@ class App {
     // Everywhere else Q acts on press, as before.
     this.input.on('q', () => {
       if (!canAct()) return;
-      const atRadio = this.aimTarget && this.aimTarget.id === radioCounter(this.session.state)?.id;
+      const atRadio = isRadio(this.session.state, this.aimTarget);
       if (!atRadio || radioStation(this.session.state) === RADIO_OFF) { this.session.press('q'); return; }
       clearTimeout(this.qHold);
       this.qHold = setTimeout(() => { this.qHold = null; this.command({ c: 'radioOff' }); }, 500);
@@ -464,8 +464,8 @@ class App {
     this.noteIn = (this.noteIn ?? 1.5) - dt;
     if (this.noteIn <= 0) {
       this.noteIn = 1.6 + Math.random() * 1.4;
-      const rc = station !== RADIO_OFF && area === 'restaurant' ? radioCounter(st) : null;
-      if (rc) this.overlay.float(Math.random() < 0.5 ? '♪' : '♫', rc.x + 0.5, 1.35, rc.z + 0.5, 'note');
+      const rc = station !== RADIO_OFF && area === 'restaurant' ? radioPlace(st) : null;
+      if (rc) this.overlay.float(Math.random() < 0.5 ? '♪' : '♫', rc.x + 0.5, rc.wall ? 1.5 : 1.35, rc.z + 0.5, 'note');
     }
   }
 }

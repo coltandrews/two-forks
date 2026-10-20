@@ -1,6 +1,6 @@
 // The kitchen radio. Station 0 is the house jazz; 1..10 are synthesized songs;
-// the last station is off. The radio sits on the counter nearest the delivery
-// pallet, and anyone can press Q there to change the station for everyone.
+// the last station is off. The radio sits on the kitchen half-wall by the
+// delivery pallet; tap Q there for the next station, hold Q to switch it off.
 //
 // Song notation (all synthesized in audio.js):
 //   key     MIDI note of the tonic; melody degrees count from it (1 = tonic,
@@ -13,6 +13,8 @@
 //   drums   per-sixteenth patterns: k kick, s snare, h hat, p rim/clave,
 //           c clap, z shaker. 'X' accent, 'x' hit, 'g' ghost, '.' rest
 //   comp    chord parts: { type: stab|pad|arp|strum|skank, pat, inst }
+
+import { layoutTile, roomSize } from './layout.js';
 
 export const SONGS = [
   { title: 'House Jazz', artist: 'The Two Forks Trio', legacy: true },
@@ -131,7 +133,7 @@ export function stationLabel(n) {
   return s ? `"${s.title}" by ${s.artist}` : 'Off';
 }
 
-/** The counter nearest the delivery pallet carries the radio. */
+/** Fallback when the room has no kitchen half-wall: the counter nearest the pallet. */
 export function radioCounter(state) {
   const objs = state?.objects || [];
   const dock = objs.find((o) => o.type === 'dock');
@@ -142,4 +144,45 @@ export function radioCounter(state) {
     if (d < bd || (d === bd && (o.z < best.z || (o.z === best.z && o.x < best.x)))) { bd = d; best = o; }
   }
   return best;
+}
+
+const spotCache = new WeakMap();
+
+/**
+ * The radio lives on the permanent half-wall between kitchen and dining
+ * (row 5), on the tile nearest the delivery pallet that a chef can reach
+ * from the kitchen side. Returns a fixed pseudo-object, or null.
+ */
+export function radioSpot(state) {
+  if (!state?.objects) return null;
+  const dock = state.objects.find((o) => o.type === 'dock');
+  const key = `${state.mode}|${JSON.stringify(state.building || null)}|${dock ? dock.x + ',' + dock.z : ''}|` + state.objects.filter((o) => o.z === 4).map((o) => o.x).join(',');
+  const hit = spotCache.get(state);
+  if (hit && hit.key === key) return hit.spot;
+  const { width } = roomSize(state);
+  const taken = new Set(state.objects.filter((o) => o.type !== 'table').map((o) => o.x + ',' + o.z));
+  const dx = dock ? dock.x : 1, dz = dock ? dock.z : 4;
+  let spot = null, bd = Infinity;
+  for (let x = 1; x < width - 1; x++) {
+    if (layoutTile(state, x, 5) !== '#' || layoutTile(state, x, 4) === '#' || taken.has(x + ',4')) continue;
+    const d = Math.hypot(x - dx, 5 - dz);
+    if (d < bd) { bd = d; spot = { id: 'radio', type: 'radio', x, z: 5 }; }
+  }
+  spotCache.set(state, { key, spot });
+  return spot;
+}
+
+/** World position of the radio for the view: { x, z, wall } or null. */
+export function radioPlace(state) {
+  const s = radioSpot(state);
+  if (s) return { x: s.x, z: s.z, wall: true };
+  const c = radioCounter(state);
+  return c ? { x: c.x, z: c.z, wall: false, id: c.id } : null;
+}
+
+/** True when the object a chef faces is the radio. */
+export function isRadio(state, o) {
+  if (!o) return false;
+  if (o.type === 'radio') return true;
+  return o.type === 'counter' && !radioSpot(state) && radioCounter(state)?.id === o.id;
 }

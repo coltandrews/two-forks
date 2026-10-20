@@ -13,7 +13,7 @@ import { HEAT_TYPES, STORE_TYPES, STATION_NAMES } from '../data/layout.js';
 import { ALLEY_SPAWN, BACK_DOOR, TRASH_CAPACITY, SMOKE_SECONDS, SMOKE_BOOST_SECONDS, cookingMultiplier, playerArea, areaObjects } from '../data/alley.js';
 import { drinkById, addTrash, returnTrashBag } from './state.js';
 import { buildGrid, walkable } from './world.js';
-import { RADIO_OFF, radioCounter, radioStation, stationLabel } from '../data/radio.js';
+import { RADIO_OFF, isRadio, radioStation, stationLabel } from '../data/radio.js';
 import {
   ingItem, cloneItem, takePortion, isContainer, canTop, toppable, itemCost, itemLabel, stationAccepts,
   stationCapacity, PLATE_MAX,
@@ -202,6 +202,7 @@ export function actE(ctx, pid, dry, target) {
   const area = playerArea(p);
   if (!areaObjects(S, area).some((item) => item.id === o.id)) return null;
 
+  if (t === 'radio') return null;
   if (t === 'backdoor') {
     if (area === 'restaurant' && followingParty(S, pid)) return dry ? { blocked: 'Seat your guests first' } : null;
     if (dry) return area === 'alley' ? 'Enter restaurant' : 'Go outside';
@@ -641,7 +642,7 @@ export function actQ(ctx, pid, dry) {
   if (!p || playerArea(p) !== 'restaurant') return null;
   const o = findTarget(S, ctx.grid, p);
   if (!o) return null;
-  if (o.type === 'counter' && radioCounter(S)?.id === o.id) {
+  if (isRadio(S, o)) {
     // Tap Q: next station (or back on, if it was off). Hold Q: off (radioOff).
     const cur = radioStation(S);
     const next = cur === RADIO_OFF ? (Number.isInteger(S.radioLast) && S.radioLast < RADIO_OFF ? S.radioLast : 0) : (cur + 1) % RADIO_OFF;
