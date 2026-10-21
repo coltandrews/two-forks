@@ -534,7 +534,7 @@ function buyProgress(sim) {
   // More tables also bring more guests. Add seats only when the kitchen can
   // serve a two-top within its food grace period, with no walkouts.
   const canServeMore = !state.report.walkouts && state.report.ticketTime <= CFG.party.foodGrace + 2 * CFG.party.gracePerDish;
-  if (canServeMore && isOwned(state, 'areas', 'main_room') && state.objects.filter((o) => o.type === 'table').length < 4 && state.cash >= 500) {
+  if (canServeMore && state.objects.filter((o) => o.type === 'table').length < 4 && state.cash >= 500) {
     approve(sim, sim.command('A', { c: 'upgrade', id: 'table2' }));
   }
   const reserve = (chapter?.price || 0) + 250;
