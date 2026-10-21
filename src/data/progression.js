@@ -144,15 +144,11 @@ export function unlockList(state) {
 }
 export function upgradeRequirements(state, u) {
   if (!isStory(state)) return [];
-  const levels = { knife: 2, counter: 2, well: 3, board: 3, pot: 4, lamp: 4, grill: 7, burner: 5, fryer: 7, oven: 8, fridge_temp: 5, dishwasher: 10, table2: 4, table4: 4, menu_board: 3, decor1: 3, decor2: 6, decor3: 12 };
+  const levels = { knife: 2, counter: 2, well: 3, board: 3, pot: 4, lamp: 4, grill: 7, burner: 5, fryer: 7, oven: 8, fridge_temp: 5, dishwasher: 10, table2: 2, table4: 3, menu_board: 3, decor1: 3, decor2: 6, decor3: 12 };
   const needs = [];
   if (state.level < levels[u.id]) needs.push(`Chef Level ${levels[u.id]}`);
   if (u.station && !state.objects.some((o) => o.type === u.station) && ['fryer', 'oven', 'pan'].includes(u.station)) needs.push(`Buy the first ${STATION_NAMES[u.station].toLowerCase()} in Unlocks`);
-  if (u.table) {
-    if (!isOwned(state, 'areas', 'main_room')) needs.push('First floor expansion');
-    const limit = isOwned(state, 'areas', 'dining_wing') ? 9 : 6;
-    if (state.objects.filter((o) => o.type === 'table').length >= limit) needs.push(`Table limit: ${limit}`);
-  }
+  // Tables need no floor expansion: free floor space is the only limit (buyUpgrade checks it).
   return needs;
 }
 export function storyRent(state) { return 40 + (isOwned(state, 'areas', 'main_room') ? 40 : 0) + (isOwned(state, 'areas', 'kitchen_bay') ? 20 : 0) + (isOwned(state, 'areas', 'dining_wing') ? 20 : 0); }

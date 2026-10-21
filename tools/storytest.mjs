@@ -68,6 +68,17 @@ function verifyStartsAndMigration() {
     state.rep.level = 20;
     assert.equal(toggleDish(state, lockedDish.id, true).ok, false, 'Rating cannot bypass Chef Level');
     assert.equal(buyUpgrade(state, 'fryer').ok, false, 'A level-1 kitchen cannot buy a fryer');
+    {
+      // Tables need only a level and cash, never a floor expansion.
+      const t = JSON.parse(JSON.stringify(state));
+      assert.equal(buyUpgrade(t, 'table2').ok, false, 'A level-1 room cannot buy a table yet');
+      t.level = 2;
+      assert(!isOwned(t, 'areas', 'main_room'));
+      const before = t.objects.filter((o) => o.type === 'table').length;
+      const r = buyUpgrade(t, 'table2');
+      assert(r.ok, `A level-2 room should fit a 2-top without an expansion: ${r.reason}`);
+      assert.equal(t.objects.filter((o) => o.type === 'table').length, before + 1);
+    }
     assert.equal(createDish(state, { name: 'Test bowl', course: 'main', tpl: 'bowl', comps: [['rice', 'cooked'], ['chicken', 'sliced'], ['avocado', 'sliced']] }).ok, false);
     assert(autofillPlan(state, 2).every((line) => ingredientAllowed(state, line.ing)));
 
