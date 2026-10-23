@@ -10,9 +10,10 @@ import { Net } from './net.js';
 
 // Platforms can swap the transport. The iPhone app uses a WebSocket relay with
 // the same interface as Net: open(code), on(type, fn), to(type, data, peerId),
-// close(), peers (Set of peer ids), and 'join' / 'leave' events.
-let makeNet = () => new Net();
-export function setNetFactory(fn) { makeNet = fn || (() => new Net()); }
+// close(), peers (Set of peer ids), and 'join' / 'leave' events. The factory
+// gets the role ('host' or 'client').
+let makeNet = (_role) => new Net();
+export function setNetFactory(fn) { makeNet = fn || ((_role) => new Net()); }
 
 const HOST_PID = 'H', CLIENT_PID = 'C';
 // The first guest keeps 'C' so older tests and habits still line up.
@@ -77,7 +78,7 @@ export class Session {
     s.profile = profile;
     if (withNet) {
       s.code = code;
-      s.net = makeNet();
+      s.net = makeNet('host');
       try {
         await s.net.open(code);
         s.wireHost();
@@ -193,7 +194,7 @@ export class Session {
     const s = new Session('client');
     s.code = code;
     s.profile = profile;
-    s.net = makeNet();
+    s.net = makeNet('client');
     await s.net.open(code);
     return new Promise((resolve, reject) => {
       let done = false;
