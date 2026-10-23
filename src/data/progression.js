@@ -3,7 +3,7 @@ import { CUISINES } from './cuisines.js';
 import { ING } from './ingredients.js';
 import { STATION_NAMES, roomSize, FLOOR_EXPANSION_WIDTH } from './layout.js';
 
-export const XP_LEVELS = [0, 120, 480, 800, 1200, 1650, 2200, 2800, 3500, 4200, 5000, 5800, 6600, 7400, 8200, 9000, 9800, 10600, 11400, 12200];
+export const XP_LEVELS = [0, 120, 480, 800, 1200, 1650, 2200, 2800, 3500, 4200, 4850, 5500, 6150, 6800, 7450, 8100, 8750, 9400, 10050, 10700];
 export const STARTERS = {
   southern: ['classic_burger', 'grain_bowl', 'house_salad'],
   italian: ['pomodoro', 'margherita', 'caprese'],
@@ -14,13 +14,13 @@ export const STARTERS = {
 export const AREAS = [
   { id: 'main_room', name: 'Floor expansion 1', level: 4, price: 1500 },
   { id: 'kitchen_bay', name: 'Floor expansion 2', level: 8, price: 1000 },
-  { id: 'dining_wing', name: 'Floor expansion 3', level: 14, price: 1500 },
+  { id: 'dining_wing', name: 'Floor expansion 3', level: 13, price: 1100 },
 ];
 export const CHAPTERS = [
   { id: 1, title: 'A small beginning', text: 'The landlord hands you $600 and the keys. Start with three tables. Serve your first regulars and save for your first floor expansion.', level: 4, price: 1500, goal: 'Serve 40 paying guests.', area: 'main_room' },
   { id: 2, title: 'The regulars', text: 'The neighbors now know your name. Your regulars bring friends. Build a steady service and add another section of floor space.', level: 8, price: 1000, goal: 'Serve 120 paying guests.', area: 'kitchen_bay' },
-  { id: 3, title: 'A table for the critic', text: 'A local food critic wants to try your food. Expect a visit at the next service. Earn a good review and expand your floor again.', level: 14, price: 1500, goal: 'Earn a paid critic review of at least 4 stars.', area: 'dining_wing' },
-  { id: 4, title: 'Your own place', text: 'Your small counter has grown into a full restaurant. Show that your crew can run a full service. Then keep growing for as long as you like.', level: 20, price: 600, goal: 'Serve 20 paying guests in one day.' },
+  { id: 3, title: 'A table for the critic', text: 'A local food critic wants to try your food. Expect a visit at the next service. Earn a good review and expand your floor again.', level: 13, price: 1100, goal: 'Earn a paid critic review of at least 4 stars.', area: 'dining_wing' },
+  { id: 4, title: 'Your own place', text: 'Your small counter has grown into a full restaurant. Show that your crew can run a full service. Then keep growing for as long as you like.', level: 19, price: 300, goal: 'Serve 18 paying guests in one day.' },
 ];
 export const LICENSES = [
   { id: 'fryer_basics', name: 'Fryer basics', level: 2, price: 80, ingredients: ['fries', 'rings', 'chicken_thigh', 'churros', 'gyoza', 'tenders'] },
@@ -119,7 +119,7 @@ export function chapterInfo(state) {
   const c = CHAPTERS[(state.chapter || 1) - 1];
   if (!isStory(state) || !c) return null;
   const stats = state.storyStats || {};
-  const met = c.id === 1 ? stats.paidGuests >= 40 : c.id === 2 ? stats.paidGuests >= 120 : c.id === 3 ? stats.criticPassed : stats.bestPaidDay >= 20;
+  const met = c.id === 1 ? stats.paidGuests >= 40 : c.id === 2 ? stats.paidGuests >= 120 : c.id === 3 ? stats.criticPassed : stats.bestPaidDay >= 18;
   const reason = state.level < c.level ? `Reach Chef Level ${c.level}.` : !met ? c.goal : state.cash < c.price ? `Save $${c.price}.` : '';
   return { ...c, ready: !reason, reason };
 }
